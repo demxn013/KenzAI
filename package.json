@@ -1,0 +1,20 @@
+{
+  "name": "kenzai-bot",
+  "version": "1.0.0",
+  "description": "KenzAI - Yazanaki Empire Bot",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "@vibrant/core": "^4.0.0",
+    "discord-html-transcripts": "^3.2.0",
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.6.1",
+    "fast-average-color-node": "^3.1.0",
+    "jimp": "^0.16.1",
+    "node-vibrant": "^4.0.3"
+  }
+}

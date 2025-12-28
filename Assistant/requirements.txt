@@ -1,0 +1,4 @@
+ollama
+watchdog
+keyboard
+pyyaml

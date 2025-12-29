@@ -10,3 +10,4 @@ sounddevice
 soundfile
 numpy
 scipy
+pvporcupine

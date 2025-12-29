@@ -15,16 +15,24 @@ memory:
   auto_topic_detection: true
   similarity_threshold: 0.7
 
+# Startup Animation
+startup:
+  animation_enabled: true
+  animation_duration: 6.0
+  sound_enabled: true
+  sound_volume: 0.5
+
 # Interfaces
 interfaces:
   voice:
     enabled: true
     wake_word: "kenzai"
     language: "en-US"
-    tts_voice: "male"  # or specific voice name
+    tts_voice: "male"
     
   gui:
-    default_appearance: "circle" # or circle
+    enabled: true
+    default_appearance: "circle"
     default_position: "top-right"
     default_size: [400, 400]
     draggable: true
@@ -33,36 +41,36 @@ interfaces:
     always_on_top: true
     
   discord:
-    enabled: true
-    bridge_mode: "direct"  # calls assistant directly
+    enabled: false
+    bridge_mode: "direct"
 
   daemon:
     enabled: true
     start_with_windows: true
-    wake_phrase: "arise kenzai"  # Not used with Porcupine, kept for reference
-    porcupine_keyword: "jarvis"  # Built-in wake word to use
-    porcupine_sensitivity: 1.0   # 0.0-1.0, higher = more sensitive
-  
-
+    # Hybrid wake word system
+    use_hybrid_wake: true
+    porcupine_keyword: "jarvis"  # Fast detection word
+    verify_keyword: "kenzai"     # Word to verify after Porcupine triggers
+    porcupine_sensitivity: 0.5
+    verification_timeout: 3.0    # Seconds to listen for verification
 
 # Integrations
 integrations:
   file_system:
-    enabled: true
+    enabled: false
     whitelist_folders:
       - "D:/Yazanaki"
       - "D:/Projects"
-      - "C:/Users/YourName/Documents/Code"
     allowed_extensions: [".py", ".js", ".txt", ".md", ".yaml", ".json"]
     create_backups: true
     
   spotify:
-    enabled: true
+    enabled: false
     client_id: "${SPOTIFY_CLIENT_ID}"
     client_secret: "${SPOTIFY_CLIENT_SECRET}"
     
   app_launcher:
-    enabled: true
+    enabled: false
     apps:
       vscode: "C:/Program Files/Microsoft VS Code/Code.exe"
       browser: "chrome"
@@ -72,9 +80,36 @@ integrations:
 personality:
   style: "bushido_butler"
   verbosity: "concise"
-  confirmation_required: false  # Execute without asking
+  confirmation_required: false
+
+# Greetings
+greetings:
+  style: "formal_time_aware"
+  rotation: true
+  morning:
+    - "Good morning, your Highness"
+    - "A new day begins, my Emperor"
+    - "The morning greets you, your Grace"
+  afternoon:
+    - "Good afternoon, my liege"
+    - "Your Highness"
+    - "At your service, my Emperor"
+  evening:
+    - "Good evening, your Grace"
+    - "The evening is yours, my lord"
+    - "Your Highness"
+  night:
+    - "The night welcomes you, your Grace"
+    - "At your command, my Emperor"
+    - "Your Highness"
+  shutdown:
+    - "Rest well, your Highness"
+    - "Until next time, my Emperor"
+    - "The shadows await your return, my liege"
+    - "Farewell, your Grace"
 
 # Logging
 logging:
   level: "INFO"
   file: "./data/logs/kenzai.log"
+  console_output: true

@@ -2,7 +2,8 @@ ollama
 watchdog
 keyboard
 pyyaml
+SpeechRecognition
+pyaudio
+pyttsx3
 pystray
 Pillow
-SpeechRecognition
-pyttsx3

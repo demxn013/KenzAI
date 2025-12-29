@@ -1,0 +1,11 @@
+[2025-12-29 06:07:06] [WARNING ] [KenzAI] [logger.py:93] Failed to initialize microphone: Could not find PyAudio; check installation
+[2025-12-29 06:07:06] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon initialized
+[2025-12-29 06:07:06] [INFO    ] [KenzAI] [logger.py:88] Starting KenzAI daemon...
+[2025-12-29 06:07:06] [INFO    ] [KenzAI] [logger.py:88] Enabled Windows startup
+[2025-12-29 06:07:06] [INFO    ] [KenzAI] [logger.py:88] System tray icon started
+[2025-12-29 06:07:06] [WARNING ] [KenzAI] [logger.py:93] Cannot start listening: microphone not available
+[2025-12-29 06:07:06] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon running. Listening for wake phrase...
+[2025-12-29 06:07:47] [INFO    ] [KenzAI] [logger.py:88] Animation toggle (config update not implemented)
+[2025-12-29 06:07:50] [INFO    ] [KenzAI] [logger.py:88] Animation toggle (config update not implemented)
+[2025-12-29 06:07:56] [INFO    ] [KenzAI] [logger.py:88] Start with Windows: disabled
+[2025-12-29 06:07:59] [INFO    ] [KenzAI] [logger.py:88] Start with Windows: enabled

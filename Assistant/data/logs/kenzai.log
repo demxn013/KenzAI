@@ -9,3 +9,51 @@
 [2025-12-29 06:07:50] [INFO    ] [KenzAI] [logger.py:88] Animation toggle (config update not implemented)
 [2025-12-29 06:07:56] [INFO    ] [KenzAI] [logger.py:88] Start with Windows: disabled
 [2025-12-29 06:07:59] [INFO    ] [KenzAI] [logger.py:88] Start with Windows: enabled
+[2025-12-29 06:13:38] [INFO    ] [KenzAI] [logger.py:88] Shutting down KenzAI daemon...
+[2025-12-29 06:13:38] [INFO    ] [KenzAI] [logger.py:88] Wake phrase listener stopped
+[2025-12-29 06:13:38] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon stopped
+[2025-12-29 06:14:28] [WARNING ] [KenzAI] [logger.py:93] Failed to initialize microphone: Could not find PyAudio; check installation
+[2025-12-29 06:14:28] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon initialized
+[2025-12-29 06:14:28] [INFO    ] [KenzAI] [logger.py:88] Starting KenzAI daemon...
+[2025-12-29 06:14:28] [INFO    ] [KenzAI] [logger.py:88] System tray icon started
+[2025-12-29 06:14:28] [WARNING ] [KenzAI] [logger.py:93] Cannot start listening: microphone not available
+[2025-12-29 06:14:28] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon running. Listening for wake phrase...
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Found 28 audio devices
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Default input device: Microphone (Razer Seiren Mini)
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Voice recognition initialized with sounddevice
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] TTS engine initialized
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Wake phrase listener initialized with sounddevice
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon initialized
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Starting KenzAI daemon...
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] System tray icon started
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Listening for wake phrase: 'arise kenzai'
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] Starting continuous listening...
+[2025-12-29 06:26:42] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon running. Listening for wake phrase...
+[2025-12-29 06:26:49] [INFO    ] [KenzAI] [logger.py:88] Recognized: kensei
+[2025-12-29 06:26:56] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 06:27:00] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 06:27:15] [INFO    ] [KenzAI] [logger.py:88] Shutting down KenzAI daemon...
+[2025-12-29 06:27:15] [INFO    ] [KenzAI] [logger.py:88] Wake phrase listener stopped
+[2025-12-29 06:27:15] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon stopped
+[2025-12-29 06:27:16] [INFO    ] [KenzAI] [logger.py:88] Shutting down KenzAI daemon...
+[2025-12-29 06:27:16] [INFO    ] [KenzAI] [logger.py:88] Wake phrase listener stopped
+[2025-12-29 06:27:16] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon stopped
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Found 28 audio devices
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Default input device: Microphone (Razer Seiren Mini)
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Voice recognition initialized with sounddevice
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] TTS engine initialized
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Wake phrase listener initialized with sounddevice
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon initialized
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Starting KenzAI daemon...
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] System tray icon started
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Listening for wake phrase: 'arise kenzai'
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] Starting continuous listening...
+[2025-12-29 06:27:42] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon running. Listening for wake phrase...
+[2025-12-29 06:27:53] [INFO    ] [KenzAI] [logger.py:88] Recognized: enzai
+[2025-12-29 06:27:57] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 06:28:00] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 06:28:04] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 06:28:45] [INFO    ] [KenzAI] [logger.py:88] Recognized: audio devices
+[2025-12-29 06:31:22] [INFO    ] [KenzAI] [logger.py:88] Recognized: I'm talking to you and you cannot hear me
+[2025-12-29 06:31:26] [INFO    ] [KenzAI] [logger.py:88] Recognized: what is going on
+[2025-12-29 06:31:53] [INFO    ] [KenzAI] [logger.py:88] Recognized: talk say something

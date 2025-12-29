@@ -16,7 +16,7 @@ if str(_current_dir) not in sys.path:
 
 from utils.logger import initialize_logger, get_logger
 from utils.helpers import load_config, load_user_preferences
-from utils.windows_integration import WindowsStartupManager, is_windows, require_windows
+from utils.windows_integration import WindowsStartupManager, is_windows
 
 # Optional imports
 try:
@@ -26,94 +26,12 @@ try:
 except ImportError:
     PILLOW_AVAILABLE = False
 
+# Import Porcupine wake word
 try:
-    import speech_recognition as sr
-    SPEECH_RECOGNITION_AVAILABLE = True
+    from interfaces.porcupine_wake import PorcupineWakeWord
+    PORCUPINE_AVAILABLE = True
 except ImportError:
-    SPEECH_RECOGNITION_AVAILABLE = False
-
-
-class WakePhraseListener:
-    """Listens for wake phrase using speech recognition."""
-    
-    def __init__(self, wake_phrase: str, logger):
-        """
-        Initialize wake phrase listener.
-        
-        Args:
-            wake_phrase: Wake phrase to listen for (e.g., "arise kenzai").
-            logger: Logger instance.
-        """
-        self.wake_phrase = wake_phrase.lower()
-        self.logger = logger
-        self.listening = False
-        self.recognizer = None
-        self.microphone = None
-        
-        if SPEECH_RECOGNITION_AVAILABLE:
-            try:
-                self.recognizer = sr.Recognizer()
-                self.microphone = sr.Microphone()
-                
-                # Adjust for ambient noise
-                with self.microphone as source:
-                    self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                
-                self.logger.info("Wake phrase listener initialized")
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize microphone: {e}")
-                self.recognizer = None
-        else:
-            self.logger.warning("Speech recognition not available. Wake phrase detection disabled.")
-    
-    def start_listening(self, callback):
-        """
-        Start listening for wake phrase.
-        
-        Args:
-            callback: Function to call when wake phrase is detected.
-        """
-        if not self.recognizer or not self.microphone:
-            self.logger.warning("Cannot start listening: microphone not available")
-            return
-        
-        self.listening = True
-        self.logger.info(f"Listening for wake phrase: '{self.wake_phrase}'")
-        
-        def listen_loop():
-            while self.listening:
-                try:
-                    with self.microphone as source:
-                        # Listen for audio
-                        audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=3)
-                    
-                    # Recognize speech
-                    try:
-                        text = self.recognizer.recognize_google(audio).lower()
-                        self.logger.debug(f"Heard: {text}")
-                        
-                        # Check if wake phrase is in the recognized text
-                        if self.wake_phrase in text:
-                            self.logger.info(f"Wake phrase detected: '{text}'")
-                            callback()
-                    except sr.UnknownValueError:
-                        pass  # Could not understand audio
-                    except sr.RequestError as e:
-                        self.logger.warning(f"Speech recognition error: {e}")
-                    
-                except sr.WaitTimeoutError:
-                    pass  # Timeout is expected
-                except Exception as e:
-                    self.logger.error(f"Error in wake phrase listener: {e}")
-                    time.sleep(1)
-        
-        thread = threading.Thread(target=listen_loop, daemon=True)
-        thread.start()
-    
-    def stop_listening(self):
-        """Stop listening for wake phrase."""
-        self.listening = False
-        self.logger.info("Wake phrase listener stopped")
+    PORCUPINE_AVAILABLE = False
 
 
 class SystemTrayIcon:
@@ -133,30 +51,18 @@ class SystemTrayIcon:
         self.is_dormant = True
     
     def create_icon_image(self, active: bool = False) -> Image.Image:
-        """
-        Create icon image.
-        
-        Args:
-            active: Whether icon should appear active (glowing) or dormant (shadow).
-        
-        Returns:
-            PIL Image object.
-        """
-        # Create a simple icon (16x16 or 32x32)
+        """Create icon image."""
         size = 32
         image = Image.new('RGBA', (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         
         if active:
-            # Glowing/active icon (lighter, more visible)
-            color = (100, 150, 255, 255)  # Blue glow
+            color = (100, 150, 255, 255)
             fill = (50, 100, 200, 200)
         else:
-            # Dormant/shadow icon (darker, subtle)
-            color = (30, 30, 30, 200)  # Dark shadow
+            color = (30, 30, 30, 200)
             fill = (20, 20, 20, 150)
         
-        # Draw a simple circle/square icon
         margin = 4
         draw.ellipse(
             [margin, margin, size - margin, size - margin],
@@ -230,8 +136,18 @@ class SystemTrayIcon:
     
     def _toggle_animations(self, icon, item):
         """Toggle animation effects."""
-        # This would update config - simplified for now
-        self.logger.info("Animation toggle (config update not implemented)")
+        try:
+            current = self.daemon.config.get('startup', {}).get('animation_enabled', True)
+            if 'startup' not in self.daemon.config:
+                self.daemon.config['startup'] = {}
+            self.daemon.config['startup']['animation_enabled'] = not current
+            
+            from utils.helpers import save_config
+            save_config(self.daemon.config)
+            
+            self.logger.info(f"Animation effects: {'enabled' if not current else 'disabled'}")
+        except Exception as e:
+            self.logger.error(f"Failed to toggle animations: {e}")
     
     def _dismiss(self, icon, item):
         """Dismiss/exit daemon."""
@@ -249,7 +165,6 @@ class SystemTrayIcon:
             
             self.icon = pystray.Icon("KenzAI", image, "KenzAI Shadow Daemon", menu)
             
-            # Run in separate thread
             thread = threading.Thread(target=self.icon.run, daemon=False)
             thread.start()
             
@@ -258,12 +173,7 @@ class SystemTrayIcon:
             self.logger.error(f"Failed to start system tray icon: {e}")
     
     def update_icon(self, active: bool):
-        """
-        Update icon appearance.
-        
-        Args:
-            active: Whether to show active or dormant icon.
-        """
+        """Update icon appearance."""
         if self.icon:
             self.is_dormant = not active
             image = self.create_icon_image(active=active)
@@ -280,11 +190,9 @@ class KenzAIDaemon:
     
     def __init__(self):
         """Initialize KenzAI daemon."""
-        # Load configuration
         self.config = load_config()
         self.preferences = load_user_preferences()
         
-        # Initialize logger
         log_config = self.config.get('logging', {})
         initialize_logger(
             log_level=log_config.get('level', 'INFO'),
@@ -292,19 +200,35 @@ class KenzAIDaemon:
         )
         self.logger = get_logger()
         
-        # Daemon state
         self.is_active = False
-        self.full_system = None  # Will hold KenzAIAssistant instance when active
+        self.full_system = None
         
-        # Get wake phrase
+        # Get wake word configuration
         daemon_config = self.config.get('interfaces', {}).get('daemon', {})
-        self.wake_phrase = daemon_config.get('wake_phrase', 'arise kenzai')
+        wake_phrase = daemon_config.get('wake_phrase', 'arise kenzai')
         
-        # Initialize components
-        self.wake_listener = WakePhraseListener(self.wake_phrase, self.logger)
+        # Determine which wake word to use
+        # You can configure this in config.yaml
+        porcupine_keyword = daemon_config.get('porcupine_keyword', 'jarvis')
+        porcupine_sensitivity = daemon_config.get('porcupine_sensitivity', 0.5)
+        
+        # Initialize Porcupine wake word detector
+        self.wake_listener = None
+        if PORCUPINE_AVAILABLE:
+            try:
+                self.wake_listener = PorcupineWakeWord(
+                    keywords=[porcupine_keyword],
+                    sensitivity=porcupine_sensitivity
+                )
+                self.logger.info(f"Using Porcupine wake word: '{porcupine_keyword}'")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize Porcupine: {e}")
+                self.wake_listener = None
+        else:
+            self.logger.error("Porcupine not available! Install with: pip install pvporcupine")
+        
         self.tray_icon = SystemTrayIcon(self, self.logger)
         
-        # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         if hasattr(signal, 'SIGTERM'):
             signal.signal(signal.SIGTERM, self._signal_handler)
@@ -321,7 +245,6 @@ class KenzAIDaemon:
         """Start the daemon."""
         self.logger.info("Starting KenzAI daemon...")
         
-        # Setup Windows startup if enabled
         if is_windows() and self.preferences.get('daemon', {}).get('start_with_windows', False):
             try:
                 if not WindowsStartupManager.is_startup_enabled():
@@ -330,15 +253,14 @@ class KenzAIDaemon:
             except Exception as e:
                 self.logger.warning(f"Failed to setup Windows startup: {e}")
         
-        # Start system tray
         self.tray_icon.start()
         
-        # Start wake phrase listener
-        self.wake_listener.start_listening(self.awaken)
+        if self.wake_listener:
+            self.wake_listener.start_listening(self.awaken)
+            self.logger.info("KenzAI daemon running. Listening for wake word...")
+        else:
+            self.logger.warning("Wake word detection not available. Use system tray to awaken manually.")
         
-        self.logger.info("KenzAI daemon running. Listening for wake phrase...")
-        
-        # Keep daemon running
         try:
             while True:
                 time.sleep(1)
@@ -346,9 +268,7 @@ class KenzAIDaemon:
             self.shutdown()
     
     def awaken(self):
-        """
-        Awaken KenzAI - trigger launcher and full system.
-        """
+        """Awaken KenzAI - trigger launcher and full system."""
         if self.is_active:
             self.logger.debug("Already active")
             return
@@ -357,7 +277,6 @@ class KenzAIDaemon:
         self.is_active = True
         self.tray_icon.update_icon(active=True)
         
-        # Import launcher to trigger animation
         try:
             from launcher import launch_kenzai
             launch_kenzai(self.config, self.preferences)
@@ -378,8 +297,6 @@ class KenzAIDaemon:
         """Show GUI interface."""
         if not self.is_active:
             self.awaken()
-        
-        # GUI will be shown by launcher or can be triggered here
         self.logger.info("Showing GUI...")
     
     def rest(self):
@@ -390,17 +307,14 @@ class KenzAIDaemon:
         self.logger.info("KenzAI resting...")
         self.is_active = False
         self.tray_icon.update_icon(active=False)
-        
-        # Optionally shutdown full system to save resources
-        if self.full_system:
-            # Could add cleanup here
-            pass
     
     def shutdown(self):
         """Shutdown the daemon."""
         self.logger.info("Shutting down KenzAI daemon...")
         
-        self.wake_listener.stop_listening()
+        if self.wake_listener:
+            self.wake_listener.cleanup()
+        
         self.tray_icon.stop()
         
         self.logger.info("KenzAI daemon stopped")
@@ -419,4 +333,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

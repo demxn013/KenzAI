@@ -39,7 +39,9 @@ interfaces:
   daemon:
     enabled: true
     start_with_windows: true
-    wake_phrase: "arise kenzai"
+    wake_phrase: "arise kenzai"  # Not used with Porcupine, kept for reference
+    porcupine_keyword: "jarvis"  # Built-in wake word to use
+    porcupine_sensitivity: 1.0   # 0.0-1.0, higher = more sensitive
   
 
 

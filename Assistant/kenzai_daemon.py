@@ -1,6 +1,6 @@
 """
-KenzAI Daemon
-Background service that listens for wake phrase and manages system tray.
+KenzAI Daemon - FIXED VERSION
+Background service that listens for wake phrase and processes voice commands.
 """
 import sys
 import time
@@ -32,6 +32,13 @@ try:
     PORCUPINE_AVAILABLE = True
 except ImportError:
     PORCUPINE_AVAILABLE = False
+
+# Import voice interface
+try:
+    from interfaces.voice import VoiceInterface
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
 
 
 class SystemTrayIcon:
@@ -190,7 +197,9 @@ class KenzAIDaemon:
         self.logger = get_logger()
         
         self.is_active = False
-        self.full_system = None
+        self.assistant = None
+        self.voice_interface = None
+        self._command_listening = False
         
         # Get Porcupine configuration
         daemon_config = self.config.get('interfaces', {}).get('daemon', {})
@@ -211,9 +220,8 @@ class KenzAIDaemon:
                 else:
                     keyword_path = None
                 
-                # FIXED: Pass keyword (singular), not keywords (list)
                 self.wake_listener = PorcupineWakeWord(
-                    keyword=porcupine_keyword,  # ✅ Fixed: singular keyword
+                    keyword=porcupine_keyword,
                     sensitivity=porcupine_sensitivity,
                     access_key=porcupine_access_key,
                     keyword_path=str(keyword_path) if keyword_path else None
@@ -227,6 +235,15 @@ class KenzAIDaemon:
                 self.wake_listener = None
         else:
             self.logger.error("Porcupine not available! Install with: pip install pvporcupine sounddevice numpy")
+        
+        # Initialize voice interface
+        if VOICE_AVAILABLE:
+            try:
+                self.voice_interface = VoiceInterface(self.config)
+                self.logger.info("Voice interface initialized")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize voice interface: {e}")
+                self.voice_interface = None
         
         self.tray_icon = SystemTrayIcon(self, self.logger)
         
@@ -277,30 +294,127 @@ class KenzAIDaemon:
             self.shutdown()
     
     def awaken(self):
-        """Awaken KenzAI - trigger launcher and full system."""
+        """Awaken KenzAI - initialize assistant and start listening for commands."""
         if self.is_active:
             self.logger.debug("Already active")
             return
         
-        self.logger.info("Awakening KenzAI...")
+        self.logger.info("🌟 Awakening KenzAI...")
         self.is_active = True
         self.tray_icon.update_icon(active=True)
         
         try:
-            from launcher import launch_kenzai
-            launch_kenzai(self.config, self.preferences)
-        except ImportError:
-            self.logger.warning("Launcher not available. Starting full system directly...")
-            self._start_full_system()
-    
-    def _start_full_system(self):
-        """Start the full KenzAI system."""
-        try:
-            from core import KenzAIAssistant
-            self.full_system = KenzAIAssistant(self.config)
-            self.logger.info("Full KenzAI system started")
+            # Initialize full assistant if not already done
+            if self.assistant is None:
+                from core import KenzAIAssistant
+                self.assistant = KenzAIAssistant(self.config)
+                self.logger.info("KenzAI Assistant initialized")
+            
+            # Get and speak greeting
+            greeting = self.assistant.get_greeting()
+            self.logger.info(f"Greeting: {greeting}")
+            
+            if self.voice_interface and self.voice_interface.tts_engine:
+                self.voice_interface.speak(greeting)
+            else:
+                print(f"\n{greeting}\n")
+            
+            # Launch GUI in background if enabled
+            gui_enabled = self.config.get('interfaces', {}).get('gui', {}).get('enabled', True)
+            if gui_enabled:
+                try:
+                    from interfaces.gui import launch_gui
+                    gui_thread = threading.Thread(
+                        target=launch_gui,
+                        args=(self.assistant, self.config, self.preferences),
+                        daemon=True
+                    )
+                    gui_thread.start()
+                    self.logger.info("GUI launched")
+                except ImportError:
+                    self.logger.warning("GUI module not available")
+            
+            # Start listening for voice commands
+            self._start_command_listening()
+            
         except Exception as e:
-            self.logger.error(f"Failed to start full system: {e}")
+            self.logger.error(f"Failed to awaken: {e}", exc_info=True)
+            self.is_active = False
+            self.tray_icon.update_icon(active=False)
+    
+    def _start_command_listening(self):
+        """Start listening for voice commands after wake word."""
+        if self._command_listening:
+            return
+        
+        if not self.voice_interface or not self.voice_interface.audio_available:
+            self.logger.warning("Voice interface not available for commands")
+            return
+        
+        self._command_listening = True
+        
+        # Start command loop in background thread
+        command_thread = threading.Thread(target=self._command_loop, daemon=True)
+        command_thread.start()
+        
+        self.logger.info("Started listening for voice commands")
+    
+    def _command_loop(self):
+        """Main command listening loop."""
+        consecutive_failures = 0
+        max_failures = 3
+        
+        self.logger.info("🎤 Ready for commands. Speak now...")
+        
+        while self._command_listening and self.is_active:
+            try:
+                # Listen for command
+                self.logger.debug("Listening for command...")
+                command = self.voice_interface.listen(timeout=10.0, phrase_time_limit=10.0)
+                
+                if command:
+                    consecutive_failures = 0
+                    self.logger.info(f"Command received: {command}")
+                    
+                    # Check for exit commands
+                    if any(word in command.lower() for word in ['goodbye', 'go to sleep', 'rest', 'dismiss']):
+                        self.voice_interface.speak("Rest well, your Highness")
+                        self.rest()
+                        break
+                    
+                    # Process command with assistant
+                    try:
+                        response = self.assistant.process_query(command)
+                        self.logger.info(f"Response: {response}")
+                        
+                        # Speak response
+                        self.voice_interface.speak(response)
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error processing command: {e}")
+                        self.voice_interface.speak("I apologize, but I encountered an error processing that request.")
+                
+                else:
+                    # No command detected
+                    consecutive_failures += 1
+                    self.logger.debug(f"No command detected ({consecutive_failures}/{max_failures})")
+                    
+                    if consecutive_failures >= max_failures:
+                        self.logger.info("No commands detected, returning to dormant state")
+                        self.voice_interface.speak("I'll be here if you need me, your Highness")
+                        self.rest()
+                        break
+                
+            except Exception as e:
+                self.logger.error(f"Error in command loop: {e}", exc_info=True)
+                consecutive_failures += 1
+                
+                if consecutive_failures >= max_failures:
+                    self.logger.error("Too many errors, returning to dormant state")
+                    self.rest()
+                    break
+        
+        self.logger.info("Command listening stopped")
     
     def show_gui(self):
         """Show GUI interface."""
@@ -313,13 +427,22 @@ class KenzAIDaemon:
         if not self.is_active:
             return
         
-        self.logger.info("KenzAI resting...")
+        self.logger.info("💤 KenzAI resting...")
+        self._command_listening = False
         self.is_active = False
         self.tray_icon.update_icon(active=False)
+        
+        # Get shutdown greeting
+        if self.assistant:
+            shutdown_greeting = self.assistant.get_shutdown_greeting()
+            self.logger.info(shutdown_greeting)
     
     def shutdown(self):
         """Shutdown the daemon."""
         self.logger.info("Shutting down KenzAI daemon...")
+        
+        # Stop command listening
+        self._command_listening = False
         
         # Stop wake word listener
         if self.wake_listener:

@@ -61,3 +61,39 @@
 [2025-12-29 06:38:03] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
 [2025-12-29 06:38:06] [INFO    ] [KenzAI] [logger.py:88] Recognized: enzyme
 [2025-12-29 06:38:10] [INFO    ] [KenzAI] [logger.py:88] Recognized: Kenzie
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Initializing Porcupine with keyword: 'kenzai'
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Sensitivity: 1.0
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Using access key: MQuwPtdtG5hLtDpRtDaS...
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Loading custom keyword from: D:\Yazanaki\KenzAI\Assistant\assets\wake_words\kenzai.ppn
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] ✓ Porcupine initialized with custom keyword
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Sample rate: 16000 Hz
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Frame length: 512 samples
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Porcupine wake word initialized: 'kenzai'
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon initialized
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Starting KenzAI daemon...
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] System tray icon started
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Started listening for wake word: 'kenzai'
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] KenzAI daemon running. Listening for wake word...
+[2025-12-29 07:41:52] [INFO    ] [KenzAI] [logger.py:88] Audio stream opened, listening...
+[2025-12-29 07:41:55] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:41:55] [INFO    ] [KenzAI] [logger.py:88] Awakening KenzAI...
+[2025-12-29 07:41:55] [INFO    ] [KenzAI] [logger.py:88] Launching KenzAI...
+[2025-12-29 07:41:55] [INFO    ] [KenzAI] [logger.py:88] Starting shadow animation sequence...
+[2025-12-29 07:41:56] [INFO    ] [KenzAI] [logger.py:88] Initializing KenzAI components...
+[2025-12-29 07:41:56] [INFO    ] [KenzAI] [logger.py:88] Starting Ollama daemon...
+[2025-12-29 07:41:59] [INFO    ] [KenzAI] [logger.py:88] Ollama daemon started
+[2025-12-29 07:41:59] [INFO    ] [KenzAI] [logger.py:88] All models ready
+[2025-12-29 07:41:59] [INFO    ] [KenzAI] [logger.py:88] KenzAI Assistant initialized
+[2025-12-29 07:41:59] [INFO    ] [KenzAI] [logger.py:88] Greeting: Good morning, your Highness
+[2025-12-29 07:42:01] [INFO    ] [KenzAI] [logger.py:88] Shadow animation sequence completed
+[2025-12-29 07:42:02] [INFO    ] [KenzAI] [logger.py:88] Launching KenzAI GUI...
+[2025-12-29 07:42:02] [INFO    ] [KenzAI] [logger.py:88] GUI launched
+[2025-12-29 07:42:03] [INFO    ] [KenzAI] [logger.py:88] KenzAI launch sequence completed
+[2025-12-29 07:42:07] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:42:16] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:42:21] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:42:31] [INFO    ] [KenzAI] [logger.py:88] Animation toggle (config update not implemented)
+[2025-12-29 07:42:34] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:42:41] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:43:18] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!
+[2025-12-29 07:43:49] [INFO    ] [KenzAI] [logger.py:88] ✓ Wake word 'kenzai' detected!

@@ -136,18 +136,7 @@ class SystemTrayIcon:
     
     def _toggle_animations(self, icon, item):
         """Toggle animation effects."""
-        try:
-            current = self.daemon.config.get('startup', {}).get('animation_enabled', True)
-            if 'startup' not in self.daemon.config:
-                self.daemon.config['startup'] = {}
-            self.daemon.config['startup']['animation_enabled'] = not current
-            
-            from utils.helpers import save_config
-            save_config(self.daemon.config)
-            
-            self.logger.info(f"Animation effects: {'enabled' if not current else 'disabled'}")
-        except Exception as e:
-            self.logger.error(f"Failed to toggle animations: {e}")
+        self.logger.info("Animation toggle (config update not implemented)")
     
     def _dismiss(self, icon, item):
         """Dismiss/exit daemon."""
@@ -203,29 +192,41 @@ class KenzAIDaemon:
         self.is_active = False
         self.full_system = None
         
-        # Get wake word configuration
+        # Get Porcupine configuration
         daemon_config = self.config.get('interfaces', {}).get('daemon', {})
-        wake_phrase = daemon_config.get('wake_phrase', 'arise kenzai')
-        
-        # Determine which wake word to use
-        # You can configure this in config.yaml
         porcupine_keyword = daemon_config.get('porcupine_keyword', 'jarvis')
         porcupine_sensitivity = daemon_config.get('porcupine_sensitivity', 0.5)
+        porcupine_access_key = daemon_config.get('porcupine_access_key')
+        porcupine_keyword_path = daemon_config.get('porcupine_keyword_path')
         
         # Initialize Porcupine wake word detector
         self.wake_listener = None
         if PORCUPINE_AVAILABLE:
             try:
+                # If keyword_path is provided, resolve it
+                if porcupine_keyword_path:
+                    keyword_path = Path(porcupine_keyword_path)
+                    if not keyword_path.is_absolute():
+                        keyword_path = Path(__file__).parent / keyword_path
+                else:
+                    keyword_path = None
+                
+                # FIXED: Pass keyword (singular), not keywords (list)
                 self.wake_listener = PorcupineWakeWord(
-                    keywords=[porcupine_keyword],
-                    sensitivity=porcupine_sensitivity
+                    keyword=porcupine_keyword,  # ✅ Fixed: singular keyword
+                    sensitivity=porcupine_sensitivity,
+                    access_key=porcupine_access_key,
+                    keyword_path=str(keyword_path) if keyword_path else None
                 )
-                self.logger.info(f"Using Porcupine wake word: '{porcupine_keyword}'")
+                
+                self.logger.info(f"Porcupine wake word initialized: '{porcupine_keyword}'")
+                
             except Exception as e:
                 self.logger.error(f"Failed to initialize Porcupine: {e}")
+                self.logger.error("Wake word detection will not be available")
                 self.wake_listener = None
         else:
-            self.logger.error("Porcupine not available! Install with: pip install pvporcupine")
+            self.logger.error("Porcupine not available! Install with: pip install pvporcupine sounddevice numpy")
         
         self.tray_icon = SystemTrayIcon(self, self.logger)
         
@@ -245,6 +246,7 @@ class KenzAIDaemon:
         """Start the daemon."""
         self.logger.info("Starting KenzAI daemon...")
         
+        # Setup Windows startup if enabled
         if is_windows() and self.preferences.get('daemon', {}).get('start_with_windows', False):
             try:
                 if not WindowsStartupManager.is_startup_enabled():
@@ -253,14 +255,21 @@ class KenzAIDaemon:
             except Exception as e:
                 self.logger.warning(f"Failed to setup Windows startup: {e}")
         
+        # Start system tray
         self.tray_icon.start()
         
+        # Start wake word detection
         if self.wake_listener:
-            self.wake_listener.start_listening(self.awaken)
-            self.logger.info("KenzAI daemon running. Listening for wake word...")
+            try:
+                self.wake_listener.start_listening(self.awaken)
+                self.logger.info("KenzAI daemon running. Listening for wake word...")
+            except Exception as e:
+                self.logger.error(f"Failed to start wake word detection: {e}")
+                self.logger.warning("Use system tray to awaken manually.")
         else:
             self.logger.warning("Wake word detection not available. Use system tray to awaken manually.")
         
+        # Keep daemon running
         try:
             while True:
                 time.sleep(1)
@@ -312,9 +321,15 @@ class KenzAIDaemon:
         """Shutdown the daemon."""
         self.logger.info("Shutting down KenzAI daemon...")
         
+        # Stop wake word listener
         if self.wake_listener:
-            self.wake_listener.cleanup()
+            try:
+                self.wake_listener.cleanup()
+                self.logger.info("Wake phrase listener stopped")
+            except Exception as e:
+                self.logger.error(f"Error stopping wake listener: {e}")
         
+        # Stop system tray
         self.tray_icon.stop()
         
         self.logger.info("KenzAI daemon stopped")

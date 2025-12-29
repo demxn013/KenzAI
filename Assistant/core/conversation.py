@@ -5,7 +5,10 @@ Handles conversation history and message management.
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from ..utils.logger import get_logger
+try:
+    from utils.logger import get_logger
+except ImportError:
+    from ..utils.logger import get_logger
 
 logger = get_logger()
 

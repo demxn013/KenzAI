@@ -1,192 +1,239 @@
-import os
-import sqlite3
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-import ollama
-import keyboard
-import subprocess
+"""
+KenzAI - Main Entry Point
+Refactored to use modular architecture.
+"""
 import sys
 import time
-import threading
+import signal
+from pathlib import Path
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-WATCHED_FOLDERS = [
-    # Add folders here if you want KenzAI to watch files
-]
+# Setup imports - add current directory to path
+_current_dir = Path(__file__).parent
+if str(_current_dir) not in sys.path:
+    sys.path.insert(0, str(_current_dir))
 
-MEMORY_FOLDER = r"D:\Yazanaki\KenzAI\Assistant\memory"
+# Import modules
+from utils.logger import initialize_logger, get_logger
+from utils.helpers import load_config
+from core import KenzAIAssistant
 
-# Models
-CODE_MODEL = "deepseek-coder:6.7b"
-GENERAL_MODEL = "deepseek-v2:16b-lite-chat-q4_0"  # general-purpose chat model
-
-# Map topics to databases
-TOPIC_DBS = {
-    "yazanaki": os.path.join(MEMORY_FOLDER, "kenzai_yazanaki.db"),
-    "elementalmc": os.path.join(MEMORY_FOLDER, "kenzai_elementalmc.db"),
-    "general": os.path.join(MEMORY_FOLDER, "kenzai_general.db"),
-}
-
-# Ensure memory folder exists
-os.makedirs(MEMORY_FOLDER, exist_ok=True)
-
-# -----------------------------
-# ENSURE MODELS ARE LOCAL
-# -----------------------------
-def ensure_model(model_name):
-    try:
-        models = subprocess.check_output(["ollama", "list"], text=True)
-        if model_name not in models:
-            print(f"[KenzAI] Downloading model {model_name} locally...")
-            subprocess.run(["ollama", "pull", model_name], check=True)
-            print(f"[KenzAI] Model {model_name} downloaded.")
-        else:
-            print(f"[KenzAI] Model {model_name} found locally.")
-    except FileNotFoundError:
-        print("[KenzAI] Ollama CLI not found! Please make sure Ollama is installed and on PATH.")
-        sys.exit(1)
-
-# -----------------------------
-# AUTOMATIC DAEMON START
-# -----------------------------
-def is_daemon_running():
-    try:
-        subprocess.run(["ollama", "ping"], check=True, stdout=subprocess.DEVNULL)
-        return True
-    except subprocess.CalledProcessError:
-        return False
-    except FileNotFoundError:
-        print("[KenzAI] Ollama CLI not found! Cannot check daemon.")
-        sys.exit(1)
-
-def start_daemon():
-    print("[KenzAI] Starting Ollama daemon automatically...")
-    threading.Thread(target=lambda: subprocess.run(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL), daemon=True).start()
-    # Give it a moment to start
-    time.sleep(3)
-    print("[KenzAI] Ollama daemon should be running now.")
-
-if not is_daemon_running():
-    start_daemon()
-else:
-    print("[KenzAI] Ollama daemon already running.")
-
-# Ensure models exist locally
-ensure_model(CODE_MODEL)
-ensure_model(GENERAL_MODEL)
-
-# -----------------------------
-# FOLDER WATCHER (Optional)
-# -----------------------------
-class WatchHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        print(f"[KenzAI] Detected change in {event.src_path}")
-
-observer = Observer()
-for folder in WATCHED_FOLDERS:
-    observer.schedule(WatchHandler(), folder, recursive=True)
-observer.start()
-
-# -----------------------------
-# MEMORY FUNCTIONS (Thread-Safe, Multi-DB)
-# -----------------------------
-def detect_topic(prompt):
-    """Automatically detect topic for database selection."""
-    prompt_lower = prompt.lower()
-    for topic, db_file in TOPIC_DBS.items():
-        if topic in prompt_lower:
-            return db_file
-    return TOPIC_DBS["general"]
-
-def add_memory(topic, content, prompt):
-    """Save memory to appropriate database based on prompt context."""
-    db_file = detect_topic(prompt)
-    os.makedirs(os.path.dirname(db_file), exist_ok=True)
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS memory (topic TEXT, content TEXT)")
-        cursor.execute("INSERT INTO memory (topic, content) VALUES (?, ?)", (topic, content))
-        conn.commit()
-
-def search_memory(prompt):
-    """Search memory in the appropriate database automatically."""
-    db_file = detect_topic(prompt)
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS memory (topic TEXT, content TEXT)")
-        cursor.execute(
-            "SELECT content FROM memory WHERE topic LIKE ? OR content LIKE ?",
-            (f"%{prompt}%", f"%{prompt}%")
-        )
-        return [row[0] for row in cursor.fetchall()]
-
-# -----------------------------
-# MODEL SELECTION
-# -----------------------------
-current_model = None
-
-def choose_model(prompt):
-    """Select model based on prompt content."""
-    prompt_lower = prompt.lower()
-    if any(keyword in prompt_lower for keyword in ["code", "python", "javascript", "program", "script"]):
-        return CODE_MODEL
-    return GENERAL_MODEL
-
-# -----------------------------
-# CORE FUNCTION
-# -----------------------------
-def ask_kenzai(prompt):
-    global current_model
-    model_to_use = choose_model(prompt)
-    if current_model != model_to_use:
-        print(f"[KenzAI] Switching to model {model_to_use}...")
-        current_model = model_to_use
-
-    relevant = search_memory(prompt)
-    memory_context = "\n".join(relevant)
-
-    messages = []
-    if memory_context:
-        messages.append({'role': 'system', 'content': f"Memory:\n{memory_context}"})
-    messages.append({'role': 'user', 'content': prompt})
-
-    response = ollama.chat(
-        model=current_model,
-        messages=messages
-    )
-
-    try:
-        return response.message.content
-    except AttributeError:
-        return response['message']['content']
-
-# -----------------------------
-# HOTKEY INTERACTION
-# -----------------------------
-def kenzai_hotkey():
-    print("\n[KenzAI] Hotkey triggered. Type your prompt:")
-    user_input = input(">>> ")
-
-    # Auto-save memory based on prompt context
-    topic = user_input.split(" ", 1)[0]  # first word as topic
-    add_memory(topic, user_input, user_input)
-
-    reply = ask_kenzai(user_input)
-    print(f"[KenzAI] {reply}")
-
-keyboard.add_hotkey('ctrl+shift+j', kenzai_hotkey)
-
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
-print(f"[KenzAI] Running with models: CODE='{CODE_MODEL}', GENERAL='{GENERAL_MODEL}'... Press Ctrl+C to quit.")
+# Optional imports (may not be available)
 try:
-    while True:
-        time.sleep(0.1)
-except KeyboardInterrupt:
-    observer.stop()
-observer.join()
+    import keyboard
+    KEYBOARD_AVAILABLE = True
+except ImportError:
+    KEYBOARD_AVAILABLE = False
+
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    WATCHDOG_AVAILABLE = True
+except ImportError:
+    WATCHDOG_AVAILABLE = False
+
+
+class FileWatcher:
+    """Optional file system watcher."""
+    
+    def __init__(self, folders, logger):
+        """
+        Initialize file watcher.
+        
+        Args:
+            folders: List of folders to watch.
+            logger: Logger instance.
+        """
+        self.folders = folders
+        self.logger = logger
+        self.observer = None
+    
+    def start(self):
+        """Start watching folders."""
+        if not WATCHDOG_AVAILABLE:
+            self.logger.warning("Watchdog not available. File watching disabled.")
+            return
+        
+        if not self.folders:
+            return
+        
+        class WatchHandler(FileSystemEventHandler):
+            def __init__(self, logger):
+                self.logger = logger
+            
+            def on_modified(self, event):
+                if event.is_directory:
+                    return
+                self.logger.debug(f"Detected change in {event.src_path}")
+        
+        self.observer = Observer()
+        handler = WatchHandler(self.logger)
+        
+        for folder in self.folders:
+            folder_path = Path(folder)
+            if folder_path.exists():
+                self.observer.schedule(handler, str(folder_path), recursive=True)
+                self.logger.info(f"Watching folder: {folder}")
+            else:
+                self.logger.warning(f"Folder does not exist: {folder}")
+        
+        if self.observer.scheduled:
+            self.observer.start()
+            self.logger.info("File watcher started")
+    
+    def stop(self):
+        """Stop watching folders."""
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+            self.logger.info("File watcher stopped")
+
+
+class KenzAIMain:
+    """Main KenzAI application."""
+    
+    def __init__(self):
+        """Initialize KenzAI."""
+        # Load configuration
+        self.config = load_config()
+        
+        # Initialize logger
+        log_config = self.config.get('logging', {})
+        initialize_logger(
+            log_level=log_config.get('level', 'INFO'),
+            log_file=log_config.get('file')
+        )
+        self.logger = get_logger()
+        
+        # Initialize assistant
+        self.logger.info("Initializing KenzAI...")
+        self.assistant = KenzAIAssistant(self.config)
+        
+        # Initialize file watcher (if enabled)
+        self.file_watcher = None
+        integrations = self.config.get('integrations', {})
+        file_system = integrations.get('file_system', {})
+        
+        if file_system.get('enabled', False):
+            watched_folders = file_system.get('whitelist_folders', [])
+            if watched_folders:
+                self.file_watcher = FileWatcher(watched_folders, self.logger)
+                self.file_watcher.start()
+        
+        # Setup hotkey (if enabled and available)
+        self.hotkey_enabled = False
+        if KEYBOARD_AVAILABLE:
+            try:
+                hotkey = self.config.get('hotkey', 'ctrl+shift+j')
+                keyboard.add_hotkey(hotkey, self._hotkey_handler)
+                self.hotkey_enabled = True
+                self.logger.info(f"Hotkey enabled: {hotkey}")
+            except Exception as e:
+                self.logger.warning(f"Failed to register hotkey: {e}")
+        else:
+            self.logger.info("Keyboard module not available. Hotkey disabled.")
+        
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        if hasattr(signal, 'SIGTERM'):
+            signal.signal(signal.SIGTERM, self._signal_handler)
+        
+        self.logger.info("KenzAI initialized successfully")
+        self.logger.info(f"Models: CODE='{self.assistant.model_manager.models['code']}', "
+                        f"GENERAL='{self.assistant.model_manager.models['general']}'")
+    
+    def _hotkey_handler(self):
+        """Handle hotkey press."""
+        try:
+            print("\n[KenzAI] Hotkey triggered. Type your prompt:")
+            user_input = input(">>> ")
+            
+            if user_input.strip():
+                reply = self.assistant.process_query(user_input)
+                print(f"[KenzAI] {reply}")
+        except Exception as e:
+            self.logger.error(f"Error in hotkey handler: {e}")
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals."""
+        self.logger.info("Shutdown signal received. Gracefully shutting down...")
+        self.shutdown()
+        sys.exit(0)
+    
+    def shutdown(self):
+        """Gracefully shutdown KenzAI."""
+        self.logger.info("Shutting down KenzAI...")
+        
+        # Stop file watcher
+        if self.file_watcher:
+            self.file_watcher.stop()
+        
+        # Remove hotkey
+        if self.hotkey_enabled and KEYBOARD_AVAILABLE:
+            try:
+                keyboard.unhook_all()
+            except Exception:
+                pass
+        
+        shutdown_greeting = self.assistant.get_shutdown_greeting()
+        self.logger.info(shutdown_greeting)
+    
+    def run_interactive(self):
+        """Run in interactive mode."""
+        self.logger.info("KenzAI interactive mode. Type 'exit' or 'quit' to stop.")
+        print(f"\n{self.assistant.get_greeting()}\n")
+        
+        try:
+            while True:
+                try:
+                    user_input = input("You: ").strip()
+                    
+                    if not user_input:
+                        continue
+                    
+                    if user_input.lower() in ['exit', 'quit', 'q']:
+                        break
+                    
+                    # Process query
+                    response = self.assistant.process_query(user_input)
+                    print(f"KenzAI: {response}\n")
+                    
+                except EOFError:
+                    break
+                except KeyboardInterrupt:
+                    break
+        finally:
+            self.shutdown()
+    
+    def run_daemon(self):
+        """Run as daemon (background service)."""
+        self.logger.info("KenzAI daemon mode. Running in background...")
+        print("KenzAI is running in daemon mode.")
+        print("Press Ctrl+C to stop.")
+        
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.shutdown()
+
+
+def main():
+    """Main entry point."""
+    try:
+        app = KenzAIMain()
+        
+        # Determine mode (interactive or daemon)
+        # For now, default to interactive. Daemon mode will be handled by kenzai_daemon.py
+        app.run_interactive()
+        
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        sys.exit(0)
+    except Exception as e:
+        logger = get_logger()
+        logger.critical(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

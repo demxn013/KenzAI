@@ -5,8 +5,13 @@ Main orchestrator that coordinates all components.
 import ollama
 from typing import Optional, Dict, Any, List
 
-from ..utils.logger import get_logger
-from ..utils.helpers import load_config
+try:
+    from utils.logger import get_logger
+    from utils.helpers import load_config
+except ImportError:
+    # Fallback for package-style imports
+    from ..utils.logger import get_logger
+    from ..utils.helpers import load_config
 from .model_manager import ModelManager
 from .topic_manager import TopicManager
 from .personality import Personality

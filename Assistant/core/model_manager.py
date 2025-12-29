@@ -9,8 +9,12 @@ import threading
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from ..utils.logger import get_logger
-from ..utils.helpers import load_config
+try:
+    from utils.logger import get_logger
+    from utils.helpers import load_config
+except ImportError:
+    from ..utils.logger import get_logger
+    from ..utils.helpers import load_config
 
 logger = get_logger()
 

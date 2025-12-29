@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from contextlib import contextmanager
 
-from ..utils.logger import get_logger
-from ..utils.helpers import load_config, get_memory_path
+try:
+    from utils.logger import get_logger
+    from utils.helpers import load_config, get_memory_path
+except ImportError:
+    from ..utils.logger import get_logger
+    from ..utils.helpers import load_config, get_memory_path
 
 logger = get_logger()
 

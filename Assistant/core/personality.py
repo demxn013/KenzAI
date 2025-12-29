@@ -3,8 +3,12 @@ Personality System
 Handles KenzAI's personality and response style.
 """
 from typing import Dict, Any, Optional, List
-from ..utils.logger import get_logger
-from ..utils.helpers import load_config
+try:
+    from utils.logger import get_logger
+    from utils.helpers import load_config
+except ImportError:
+    from ..utils.logger import get_logger
+    from ..utils.helpers import load_config
 
 logger = get_logger()
 

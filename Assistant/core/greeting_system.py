@@ -6,8 +6,12 @@ import random
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from ..utils.logger import get_logger
-from ..utils.helpers import load_config, load_user_preferences, save_user_preferences, format_time_aware_greeting_time
+try:
+    from utils.logger import get_logger
+    from utils.helpers import load_config, load_user_preferences, save_user_preferences, format_time_aware_greeting_time
+except ImportError:
+    from ..utils.logger import get_logger
+    from ..utils.helpers import load_config, load_user_preferences, save_user_preferences, format_time_aware_greeting_time
 
 logger = get_logger()
 

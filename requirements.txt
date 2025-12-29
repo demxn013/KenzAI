@@ -2,3 +2,7 @@ ollama
 watchdog
 keyboard
 pyyaml
+pystray
+Pillow
+SpeechRecognition
+pyttsx3

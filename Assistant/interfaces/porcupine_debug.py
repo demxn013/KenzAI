@@ -30,7 +30,12 @@ packages_ok = True
 
 try:
     import pvporcupine
-    print(f"    ✓ pvporcupine: {pvporcupine.__version__}")
+    # Try to get version, but don't fail if not available
+    try:
+        version = pvporcupine.__version__
+    except AttributeError:
+        version = "installed (version unknown)"
+    print(f"    ✓ pvporcupine: {version}")
 except ImportError as e:
     print(f"    ❌ pvporcupine: NOT INSTALLED")
     print(f"       Error: {e}")

@@ -1,10 +1,11 @@
 """
 KenzAI Voice Interface
 Handles voice input/output for KenzAI using sounddevice.
+Simplified to work alongside Porcupine wake word detection.
 """
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any
 import io
 import numpy as np
 
@@ -58,7 +59,6 @@ class VoiceInterface:
         self.config = config
         self.voice_config = config.get('interfaces', {}).get('voice', {})
         self.enabled = self.voice_config.get('enabled', True)
-        self.wake_word = self.voice_config.get('wake_word', 'kenzai')
         self.language = self.voice_config.get('language', 'en-US')
         self.tts_voice = self.voice_config.get('tts_voice', 'male')
         
@@ -83,7 +83,7 @@ class VoiceInterface:
                 logger.info(f"Default input device: {default_input['name']}")
                 
                 self.audio_available = True
-                logger.info("Voice recognition initialized with sounddevice")
+                logger.info("Voice recognition initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize audio: {e}")
                 self.recognizer = None
@@ -205,37 +205,6 @@ class VoiceInterface:
             logger.error(f"Error listening: {e}")
             return None
     
-    def listen_continuous(self, callback: Callable[[str], None], chunk_duration: float = 3.0):
-        """
-        Continuously listen for speech.
-        
-        Args:
-            callback: Function to call with recognized text.
-            chunk_duration: Duration of each recording chunk.
-        """
-        if not self.audio_available:
-            logger.warning("Cannot start continuous listening: audio not available")
-            return
-        
-        import threading
-        
-        def listen_loop():
-            logger.info("Starting continuous listening...")
-            
-            while True:
-                try:
-                    text = self.listen(phrase_time_limit=chunk_duration)
-                    if text:
-                        callback(text)
-                except Exception as e:
-                    logger.error(f"Error in continuous listening: {e}")
-                    import time
-                    time.sleep(1)
-        
-        thread = threading.Thread(target=listen_loop, daemon=True)
-        thread.start()
-        return thread
-    
     def speak(self, text: str):
         """
         Speak text using TTS.
@@ -253,24 +222,6 @@ class VoiceInterface:
             logger.debug(f"Spoke: {text}")
         except Exception as e:
             logger.error(f"Failed to speak: {e}")
-    
-    def start_continuous_listening(self, callback: Callable[[str], None]):
-        """
-        Start continuous listening for wake word.
-        
-        Args:
-            callback: Function to call when wake word is detected.
-        """
-        if not self.recognizer or not self.audio_available:
-            logger.warning("Cannot start continuous listening: audio not available")
-            return
-        
-        def wake_word_callback(text: str):
-            if self.wake_word.lower() in text.lower():
-                logger.info(f"Wake word detected: {text}")
-                callback(text)
-        
-        return self.listen_continuous(wake_word_callback, chunk_duration=3.0)
 
 
 def create_voice_interface(config: Optional[Dict[str, Any]] = None) -> Optional[VoiceInterface]:

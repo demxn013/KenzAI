@@ -1,15 +1,15 @@
 """
-Assistant Core
-Main orchestrator that coordinates all components.
+Assistant Core - IMPROVED VERSION
+Better memory management and error recovery.
 """
 import ollama
 from typing import Optional, Dict, Any, List
+import time
 
 try:
     from utils.logger import get_logger
     from utils.helpers import load_config
 except ImportError:
-    # Fallback for package-style imports
     from ..utils.logger import get_logger
     from ..utils.helpers import load_config
 from .model_manager import ModelManager
@@ -22,15 +22,10 @@ logger = get_logger()
 
 
 class KenzAIAssistant:
-    """Main KenzAI assistant orchestrator."""
+    """Main KenzAI assistant orchestrator with improved error handling."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize KenzAI Assistant.
-        
-        Args:
-            config: Configuration dict. If None, loads from file.
-        """
+        """Initialize KenzAI Assistant."""
         if config is None:
             config = load_config()
         
@@ -44,9 +39,8 @@ class KenzAIAssistant:
         self.conversation_manager = ConversationManager()
         self.greeting_system = GreetingSystem(config)
         
-        # Ensure models are ready
-        if not self.model_manager.ensure_all_models():
-            logger.warning("Some models may not be available")
+        # Ensure models are ready with retry
+        self._ensure_models_with_retry()
         
         # Initialize conversation with system prompt
         conversation = self.conversation_manager.get_current_conversation()
@@ -54,23 +48,68 @@ class KenzAIAssistant:
         
         logger.info("KenzAI Assistant initialized")
     
-    def get_greeting(self) -> str:
-        """
-        Get a time-aware greeting.
+    def _ensure_models_with_retry(self, max_retries: int = 3, delay: float = 2.0):
+        """Ensure models are available with retry logic."""
+        for attempt in range(max_retries):
+            try:
+                if self.model_manager.ensure_all_models():
+                    logger.info("All models ready")
+                    return
+                else:
+                    logger.warning(f"Some models unavailable (attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+            except Exception as e:
+                logger.error(f"Error ensuring models: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
         
-        Returns:
-            Greeting string.
-        """
+        logger.warning("Could not ensure all models after retries")
+    
+    def get_greeting(self) -> str:
+        """Get a time-aware greeting."""
         return self.greeting_system.get_greeting()
     
     def get_shutdown_greeting(self) -> str:
-        """
-        Get a shutdown greeting.
-        
-        Returns:
-            Shutdown greeting string.
-        """
+        """Get a shutdown greeting."""
         return self.greeting_system.get_shutdown_greeting()
+    
+    def _should_save_to_memory(self, prompt: str, response: str) -> bool:
+        """
+        Determine if this interaction should be saved to long-term memory.
+        
+        Criteria:
+        - Not a trivial greeting or short response
+        - Contains meaningful information
+        - User explicitly asks to remember something
+        """
+        # Check for explicit remember request
+        if any(word in prompt.lower() for word in ['remember', 'save this', 'note that', 'keep in mind']):
+            return True
+        
+        # Skip very short interactions
+        if len(prompt) < 20 or len(response) < 50:
+            return False
+        
+        # Skip common greetings
+        greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+        if any(greeting in prompt.lower() for greeting in greetings) and len(prompt) < 50:
+            return False
+        
+        # Save code-related queries
+        if any(word in prompt.lower() for word in ['code', 'function', 'class', 'error', 'bug', 'debug']):
+            return True
+        
+        # Save questions
+        if any(word in prompt.lower() for word in ['how', 'what', 'why', 'when', 'where', 'explain']):
+            return True
+        
+        # Save personal information
+        if any(word in prompt.lower() for word in ['my', 'i am', 'i have', 'i like', 'i prefer']):
+            return True
+        
+        # Default: save if response is substantial
+        return len(response) > 200
     
     def process_query(
         self,
@@ -97,34 +136,22 @@ class KenzAIAssistant:
             if conversation is None:
                 conversation_id = self.conversation_manager.create_conversation(conversation_id)
                 conversation = self.conversation_manager.get_conversation(conversation_id)
-                # Add system prompt to new conversation
                 conversation.add_system_message(self.personality.get_system_prompt())
             
             # Select model
             model_name = self.model_manager.select_model(prompt)
-            self.model_manager.switch_model(model_name)
+            
+            # Try to switch model with retry
+            if not self._switch_model_with_retry(model_name):
+                return "I apologize, but I'm having trouble accessing my language models. Please try again in a moment."
             
             # Get memory context
             memory_context = ""
             if use_memory:
                 memory_context = self.topic_manager.get_memory_context(prompt, max_memory_results)
                 if memory_context:
-                    # Add memory as system message if not already present
-                    messages = conversation.get_messages()
-                    has_memory_context = any(
-                        'Memory Context' in msg.get('content', '')
-                        for msg in messages
-                        if msg.get('role') == 'system'
-                    )
-                    
-                    if not has_memory_context and memory_context:
-                        # Update system message with memory
-                        system_messages = [m for m in messages if m['role'] == 'system']
-                        if system_messages:
-                            # Append memory to existing system message
-                            system_messages[0]['content'] += f"\n\n{memory_context}"
-                        else:
-                            conversation.add_system_message(memory_context)
+                    # Add memory as a separate system message
+                    conversation.add_system_message(f"\n{memory_context}\n")
             
             # Add user message
             conversation.add_user_message(prompt)
@@ -132,26 +159,20 @@ class KenzAIAssistant:
             # Get messages for Ollama
             messages = conversation.get_messages()
             
-            # Call Ollama
-            logger.debug(f"Querying model {model_name} with {len(messages)} messages")
-            response = ollama.chat(
-                model=model_name,
-                messages=messages
-            )
+            # Call Ollama with retry
+            response_content = self._call_ollama_with_retry(model_name, messages)
             
-            # Extract response content
-            try:
-                response_content = response.message.content
-            except AttributeError:
-                response_content = response['message']['content']
+            if response_content is None:
+                return "I apologize, but I'm having difficulty processing your request. Please try again."
             
             # Add assistant response to conversation
             conversation.add_assistant_message(response_content)
             
-            # Optionally save to memory (first word as topic)
-            # This could be made configurable
-            topic = prompt.split(" ", 1)[0] if " " in prompt else "general"
-            self.topic_manager.add_memory(topic, prompt, prompt)
+            # Save to long-term memory if appropriate
+            if self._should_save_to_memory(prompt, response_content):
+                topic = self.topic_manager.detect_topic(prompt)
+                self.topic_manager.add_memory(topic, response_content, prompt)
+                logger.debug(f"Saved interaction to long-term memory (topic: {topic})")
             
             # Format response according to personality
             formatted_response = self.personality.format_response(response_content)
@@ -160,51 +181,86 @@ class KenzAIAssistant:
             
         except Exception as e:
             logger.error(f"Error processing query: {e}", exc_info=True)
-            return f"I apologize, but I encountered an error: {str(e)}"
+            return f"I apologize, your Highness, but I encountered an unexpected error. Please try again."
     
-    def add_memory(self, topic: str, content: str):
-        """
-        Manually add memory.
+    def _switch_model_with_retry(self, model_name: str, max_retries: int = 2) -> bool:
+        """Switch model with retry logic."""
+        for attempt in range(max_retries):
+            try:
+                if self.model_manager.switch_model(model_name):
+                    return True
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Failed to switch model (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+        return False
+    
+    def _call_ollama_with_retry(
+        self, 
+        model_name: str, 
+        messages: List[Dict[str, str]], 
+        max_retries: int = 2
+    ) -> Optional[str]:
+        """Call Ollama with retry logic."""
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"Querying model {model_name} with {len(messages)} messages")
+                
+                response = ollama.chat(
+                    model=model_name,
+                    messages=messages
+                )
+                
+                # Extract response content
+                try:
+                    return response.message.content
+                except AttributeError:
+                    return response['message']['content']
+                    
+            except Exception as e:
+                logger.error(f"Ollama error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                else:
+                    return None
         
-        Args:
-            topic: Topic name.
-            content: Content to store.
-        """
-        self.topic_manager.add_memory(topic, content)
+        return None
+    
+    def add_memory(self, topic: str, content: str, prompt: Optional[str] = None):
+        """Manually add memory."""
+        self.topic_manager.add_memory(topic, content, prompt, force=True)
     
     def search_memory(self, query: str, limit: int = 10) -> List[str]:
-        """
-        Search memory.
-        
-        Args:
-            query: Search query.
-            limit: Maximum results.
-        
-        Returns:
-            List of memory entries.
-        """
+        """Search memory."""
         return self.topic_manager.search_memory(query, limit=limit)
     
     def get_conversation(self, conversation_id: Optional[str] = None) -> Optional[Conversation]:
-        """
-        Get a conversation.
-        
-        Args:
-            conversation_id: Conversation ID. If None, returns current.
-        
-        Returns:
-            Conversation object or None.
-        """
+        """Get a conversation."""
         return self.conversation_manager.get_conversation(conversation_id)
     
     def clear_conversation(self, conversation_id: Optional[str] = None):
-        """
-        Clear a conversation.
-        
-        Args:
-            conversation_id: Conversation ID. If None, clears current.
-        """
+        """Clear a conversation."""
         conversation = self.conversation_manager.get_conversation(conversation_id)
         if conversation:
             conversation.clear()
-
+            # Re-add system prompt
+            conversation.add_system_message(self.personality.get_system_prompt())
+    
+    def cleanup_old_memories(self, days: int = 90):
+        """Clean up old memories across all topics."""
+        for topic in self.topic_manager.default_topics:
+            try:
+                self.topic_manager.cleanup_old_memories(topic, days=days)
+            except Exception as e:
+                logger.error(f"Failed to cleanup {topic}: {e}")
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Get memory statistics across all topics."""
+        stats = {}
+        for topic in self.topic_manager.default_topics:
+            try:
+                stats[topic] = self.topic_manager.get_topic_stats(topic)
+            except Exception as e:
+                logger.error(f"Failed to get stats for {topic}: {e}")
+        return stats

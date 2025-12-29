@@ -21,9 +21,9 @@ try:
     import sounddevice as sd
     import numpy as np
     PORCUPINE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     PORCUPINE_AVAILABLE = False
-    logger.error("Porcupine or sounddevice not available")
+    logger.error(f"Porcupine or sounddevice not available: {e}")
 
 
 class PorcupineWakeWord:
@@ -45,7 +45,7 @@ class PorcupineWakeWord:
                     grapefruit, grasshopper, hey google, hey siri, jarvis, ok google,
                     picovoice, porcupine, terminator
             sensitivity: Detection sensitivity (0.0-1.0). Higher = more sensitive but more false positives.
-            access_key: Picovoice access key (required for custom keywords).
+            access_key: Picovoice access key (required for Porcupine 2.0+).
             keyword_path: Path to custom .ppn keyword file (for "kenzai").
         
         Raises:
@@ -67,15 +67,18 @@ class PorcupineWakeWord:
         self._callback = None
         
         try:
-            # Initialize Porcupine
+            # Check if we need an access key (Porcupine v2.0+ requires it)
             if keyword_path:
-                # Custom keyword file
+                # Custom keyword requires access key
+                if not access_key:
+                    raise ValueError(
+                        "access_key is required for custom keywords. "
+                        "Get a free access key from https://console.picovoice.ai/"
+                    )
+                
                 keyword_path = Path(keyword_path)
                 if not keyword_path.exists():
                     raise FileNotFoundError(f"Keyword file not found: {keyword_path}")
-                
-                if not access_key:
-                    raise ValueError("access_key required for custom keywords")
                 
                 self.porcupine = pvporcupine.create(
                     access_key=access_key,
@@ -84,11 +87,30 @@ class PorcupineWakeWord:
                 )
                 logger.info(f"Porcupine initialized with custom keyword: {keyword}")
             else:
-                # Built-in keyword
-                self.porcupine = pvporcupine.create(
-                    keywords=[keyword],
-                    sensitivities=[self.sensitivity]
-                )
+                # Built-in keyword - try with and without access key
+                try:
+                    if access_key:
+                        self.porcupine = pvporcupine.create(
+                            access_key=access_key,
+                            keywords=[keyword],
+                            sensitivities=[self.sensitivity]
+                        )
+                    else:
+                        # Try without access key (for older Porcupine versions)
+                        self.porcupine = pvporcupine.create(
+                            keywords=[keyword],
+                            sensitivities=[self.sensitivity]
+                        )
+                except TypeError as e:
+                    # If we get a TypeError about missing access_key, provide helpful message
+                    if "access_key" in str(e):
+                        raise ValueError(
+                            "Porcupine 2.0+ requires an access_key. "
+                            "Get a free access key from https://console.picovoice.ai/ "
+                            "and add it to your config.yaml under interfaces.daemon.porcupine_access_key"
+                        )
+                    raise
+                
                 logger.info(f"Porcupine initialized with built-in keyword: '{keyword}'")
             
             self.sample_rate = self.porcupine.sample_rate
@@ -208,7 +230,7 @@ def create_porcupine_wake_word(
     Args:
         keyword: Keyword to detect.
         sensitivity: Detection sensitivity (0.0-1.0).
-        access_key: Picovoice access key (for custom keywords).
+        access_key: Picovoice access key (required for Porcupine 2.0+).
         keyword_path: Path to custom .ppn file (for custom keywords).
     
     Returns:
@@ -230,10 +252,14 @@ if __name__ == "__main__":
     # Test wake word detection
     print("Testing Porcupine wake word detection...")
     print("Say 'jarvis' to test (Ctrl+C to exit)")
+    print("\nNote: If you get an access_key error, get a free key from:")
+    print("https://console.picovoice.ai/")
+    print()
     
     def on_wake():
         print("\n*** WAKE WORD DETECTED! ***\n")
     
+    # Try to initialize without access key first (for backward compatibility)
     wake = create_porcupine_wake_word(keyword="jarvis", sensitivity=0.5)
     
     if wake:
@@ -246,4 +272,8 @@ if __name__ == "__main__":
             print("\nStopping...")
             wake.cleanup()
     else:
-        print("Failed to initialize Porcupine")
+        print("\nFailed to initialize Porcupine.")
+        print("\nIf you see an access_key error:")
+        print("1. Get a free access key from https://console.picovoice.ai/")
+        print("2. Add it to config.yaml under interfaces.daemon.porcupine_access_key")
+        print("3. Or pass it directly: create_porcupine_wake_word(access_key='YOUR_KEY')")

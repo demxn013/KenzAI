@@ -7,6 +7,7 @@ import keyboard
 import subprocess
 import sys
 import time
+import threading
 
 # -----------------------------
 # CONFIG
@@ -47,13 +48,34 @@ def ensure_model(model_name):
         print("[KenzAI] Ollama CLI not found! Please make sure Ollama is installed and on PATH.")
         sys.exit(1)
 
-def check_daemon():
-    print("[KenzAI] Make sure Ollama daemon is running with `ollama serve` for best performance.")
+# -----------------------------
+# AUTOMATIC DAEMON START
+# -----------------------------
+def is_daemon_running():
+    try:
+        subprocess.run(["ollama", "ping"], check=True, stdout=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+    except FileNotFoundError:
+        print("[KenzAI] Ollama CLI not found! Cannot check daemon.")
+        sys.exit(1)
+
+def start_daemon():
+    print("[KenzAI] Starting Ollama daemon automatically...")
+    threading.Thread(target=lambda: subprocess.run(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL), daemon=True).start()
+    # Give it a moment to start
+    time.sleep(3)
+    print("[KenzAI] Ollama daemon should be running now.")
+
+if not is_daemon_running():
+    start_daemon()
+else:
+    print("[KenzAI] Ollama daemon already running.")
 
 # Ensure models exist locally
 ensure_model(CODE_MODEL)
 ensure_model(GENERAL_MODEL)
-check_daemon()
 
 # -----------------------------
 # FOLDER WATCHER (Optional)

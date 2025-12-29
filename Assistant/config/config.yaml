@@ -47,12 +47,11 @@ interfaces:
   daemon:
     enabled: true
     start_with_windows: true
-    # Hybrid wake word system
-    use_hybrid_wake: true
-    porcupine_keyword: "jarvis"  # Fast detection word
-    verify_keyword: "kenzai"     # Word to verify after Porcupine triggers
-    porcupine_sensitivity: 0.5
-    verification_timeout: 3.0    # Seconds to listen for verification
+     # Custom "kenzai" keyword configuration
+    porcupine_keyword: "kenzai"
+    porcupine_sensitivity: 1.0
+    porcupine_access_key: "MQuwPtdtG5hLtDpRtDaS9qx1QBxQlY82rXSk3Sn0rPEevGdLtQUzxA=="
+    porcupine_keyword_path: "./assets/wake_words/kenzai.ppn"
 
 # Integrations
 integrations:

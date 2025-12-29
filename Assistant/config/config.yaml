@@ -1,0 +1,78 @@
+# Device & User
+device:
+  id: "local_owner"
+  name: "Primary Workstation"
+
+# Models
+models:
+  code: "deepseek-coder:6.7b"
+  general: "deepseek-v2:16b-lite-chat-q4_0"
+
+# Memory
+memory:
+  base_path: "./memory"
+  default_topics: ["general", "yazanaki", "elementalmc"]
+  auto_topic_detection: true
+  similarity_threshold: 0.7
+
+# Interfaces
+interfaces:
+  voice:
+    enabled: true
+    wake_word: "kenzai"
+    language: "en-US"
+    tts_voice: "male"  # or specific voice name
+    
+  gui:
+    default_appearance: "circle" # or circle
+    default_position: "top-right"
+    default_size: [400, 400]
+    draggable: true
+    resizable: true
+    snap_to_edges: true
+    always_on_top: true
+    
+  discord:
+    enabled: true
+    bridge_mode: "direct"  # calls assistant directly
+
+  daemon:
+    enabled: true
+    start_with_windows: true
+    wake_phrase: "arise kenzai"
+  
+
+
+# Integrations
+integrations:
+  file_system:
+    enabled: true
+    whitelist_folders:
+      - "D:/Yazanaki"
+      - "D:/Projects"
+      - "C:/Users/YourName/Documents/Code"
+    allowed_extensions: [".py", ".js", ".txt", ".md", ".yaml", ".json"]
+    create_backups: true
+    
+  spotify:
+    enabled: true
+    client_id: "${SPOTIFY_CLIENT_ID}"
+    client_secret: "${SPOTIFY_CLIENT_SECRET}"
+    
+  app_launcher:
+    enabled: true
+    apps:
+      vscode: "C:/Program Files/Microsoft VS Code/Code.exe"
+      browser: "chrome"
+      spotify: "spotify"
+
+# Personality
+personality:
+  style: "bushido_butler"
+  verbosity: "concise"
+  confirmation_required: false  # Execute without asking
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./data/logs/kenzai.log"

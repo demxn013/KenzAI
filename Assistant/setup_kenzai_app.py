@@ -128,21 +128,35 @@ def create_desktop_shortcut():
         
         desktop = Path.home() / "Desktop"
         app_root = Path(__file__).parent
+        shortcut_path = desktop / "KenzAI.lnk"
+        
+        # Delete existing shortcut if it exists
+        if shortcut_path.exists():
+            shortcut_path.unlink()
+            print("  Removed old shortcut")
         
         shell = win32com.client.Dispatch("WScript.Shell")
-        shortcut = shell.CreateShortCut(str(desktop / "KenzAI.lnk"))
+        shortcut = shell.CreateShortCut(str(shortcut_path))
         shortcut.Targetpath = str(app_root / "start_kenzai.bat")
         shortcut.WorkingDirectory = str(app_root)
         
-        # Only set icon if it exists
+        # Set icon if it exists
         icon_path = app_root / "assets" / "icon.ico"
         if icon_path.exists():
-            shortcut.IconLocation = str(icon_path)
+            # Format: "path_to_icon.ico,0" (the ,0 means use the first icon)
+            shortcut.IconLocation = f'"{icon_path}",0'
+            print(f"  Using icon: {icon_path}")
+        else:
+            print("  No icon found - using default Windows icon")
         
         shortcut.Description = "KenzAI Voice Assistant"
         shortcut.save()
         
-        print(f"✓ Created desktop shortcut: {desktop / 'KenzAI.lnk'}")
+        print(f"✓ Created desktop shortcut: {shortcut_path}")
+        print("\n  If icon doesn't appear immediately:")
+        print("  1. Delete the shortcut")
+        print("  2. Run setup again")
+        print("  3. Or restart Explorer (Ctrl+Shift+Esc → Restart Windows Explorer)")
     
     except ImportError:
         print("⚠ Could not create shortcut (pip install pywin32)")

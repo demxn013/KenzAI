@@ -1,0 +1,7 @@
+Assistant/start_kenzai_silent.bat
+Assistant/start_kenzai.bat
+Assistant/uninstall.py
+Assistant/__pycache__/launcher.cpython-314.pyc
+Assistant/config/user_preferences.json
+Assistant/data/kenzai.log
+Assistant/utils/__pycache__/

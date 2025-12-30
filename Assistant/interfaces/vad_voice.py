@@ -1,7 +1,7 @@
 """
-VAD-Enabled Voice Interface - FIXED VERSION
+VAD-Enabled Voice Interface - OPTIMIZED VERSION
+Faster response times and better TTS handling.
 Voice Activity Detection for natural continuous listening.
-Fixes callback issues and improves error handling.
 """
 import sys
 from pathlib import Path
@@ -73,10 +73,10 @@ class VADVoiceInterface:
         self.language = self.voice_config.get('language', 'en-US')
         self.tts_voice = self.voice_config.get('tts_voice', 'male')
         
-        # VAD settings
+        # VAD settings - OPTIMIZED for faster response
         self.vad_aggressiveness = self.vad_config.get('aggressiveness', 2)  # 0-3
-        self.silence_duration = self.vad_config.get('silence_duration', 0.9)  # seconds
-        self.min_speech_duration = self.vad_config.get('min_speech_duration', 0.3)  # seconds
+        self.silence_duration = self.vad_config.get('silence_duration', 0.7)  # Reduced from 0.9
+        self.min_speech_duration = self.vad_config.get('min_speech_duration', 0.2)  # Reduced from 0.3
         
         # Audio settings (VAD requires 16kHz, 16-bit, mono)
         self.sample_rate = 16000
@@ -89,7 +89,7 @@ class VADVoiceInterface:
         if VAD_AVAILABLE:
             try:
                 self.vad = webrtcvad.Vad(self.vad_aggressiveness)
-                logger.info(f"VAD initialized (aggressiveness={self.vad_aggressiveness})")
+                logger.info(f"VAD initialized (aggressiveness={self.vad_aggressiveness}, silence={self.silence_duration}s)")
             except Exception as e:
                 logger.warning(f"Failed to initialize VAD: {e}")
                 self.vad = None
@@ -101,6 +101,11 @@ class VADVoiceInterface:
         if SPEECH_RECOGNITION_AVAILABLE and SOUNDDEVICE_AVAILABLE and self.enabled:
             try:
                 self.recognizer = sr.Recognizer()
+                
+                # Optimize recognizer settings
+                self.recognizer.energy_threshold = 3000
+                self.recognizer.dynamic_energy_threshold = False
+                self.recognizer.pause_threshold = 0.5  # Faster cutoff
                 
                 # Test audio device
                 devices = sd.query_devices()
@@ -115,9 +120,10 @@ class VADVoiceInterface:
                 logger.warning(f"Failed to initialize audio: {e}")
                 self.recognizer = None
         
-        # Initialize TTS
+        # Initialize TTS with proper thread safety
         self.tts_engine = None
         self._tts_lock = threading.Lock()
+        self._tts_busy = False
         
         if TTS_AVAILABLE and self.enabled:
             try:
@@ -131,8 +137,8 @@ class VADVoiceInterface:
                                 self.tts_engine.setProperty('voice', voice.id)
                                 break
                 
-                self.tts_engine.setProperty('rate', 150)
-                self.tts_engine.setProperty('volume', 0.7)
+                self.tts_engine.setProperty('rate', 175)  # Slightly faster
+                self.tts_engine.setProperty('volume', 0.8)
                 
                 logger.info("TTS engine initialized")
             except Exception as e:
@@ -145,6 +151,8 @@ class VADVoiceInterface:
         self._callback = None
         self._audio_stream = None
         self._speech_queue = queue.Queue()
+        self._last_speech_time = 0
+        self._min_speech_interval = 0.5  # Minimum time between processing speech
     
     def _is_speech(self, audio_frame: bytes) -> bool:
         """
@@ -210,6 +218,8 @@ class VADVoiceInterface:
         silence_threshold = int(self.silence_duration * 1000 / self.frame_duration)
         min_speech_frames = int(self.min_speech_duration * 1000 / self.frame_duration)
         
+        logger.debug(f"Silence threshold: {silence_threshold} frames, Min speech: {min_speech_frames} frames")
+        
         try:
             # Audio callback
             def audio_callback(indata, frames, time_info, status):
@@ -246,12 +256,18 @@ class VADVoiceInterface:
                     if silence_frames >= silence_threshold:
                         # Check if we have minimum speech duration
                         if len(speech_frames) >= min_speech_frames:
-                            logger.debug(f"🎤 Speech ended ({len(speech_frames)} frames)")
-                            
-                            # Queue the speech for processing
-                            self._speech_queue.put(speech_frames.copy())
+                            # Check minimum interval between speech
+                            now = time.time()
+                            if now - self._last_speech_time >= self._min_speech_interval:
+                                logger.debug(f"🎤 Speech ended ({len(speech_frames)} frames, {len(speech_frames) * self.frame_duration / 1000:.1f}s)")
+                                
+                                # Queue the speech for processing
+                                self._speech_queue.put(speech_frames.copy())
+                                self._last_speech_time = now
+                            else:
+                                logger.debug("Too soon after last speech, ignoring")
                         else:
-                            logger.debug("Speech too short, ignoring")
+                            logger.debug(f"Speech too short ({len(speech_frames)} < {min_speech_frames}), ignoring")
                         
                         # Reset state
                         is_speaking = False
@@ -307,6 +323,7 @@ class VADVoiceInterface:
             frames: List of audio frames (numpy arrays).
         """
         try:
+            start_time = time.time()
             logger.debug("Processing speech...")
             
             # Combine frames
@@ -330,9 +347,11 @@ class VADVoiceInterface:
             try:
                 logger.debug("Calling Google Speech Recognition...")
                 text = self.recognizer.recognize_google(audio, language=self.language)
-                logger.info(f"✓ Recognized: {text}")
                 
-                # Call callback in main thread context
+                processing_time = time.time() - start_time
+                logger.info(f"✓ Recognized: {text} (took {processing_time:.1f}s)")
+                
+                # Call callback
                 if self._callback:
                     try:
                         self._callback(text)
@@ -382,7 +401,7 @@ class VADVoiceInterface:
     
     def speak(self, text: str):
         """
-        Speak text using TTS.
+        Speak text using TTS with proper thread safety.
         
         Args:
             text: Text to speak.
@@ -391,29 +410,45 @@ class VADVoiceInterface:
             logger.debug(f"Would speak: {text}")
             return
         
+        # Check if already speaking
+        if self._tts_busy:
+            logger.debug("TTS busy, queuing speech...")
+            return
+        
         try:
             with self._tts_lock:
-                # Stop any ongoing speech
+                self._tts_busy = True
+                
                 try:
-                    self.tts_engine.stop()
-                except Exception:
-                    pass
-                
-                # Speak in a separate thread to avoid blocking
-                def _speak_thread():
-                    try:
-                        self.tts_engine.say(text)
-                        self.tts_engine.runAndWait()
-                    except Exception as e:
-                        logger.error(f"TTS error in thread: {e}")
-                
-                # Create and start thread
-                thread = threading.Thread(target=_speak_thread, daemon=True)
-                thread.start()
-                thread.join(timeout=30)  # Max 30 seconds for speech
+                    # Create new engine instance for this thread
+                    engine = pyttsx3.init()
+                    
+                    # Apply settings
+                    voices = engine.getProperty('voices')
+                    if voices and self.tts_voice == 'male':
+                        for voice in voices:
+                            if 'male' in voice.name.lower() or 'david' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                    
+                    engine.setProperty('rate', 175)
+                    engine.setProperty('volume', 0.8)
+                    
+                    # Speak
+                    engine.say(text)
+                    engine.runAndWait()
+                    
+                    # Clean up
+                    engine.stop()
+                    
+                except Exception as e:
+                    logger.error(f"TTS error: {e}")
+                finally:
+                    self._tts_busy = False
                 
         except Exception as e:
             logger.error(f"Failed to speak: {e}")
+            self._tts_busy = False
     
     def listen(self, timeout: float = 5.0, phrase_time_limit: float = 5.0) -> Optional[str]:
         """

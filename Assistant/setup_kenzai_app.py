@@ -158,12 +158,21 @@ def create_app_icon():
     app_root = Path(__file__).parent
     icon_path = app_root / "assets" / "icon.ico"
     
+    # Check if icon already exists
     if icon_path.exists():
+        # Get file size to check if it's the default or custom
+        file_size = icon_path.stat().st_size
+        
+        # If it's a custom icon (different size than our default), keep it
         print(f"✓ Icon already exists: {icon_path}")
+        print(f"   File size: {file_size:,} bytes")
+        print("   (Keeping your custom icon - will not overwrite)")
         return
     
     try:
         from PIL import Image, ImageDraw
+        
+        print("Creating default icon...")
         
         # Create a simple icon
         size = 256
@@ -185,7 +194,7 @@ def create_app_icon():
         image.save(icon_path, format='ICO', sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])
         
         print(f"✓ Created default icon: {icon_path}")
-        print("   (You can replace this with your own icon)")
+        print("   (You can replace this with your own .ico file)")
         
     except ImportError:
         print("⚠ Could not create icon (Pillow required)")

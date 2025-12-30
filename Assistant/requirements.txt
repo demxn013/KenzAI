@@ -30,3 +30,5 @@ watchdog>=3.0.0
 
 # Optional: Hotkey support
 keyboard>=0.13.5
+
+webrtcvad

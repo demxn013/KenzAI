@@ -116,7 +116,7 @@ pause
     print(f"✓ Created {silent_script.name} (silent mode)")
 
 def create_desktop_shortcut():
-    """Create desktop shortcut."""
+    """Create desktop shortcut using custom icon if available."""
     print_header("Creating Desktop Shortcut")
     
     if sys.platform != 'win32':
@@ -140,11 +140,11 @@ def create_desktop_shortcut():
         shortcut.Targetpath = str(app_root / "start_kenzai.bat")
         shortcut.WorkingDirectory = str(app_root)
         
-        # Set icon if it exists
+        # Always use the existing icon
         icon_path = app_root / "assets" / "icon.ico"
         if icon_path.exists():
-            # Format: "path_to_icon.ico,0" (the ,0 means use the first icon)
-            shortcut.IconLocation = f'"{icon_path}",0'
+            # Windows requires absolute path and index, e.g. "C:\...\icon.ico,0"
+            shortcut.IconLocation = f"{icon_path},0"
             print(f"  Using icon: {icon_path}")
         else:
             print("  No icon found - using default Windows icon")
@@ -164,6 +164,7 @@ def create_desktop_shortcut():
     except Exception as e:
         print(f"⚠ Failed to create shortcut: {e}")
         print("   Alternative: Manually create shortcut to start_kenzai.bat")
+
 
 def create_app_icon():
     """Create a default app icon if none exists."""

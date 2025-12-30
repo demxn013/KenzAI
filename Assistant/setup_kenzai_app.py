@@ -19,28 +19,29 @@ def check_dependencies():
     """Check if required packages are installed."""
     print_header("Checking Dependencies")
     
-    required = [
-        'ollama',
-        'pvporcupine',
-        'sounddevice',
-        'soundfile',
-        'numpy',
-        'SpeechRecognition',
-        'pyttsx3',
-        'PyYAML',
-        'pystray',
-        'Pillow',
-        'webrtcvad'
-    ]
+    # Map of display names to import names
+    required = {
+        'ollama': 'ollama',
+        'pvporcupine': 'pvporcupine',
+        'sounddevice': 'sounddevice',
+        'soundfile': 'soundfile',
+        'numpy': 'numpy',
+        'SpeechRecognition': 'speech_recognition',
+        'pyttsx3': 'pyttsx3',
+        'PyYAML': 'yaml',
+        'pystray': 'pystray',
+        'Pillow': 'PIL',
+        'webrtcvad': 'webrtcvad'
+    }
     
     missing = []
-    for package in required:
+    for display_name, import_name in required.items():
         try:
-            __import__(package)
-            print(f"✓ {package}")
+            __import__(import_name)
+            print(f"✓ {display_name}")
         except ImportError:
-            print(f"✗ {package} (missing)")
-            missing.append(package)
+            print(f"✗ {display_name} (missing)")
+            missing.append(display_name)
     
     if missing:
         print(f"\n⚠ Missing packages: {', '.join(missing)}")

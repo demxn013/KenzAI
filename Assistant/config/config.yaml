@@ -130,9 +130,9 @@ greetings:
   morning:
     - "Good morning, your Highness"
     - "A new day begins, my Emperor"
-    - "The morning greets you, your Grace"
+    - "The morning greets you, Sir"
   afternoon:
-    - "Good afternoon, my liege"
+    - "Good afternoon, Master"
     - "Your Highness"
     - "At your service, my Emperor"
   evening:

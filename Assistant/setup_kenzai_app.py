@@ -133,16 +133,66 @@ def create_desktop_shortcut():
         shortcut = shell.CreateShortCut(str(desktop / "KenzAI.lnk"))
         shortcut.Targetpath = str(app_root / "start_kenzai.bat")
         shortcut.WorkingDirectory = str(app_root)
-        shortcut.IconLocation = str(app_root / "assets" / "icon.ico") if (app_root / "assets" / "icon.ico").exists() else ""
+        
+        # Only set icon if it exists
+        icon_path = app_root / "assets" / "icon.ico"
+        if icon_path.exists():
+            shortcut.IconLocation = str(icon_path)
+        
         shortcut.Description = "KenzAI Voice Assistant"
         shortcut.save()
         
-        print(f"✓ Created desktop shortcut")
+        print(f"✓ Created desktop shortcut: {desktop / 'KenzAI.lnk'}")
     
     except ImportError:
         print("⚠ Could not create shortcut (pip install pywin32)")
+        print("   Alternative: Manually create shortcut to start_kenzai.bat")
     except Exception as e:
         print(f"⚠ Failed to create shortcut: {e}")
+        print("   Alternative: Manually create shortcut to start_kenzai.bat")
+
+def create_app_icon():
+    """Create a default app icon if none exists."""
+    print_header("Creating App Icon")
+    
+    app_root = Path(__file__).parent
+    icon_path = app_root / "assets" / "icon.ico"
+    
+    if icon_path.exists():
+        print(f"✓ Icon already exists: {icon_path}")
+        return
+    
+    try:
+        from PIL import Image, ImageDraw
+        
+        # Create a simple icon
+        size = 256
+        image = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        
+        # Draw gradient circle
+        for i in range(5):
+            offset = i * 15
+            alpha = 255 - (i * 40)
+            draw.ellipse(
+                [offset, offset, size - offset, size - offset],
+                fill=(50, 150 + i * 20, 255, alpha),
+                outline=(100, 200, 255, 255),
+                width=3
+            )
+        
+        # Save as ICO
+        image.save(icon_path, format='ICO', sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])
+        
+        print(f"✓ Created default icon: {icon_path}")
+        print("   (You can replace this with your own icon)")
+        
+    except ImportError:
+        print("⚠ Could not create icon (Pillow required)")
+        print(f"   Place your icon.ico in: {icon_path}")
+    except Exception as e:
+        print(f"⚠ Failed to create icon: {e}")
+        print(f"   Place your icon.ico in: {icon_path}")
 
 def create_uninstaller():
     """Create uninstaller script."""
@@ -164,12 +214,12 @@ if sys.platform == 'win32':
         
         if WindowsStartupManager.is_startup_enabled():
             WindowsStartupManager.disable_startup()
-            print("✓ Removed from Windows startup")
+            print("OK Removed from Windows startup")
         
         desktop = Path.home() / "Desktop" / "KenzAI.lnk"
         if desktop.exists():
             desktop.unlink()
-            print("✓ Removed desktop shortcut")
+            print("OK Removed desktop shortcut")
         
         print("\\nKenzAI has been uninstalled from startup.")
         print("You can safely delete the KenzAI folder if desired.")
@@ -182,7 +232,7 @@ else:
 input("\\nPress Enter to exit...")
 '''
     
-    with open(uninstall_path, 'w') as f:
+    with open(uninstall_path, 'w', encoding='utf-8') as f:
         f.write(uninstall_content)
     
     print(f"✓ Created {uninstall_path.name}")
@@ -249,6 +299,7 @@ def main():
     steps = [
         ("Checking dependencies", check_dependencies),
         ("Creating app structure", create_app_structure),
+        ("Creating app icon", create_app_icon),
         ("Creating startup scripts", create_startup_script),
         ("Creating desktop shortcut", create_desktop_shortcut),
         ("Creating uninstaller", create_uninstaller),

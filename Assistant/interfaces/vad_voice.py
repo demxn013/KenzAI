@@ -1,6 +1,7 @@
 """
-VAD-Enabled Voice Interface
+VAD-Enabled Voice Interface - FIXED VERSION
 Voice Activity Detection for natural continuous listening.
+Fixes callback issues and improves error handling.
 """
 import sys
 from pathlib import Path
@@ -116,6 +117,7 @@ class VADVoiceInterface:
         
         # Initialize TTS
         self.tts_engine = None
+        self._tts_lock = threading.Lock()
         
         if TTS_AVAILABLE and self.enabled:
             try:
@@ -141,6 +143,8 @@ class VADVoiceInterface:
         self._listening = False
         self._listen_thread = None
         self._callback = None
+        self._audio_stream = None
+        self._speech_queue = queue.Queue()
     
     def _is_speech(self, audio_frame: bytes) -> bool:
         """
@@ -180,17 +184,24 @@ class VADVoiceInterface:
             logger.error("Audio not available")
             return
         
+        logger.info("Starting VAD continuous listening...")
+        
         self._listening = True
         self._callback = callback
         
-        self._listen_thread = threading.Thread(target=self._continuous_listen_loop, daemon=True)
+        # Start processing thread
+        self._listen_thread = threading.Thread(target=self._processing_loop, daemon=True)
         self._listen_thread.start()
         
-        logger.info("Started continuous listening with VAD")
+        # Start audio capture thread
+        self._capture_thread = threading.Thread(target=self._audio_capture_loop, daemon=True)
+        self._capture_thread.start()
+        
+        logger.info("✓ VAD continuous listening started")
     
-    def _continuous_listen_loop(self):
-        """Main continuous listening loop with VAD."""
-        logger.info("Continuous listening loop started")
+    def _audio_capture_loop(self):
+        """Audio capture loop - runs in separate thread."""
+        logger.info("Audio capture loop started")
         
         # Speech detection state
         speech_frames = []
@@ -208,7 +219,7 @@ class VADVoiceInterface:
                     logger.debug(f"Audio status: {status}")
                 
                 if not self._listening:
-                    return
+                    raise sd.CallbackStop()
                 
                 # Convert to int16
                 audio_int16 = (indata[:, 0] * 32767).astype(np.int16)
@@ -219,7 +230,7 @@ class VADVoiceInterface:
                 
                 if contains_speech:
                     if not is_speaking:
-                        logger.debug("Speech started")
+                        logger.debug("🎤 Speech started")
                         is_speaking = True
                         speech_frames = []
                     
@@ -235,10 +246,10 @@ class VADVoiceInterface:
                     if silence_frames >= silence_threshold:
                         # Check if we have minimum speech duration
                         if len(speech_frames) >= min_speech_frames:
-                            logger.debug(f"Speech ended ({len(speech_frames)} frames)")
+                            logger.debug(f"🎤 Speech ended ({len(speech_frames)} frames)")
                             
-                            # Process the collected speech
-                            self._process_speech(speech_frames)
+                            # Queue the speech for processing
+                            self._speech_queue.put(speech_frames.copy())
                         else:
                             logger.debug("Speech too short, ignoring")
                         
@@ -248,14 +259,16 @@ class VADVoiceInterface:
                         silence_frames = 0
             
             # Open audio stream
-            with sd.InputStream(
+            self._audio_stream = sd.InputStream(
                 channels=self.channels,
                 samplerate=self.sample_rate,
                 blocksize=self.frame_size,
                 dtype='float32',
                 callback=audio_callback
-            ):
-                logger.info("Audio stream opened for continuous listening")
+            )
+            
+            with self._audio_stream:
+                logger.info("🎙️ Audio stream opened, listening for speech...")
                 
                 while self._listening:
                     time.sleep(0.1)
@@ -263,8 +276,28 @@ class VADVoiceInterface:
             logger.info("Audio stream closed")
             
         except Exception as e:
-            logger.error(f"Error in continuous listen loop: {e}", exc_info=True)
+            logger.error(f"Error in audio capture loop: {e}", exc_info=True)
             self._listening = False
+    
+    def _processing_loop(self):
+        """Speech processing loop - runs in separate thread."""
+        logger.info("Speech processing loop started")
+        
+        while self._listening:
+            try:
+                # Wait for speech with timeout
+                try:
+                    frames = self._speech_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                
+                # Process the speech
+                self._process_speech(frames)
+                
+            except Exception as e:
+                logger.error(f"Error in processing loop: {e}", exc_info=True)
+        
+        logger.info("Speech processing loop stopped")
     
     def _process_speech(self, frames: list):
         """
@@ -274,6 +307,8 @@ class VADVoiceInterface:
             frames: List of audio frames (numpy arrays).
         """
         try:
+            logger.debug("Processing speech...")
+            
             # Combine frames
             audio_data = np.concatenate(frames)
             
@@ -293,12 +328,16 @@ class VADVoiceInterface:
             
             # Recognize speech
             try:
+                logger.debug("Calling Google Speech Recognition...")
                 text = self.recognizer.recognize_google(audio, language=self.language)
-                logger.info(f"Recognized: {text}")
+                logger.info(f"✓ Recognized: {text}")
                 
-                # Call callback in separate thread
+                # Call callback in main thread context
                 if self._callback:
-                    threading.Thread(target=self._callback, args=(text,), daemon=True).start()
+                    try:
+                        self._callback(text)
+                    except Exception as e:
+                        logger.error(f"Error in callback: {e}", exc_info=True)
                     
             except sr.UnknownValueError:
                 logger.debug("Could not understand audio")
@@ -306,20 +345,40 @@ class VADVoiceInterface:
                 logger.error(f"Speech recognition error: {e}")
         
         except Exception as e:
-            logger.error(f"Error processing speech: {e}")
+            logger.error(f"Error processing speech: {e}", exc_info=True)
     
     def stop_listening(self):
         """Stop continuous listening."""
         if not self._listening:
+            logger.debug("Not listening, nothing to stop")
             return
         
         logger.info("Stopping continuous listening...")
         self._listening = False
         
+        # Stop audio stream
+        if self._audio_stream:
+            try:
+                self._audio_stream.stop()
+                self._audio_stream.close()
+            except Exception as e:
+                logger.debug(f"Error stopping audio stream: {e}")
+            self._audio_stream = None
+        
+        # Wait for threads
+        if self._capture_thread:
+            self._capture_thread.join(timeout=2.0)
         if self._listen_thread:
             self._listen_thread.join(timeout=2.0)
         
-        logger.info("Continuous listening stopped")
+        # Clear queue
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        logger.info("✓ Continuous listening stopped")
     
     def speak(self, text: str):
         """
@@ -333,9 +392,26 @@ class VADVoiceInterface:
             return
         
         try:
-            self.tts_engine.say(text)
-            self.tts_engine.runAndWait()
-            logger.debug(f"Spoke: {text}")
+            with self._tts_lock:
+                # Stop any ongoing speech
+                try:
+                    self.tts_engine.stop()
+                except Exception:
+                    pass
+                
+                # Speak in a separate thread to avoid blocking
+                def _speak_thread():
+                    try:
+                        self.tts_engine.say(text)
+                        self.tts_engine.runAndWait()
+                    except Exception as e:
+                        logger.error(f"TTS error in thread: {e}")
+                
+                # Create and start thread
+                thread = threading.Thread(target=_speak_thread, daemon=True)
+                thread.start()
+                thread.join(timeout=30)  # Max 30 seconds for speech
+                
         except Exception as e:
             logger.error(f"Failed to speak: {e}")
     
@@ -356,6 +432,7 @@ class VADVoiceInterface:
         
         try:
             # Simple record for single listen
+            logger.debug(f"Recording for {phrase_time_limit}s...")
             recording = sd.rec(
                 int(phrase_time_limit * self.sample_rate),
                 samplerate=self.sample_rate,

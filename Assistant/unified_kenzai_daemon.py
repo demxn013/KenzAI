@@ -1,5 +1,6 @@
 """
-KenzAI Unified Daemon
+KenzAI Unified Daemon - FIXED VERSION
+Fixes VAD continuous listening startup and adds better error handling.
 Single file for all daemon functionality with proper wake/sleep modes.
 Supports both Porcupine wake word and VAD continuous listening.
 """
@@ -213,6 +214,7 @@ class KenzAIUnifiedDaemon:
         self.voice_interface = None
         self.vad_interface = None
         self._running = True
+        self._command_lock = threading.Lock()  # Prevent concurrent command processing
         
         # Initialize wake word detector
         self._init_wake_word()
@@ -330,8 +332,10 @@ class KenzAIUnifiedDaemon:
         self.logger.info("💤" * 35 + "\n")
         
         # Stop VAD if running
-        if self.vad_interface and hasattr(self.vad_interface, 'stop_listening'):
-            self.vad_interface.stop_listening()
+        if self.vad_interface and hasattr(self.vad_interface, '_listening'):
+            if self.vad_interface._listening:
+                self.logger.debug("Stopping VAD...")
+                self.vad_interface.stop_listening()
         
         # Start wake word detection
         if self.wake_listener:
@@ -374,8 +378,11 @@ class KenzAIUnifiedDaemon:
         self.logger.info(f"Greeting: {greeting}")
         
         voice = self.vad_interface or self.voice_interface
-        if voice and voice.tts_engine:
-            voice.speak(greeting)
+        if voice and hasattr(voice, 'tts_engine') and voice.tts_engine:
+            try:
+                voice.speak(greeting)
+            except Exception as e:
+                self.logger.error(f"Failed to speak greeting: {e}")
         
         # Wait for greeting to finish
         time.sleep(2)
@@ -386,8 +393,15 @@ class KenzAIUnifiedDaemon:
         self.logger.info("=" * 70 + "\n")
         
         # Start continuous listening with VAD
-        if self.vad_interface:
-            self.vad_interface.start_continuous_listening(self._handle_command)
+        if self.vad_interface and self.vad_interface.vad:
+            try:
+                self.logger.info("Starting VAD continuous listening...")
+                self.vad_interface.start_continuous_listening(self._handle_command)
+                self.logger.info("✓ VAD listening started")
+            except Exception as e:
+                self.logger.error(f"Failed to start VAD listening: {e}")
+                self.logger.warning("Falling back to command loop...")
+                threading.Thread(target=self._command_loop, daemon=True).start()
         else:
             self.logger.warning("VAD not available - starting command loop")
             threading.Thread(target=self._command_loop, daemon=True).start()
@@ -397,50 +411,61 @@ class KenzAIUnifiedDaemon:
         if self.mode != DaemonMode.AWAKE:
             return
         
-        self.logger.info(f"\n💬 You: {text}")
-        
-        # Check for sleep commands
-        sleep_phrases = [
-            'go to sleep', 'goodbye', 'rest', 'dismiss',
-            'that is all', 'you may leave', 'sleep now',
-            'go back to sleep', 'return to sleep'
-        ]
-        
-        if any(phrase in text.lower() for phrase in sleep_phrases):
-            response = "Rest well, your Highness. I shall await your call."
-            self.logger.info(f"🎙️ KenzAI: {response}\n")
-            
-            voice = self.vad_interface or self.voice_interface
-            if voice:
-                voice.speak(response)
-            
-            time.sleep(2)
-            self.go_to_sleep()
+        # Prevent concurrent command processing
+        if not self._command_lock.acquire(blocking=False):
+            self.logger.debug("Command already being processed, skipping...")
             return
         
-        # Process command
         try:
-            self.logger.info("🤔 Processing...")
-            response = self.assistant.process_query(text)
-            self.logger.info(f"🎙️ KenzAI: {response}\n")
+            self.logger.info(f"\n💬 You: {text}")
             
-            # Speak response
-            voice = self.vad_interface or self.voice_interface
-            if voice:
-                voice.speak(response)
+            # Check for sleep commands
+            sleep_phrases = [
+                'go to sleep', 'goodbye', 'rest', 'dismiss',
+                'that is all', 'you may leave', 'sleep now',
+                'go back to sleep', 'return to sleep'
+            ]
+            
+            if any(phrase in text.lower() for phrase in sleep_phrases):
+                response = "Rest well, your Highness. I shall await your call."
+                self.logger.info(f"🎙️ KenzAI: {response}\n")
+                
+                voice = self.vad_interface or self.voice_interface
+                if voice:
+                    voice.speak(response)
+                
+                time.sleep(2)
+                self.go_to_sleep()
+                return
+            
+            # Process command
+            try:
+                self.logger.info("🤔 Processing...")
+                response = self.assistant.process_query(text)
+                self.logger.info(f"🎙️ KenzAI: {response}\n")
+                
+                # Speak response
+                voice = self.vad_interface or self.voice_interface
+                if voice:
+                    voice.speak(response)
+            
+            except Exception as e:
+                self.logger.error(f"Error processing command: {e}", exc_info=True)
+                error_msg = "I apologize, but I encountered an error."
+                
+                voice = self.vad_interface or self.voice_interface
+                if voice:
+                    voice.speak(error_msg)
         
-        except Exception as e:
-            self.logger.error(f"Error processing command: {e}")
-            error_msg = "I apologize, but I encountered an error."
-            
-            voice = self.vad_interface or self.voice_interface
-            if voice:
-                voice.speak(error_msg)
+        finally:
+            self._command_lock.release()
     
     def _command_loop(self):
         """Fallback command loop (non-VAD)."""
         consecutive_failures = 0
         max_failures = 3
+        
+        self.logger.info("📢 Command loop started (listening for single commands)")
         
         while self.mode == DaemonMode.AWAKE:
             try:
@@ -448,7 +473,7 @@ class KenzAIUnifiedDaemon:
                     self.logger.error("Voice interface not available")
                     break
                 
-                self.logger.info("🎤 Listening...")
+                self.logger.info("\n🎤 Listening...")
                 command = self.voice_interface.listen(timeout=10.0, phrase_time_limit=10.0)
                 
                 if command:
@@ -456,6 +481,7 @@ class KenzAIUnifiedDaemon:
                     self._handle_command(command)
                 else:
                     consecutive_failures += 1
+                    self.logger.debug(f"No input ({consecutive_failures}/{max_failures})")
                     if consecutive_failures >= max_failures:
                         self.logger.info("No activity - returning to sleep mode")
                         self.go_to_sleep()
@@ -477,8 +503,11 @@ class KenzAIUnifiedDaemon:
         
         # Get farewell
         if self.assistant:
-            farewell = self.assistant.get_shutdown_greeting()
-            self.logger.info(farewell)
+            try:
+                farewell = self.assistant.get_shutdown_greeting()
+                self.logger.info(farewell)
+            except Exception as e:
+                self.logger.error(f"Failed to get farewell: {e}")
         
         # Enter sleep mode
         self._enter_sleep_mode()
@@ -511,18 +540,30 @@ class KenzAIUnifiedDaemon:
         
         # Stop wake word listener
         if self.wake_listener:
-            self.wake_listener.cleanup()
+            try:
+                self.wake_listener.cleanup()
+            except Exception as e:
+                self.logger.error(f"Error stopping wake listener: {e}")
         
         # Stop VAD
         if self.vad_interface and hasattr(self.vad_interface, 'stop_listening'):
-            self.vad_interface.stop_listening()
+            try:
+                self.vad_interface.stop_listening()
+            except Exception as e:
+                self.logger.error(f"Error stopping VAD: {e}")
         
         # Stop system tray
-        self.tray_icon.stop()
+        try:
+            self.tray_icon.stop()
+        except Exception as e:
+            self.logger.error(f"Error stopping tray: {e}")
         
         if self.assistant:
-            farewell = self.assistant.get_shutdown_greeting()
-            self.logger.info(farewell)
+            try:
+                farewell = self.assistant.get_shutdown_greeting()
+                self.logger.info(farewell)
+            except Exception as e:
+                self.logger.error(f"Error getting farewell: {e}")
         
         self.logger.info("✓ Daemon stopped\n")
 

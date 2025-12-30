@@ -26,9 +26,51 @@ startup:
 interfaces:
   voice:
     enabled: true
-    wake_word: "kenzai"
     language: "en-US"
-    tts_voice: "male"
+    
+    # Voice Activity Detection (VAD) settings
+    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering (less sensitive)
+                           # 0 = least aggressive (detects more speech, may catch background)
+                           # 1 = mild
+                           # 2 = moderate (RECOMMENDED)
+                           # 3 = most aggressive (only very clear speech)
+    
+    silence_duration: 0.9  # Seconds of silence before considering speech ended
+                           # Lower = faster response, but may cut off pauses
+                           # Higher = allows longer pauses, but slower response
+                           # Recommended: 0.8-1.2
+    
+    min_speech_duration: 0.3  # Minimum seconds to be considered valid speech
+                               # Filters out short noises/coughs
+    
+    # Speech recognition settings
+    energy_threshold: 3000  # Lower = more sensitive
+    dynamic_energy_threshold: false  # VAD handles this
+    
+  tts:
+    rate: 175  # Words per minute
+    volume: 0.9
+    voice_id: 0
+  
+  daemon:
+    porcupine_keyword: "kenzai"
+    porcupine_sensitivity: 1.0
+    porcupine_access_key: "MQuwPtdtG5hLtDpRtDaS9qx1QBxQlY82rXSk3Sn0rPEevGdLtQUzxA=="
+    porcupine_keyword_path: "assets/wake_words/kenzai.ppn"
+
+# VAD Tuning Guide:
+# 
+# If KenzAI responds to background noise:
+#   - Increase vad_aggressiveness to 3
+#   - Increase min_speech_duration to 0.5
+#
+# If KenzAI cuts you off mid-sentence:
+#   - Increase silence_duration to 1.2 or 1.5
+#   - Decrease vad_aggressiveness to 1
+#
+# If KenzAI is slow to respond:
+#   - Decrease silence_duration to 0.7
+#   - Keep vad_aggressiveness at 2
     
   gui:
     enabled: true

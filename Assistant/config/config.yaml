@@ -118,32 +118,56 @@ personality:
   verbosity: "balanced"    # Options: "concise", "balanced", "detailed"
   confirmation_required: false
 
-# Greetings - Professional but not overly formal
-# Comment out this section to use automatic defaults
+# Greetings - Professional with respectful titles
+# Mix of formal and casual greetings for variety
 greetings:
   rotation: true
   morning:
+    - "Good morning, your Highness"
+    - "Good morning, Sir"
+    - "Morning, my Lord"
     - "Good morning"
-    - "Morning"
+    - "A new day, Sire"
     - "Good morning, ready when you are"
+    - "Morning, your Highness"
+    - "The day begins, my Lord"
   afternoon:
+    - "Good afternoon, Sire"
+    - "Good afternoon, your Highness"
+    - "Afternoon, Sir"
     - "Good afternoon"
-    - "Afternoon"
-    - "Hello"
+    - "Good afternoon, my Lord"
+    - "At your service, Sire"
+    - "Afternoon, your Highness"
+    - "Ready to assist, Sir"
   evening:
+    - "Good evening, my Lord"
+    - "Good evening, your Highness"
+    - "Evening, Sir"
     - "Good evening"
-    - "Evening"
-    - "Hello"
+    - "Good evening, Sire"
+    - "Evening, my Lord"
+    - "The evening is yours, your Highness"
+    - "At your command, Sir"
   night:
-    - "Hello"
-    - "Evening"
-    - "Good evening"
+    - "Good evening, Sire"
+    - "Evening, your Highness"
+    - "Good evening, my Lord"
+    - "Hello, Sir"
+    - "Still working, my Lord?"
+    - "Evening, Sire"
+    - "At your service, your Highness"
+    - "Ready when you are, Sir"
   shutdown:
+    - "Goodbye, my Lord"
+    - "Until next time, Sire"
+    - "Farewell, your Highness"
+    - "Take care, Sir"
     - "Goodbye"
-    - "Until next time"
-    - "Take care"
-    - "See you later"
-    - "Talk to you soon"
+    - "Rest well, my Lord"
+    - "Until we meet again, Sire"
+    - "Farewell, Sir"
+    - "Good night, your Highness"
 
 # Logging
 logging:

@@ -19,35 +19,60 @@ logger = get_logger()
 class GreetingSystem:
     """Manages time-aware greetings with rotation."""
     
-    # Default greetings by time period
+    # Default greetings - Professional with respectful titles
     DEFAULT_GREETINGS = {
         'morning': [
             "Good morning, your Highness",
-            "A new day begins, my Emperor",
-            "The morning greets you, your Grace"
+            "Good morning, Sir",
+            "Morning, my Lord",
+            "Good morning",
+            "A new day, Sire",
+            "Good morning, ready when you are",
+            "Morning, your Highness",
+            "The day begins, my Lord"
         ],
         'afternoon': [
-            "Good afternoon, my liege",
-            "Your Highness",
-            "At your service, my Emperor"
+            "Good afternoon, Sire",
+            "Good afternoon, your Highness",
+            "Afternoon, Sir",
+            "Good afternoon",
+            "Good afternoon, my Lord",
+            "At your service, Sire",
+            "Afternoon, your Highness",
+            "Ready to assist, Sir"
         ],
         'evening': [
-            "Good evening, your Grace",
-            "The evening is yours, my lord",
-            "Your Highness"
+            "Good evening, my Lord",
+            "Good evening, your Highness",
+            "Evening, Sir",
+            "Good evening",
+            "Good evening, Sire",
+            "Evening, my Lord",
+            "The evening is yours, your Highness",
+            "At your command, Sir"
         ],
         'night': [
-            "The night welcomes you, your Grace",
-            "At your command, my Emperor",
-            "Your Highness"
+            "Good evening, Sire",
+            "Evening, your Highness",
+            "Good evening, my Lord",
+            "Hello, Sir",
+            "Still working, my Lord?",
+            "Evening, Sire",
+            "At your service, your Highness",
+            "Ready when you are, Sir"
         ]
     }
     
     DEFAULT_SHUTDOWN_GREETINGS = [
-        "Rest well, your Highness",
-        "Until next time, my Emperor",
-        "The shadows await your return, my liege",
-        "Farewell, your Grace"
+        "Goodbye, my Lord",
+        "Until next time, Sire",
+        "Farewell, your Highness",
+        "Take care, Sir",
+        "Goodbye",
+        "Rest well, my Lord",
+        "Until we meet again, Sire",
+        "Farewell, Sir",
+        "Good night, your Highness"
     ]
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -65,7 +90,9 @@ class GreetingSystem:
         
         # Load greetings from config or use defaults
         greetings_config = config.get('greetings', {})
+        
         if 'morning' in greetings_config:
+            # Use configured greetings
             self.greetings = {
                 'morning': greetings_config.get('morning', []),
                 'afternoon': greetings_config.get('afternoon', []),
@@ -73,6 +100,7 @@ class GreetingSystem:
                 'night': greetings_config.get('night', [])
             }
         else:
+            # Use default greetings
             self.greetings = self.DEFAULT_GREETINGS.copy()
         
         # Ensure all time periods have greetings
@@ -80,7 +108,15 @@ class GreetingSystem:
             if not self.greetings.get(period):
                 self.greetings[period] = self.DEFAULT_GREETINGS[period]
         
+        # Load shutdown greetings
+        if 'shutdown' in greetings_config:
+            self.shutdown_greetings = greetings_config['shutdown']
+        else:
+            self.shutdown_greetings = self.DEFAULT_SHUTDOWN_GREETINGS
+        
         self.rotation_enabled = greetings_config.get('rotation', True)
+        
+        logger.debug("Greeting system initialized")
     
     def get_current_time_period(self) -> str:
         """
@@ -108,7 +144,7 @@ class GreetingSystem:
         period_greetings = self.greetings.get(time_period, self.DEFAULT_GREETINGS['morning'])
         
         if not period_greetings:
-            period_greetings = ["Your Highness"]  # Fallback
+            period_greetings = ["Hello"]  # Simple fallback
         
         # Rotation: avoid repeating the last greeting
         if self.rotation_enabled:
@@ -142,12 +178,10 @@ class GreetingSystem:
         Returns:
             Shutdown greeting string.
         """
-        shutdown_greetings = self.config.get('greetings', {}).get('shutdown', self.DEFAULT_SHUTDOWN_GREETINGS)
+        if not self.shutdown_greetings:
+            self.shutdown_greetings = self.DEFAULT_SHUTDOWN_GREETINGS
         
-        if not shutdown_greetings:
-            shutdown_greetings = self.DEFAULT_SHUTDOWN_GREETINGS
-        
-        return random.choice(shutdown_greetings)
+        return random.choice(self.shutdown_greetings)
     
     def add_greeting(self, time_period: str, greeting: str):
         """
@@ -173,4 +207,3 @@ class GreetingSystem:
             Dictionary mapping time periods to greeting lists.
         """
         return self.greetings.copy()
-

@@ -7,6 +7,7 @@ device:
 models:
   code: "deepseek-coder:6.7b"
   general: "deepseek-v2:16b-lite-chat-q4_0"
+  reasoning: "deepseek-v2:16b-lite-chat-q4_0"
 
 # Memory
 memory:

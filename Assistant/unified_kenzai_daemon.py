@@ -380,12 +380,18 @@ class KenzAIUnifiedDaemon:
         voice = self.vad_interface or self.voice_interface
         if voice and hasattr(voice, 'tts_engine') and voice.tts_engine:
             try:
-                voice.speak(greeting)
+                # Speak in a thread with timeout to prevent blocking
+                speak_thread = threading.Thread(target=voice.speak, args=(greeting,), daemon=True)
+                speak_thread.start()
+                speak_thread.join(timeout=5.0)  # Max 5 seconds for greeting
+                
+                if speak_thread.is_alive():
+                    self.logger.warning("TTS took too long, continuing anyway")
             except Exception as e:
                 self.logger.error(f"Failed to speak greeting: {e}")
         
-        # Wait for greeting to finish
-        time.sleep(2)
+        # Brief wait for greeting
+        time.sleep(1)
         
         self.logger.info("\n" + "=" * 70)
         self.logger.info("AWAKE MODE - Continuously listening")
@@ -397,12 +403,15 @@ class KenzAIUnifiedDaemon:
             try:
                 self.logger.info("Starting VAD continuous listening...")
                 # Start listening in a separate thread to not block
-                threading.Thread(
+                vad_thread = threading.Thread(
                     target=self._start_vad_listening,
-                    daemon=True
-                ).start()
+                    daemon=True,
+                    name="VAD-Starter"
+                )
+                vad_thread.start()
+                self.logger.info("VAD starter thread launched")
             except Exception as e:
-                self.logger.error(f"Failed to start VAD listening: {e}")
+                self.logger.error(f"Failed to start VAD listening: {e}", exc_info=True)
                 self.logger.warning("Falling back to command loop...")
                 threading.Thread(target=self._command_loop, daemon=True).start()
         else:
@@ -412,13 +421,16 @@ class KenzAIUnifiedDaemon:
     def _start_vad_listening(self):
         """Start VAD listening - runs in separate thread."""
         try:
+            self.logger.info("_start_vad_listening: Starting...")
             # Small delay to ensure greeting is done
             time.sleep(0.5)
+            self.logger.info("_start_vad_listening: Calling start_continuous_listening...")
             self.vad_interface.start_continuous_listening(self._handle_command)
             self.logger.info("✓ VAD listening started")
         except Exception as e:
             self.logger.error(f"Error starting VAD: {e}", exc_info=True)
             # Fallback to command loop
+            self.logger.warning("Starting command loop as fallback...")
             self._command_loop()
     
     def _handle_command(self, text: str):

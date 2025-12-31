@@ -411,45 +411,31 @@ class VADVoiceInterface:
             logger.debug(f"Would speak: {text}")
             return
         
-        # Check if already speaking
+        # Don't wait if already speaking
         if self._tts_busy:
-            logger.debug("TTS busy, queuing speech...")
+            logger.debug("TTS busy, skipping...")
             return
         
-        try:
-            with self._tts_lock:
-                self._tts_busy = True
-                
-                try:
-                    # Create new engine instance for this thread
-                    engine = pyttsx3.init()
-                    
-                    # Apply settings
-                    voices = engine.getProperty('voices')
-                    if voices and self.tts_voice == 'male':
-                        for voice in voices:
-                            if 'male' in voice.name.lower() or 'david' in voice.name.lower():
-                                engine.setProperty('voice', voice.id)
-                                break
-                    
-                    engine.setProperty('rate', 175)
-                    engine.setProperty('volume', 0.8)
-                    
-                    # Speak
-                    engine.say(text)
-                    engine.runAndWait()
-                    
-                    # Clean up
-                    engine.stop()
-                    
-                except Exception as e:
-                    logger.error(f"TTS error: {e}")
-                finally:
-                    self._tts_busy = False
-                
-        except Exception as e:
-            logger.error(f"Failed to speak: {e}")
-            self._tts_busy = False
+        def _speak_in_thread():
+            """Speak in separate thread to avoid blocking."""
+            if not self._tts_lock.acquire(blocking=False):
+                logger.debug("Could not acquire TTS lock")
+                return
+            
+            self._tts_busy = True
+            try:
+                # Use the existing engine instead of creating new one
+                self.tts_engine.say(text)
+                self.tts_engine.runAndWait()
+                logger.debug(f"Spoke: {text[:50]}...")
+            except Exception as e:
+                logger.error(f"TTS error: {e}")
+            finally:
+                self._tts_busy = False
+                self._tts_lock.release()
+        
+        # Start speaking in daemon thread
+        threading.Thread(target=_speak_in_thread, daemon=True).start()
     
     def listen(self, timeout: float = 5.0, phrase_time_limit: float = 5.0) -> Optional[str]:
         """

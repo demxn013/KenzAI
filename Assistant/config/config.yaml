@@ -52,7 +52,7 @@ interfaces:
                                # Increase to 500 if still getting false triggers
     
     # Debug mode - logs energy levels (useful for tuning)
-    debug_vad: false  # Set to true to see what VAD is detecting
+    debug_vad: true  # Set to true to see what VAD is detecting
     
     # Speech recognition - 100% LOCAL with Vosk ONLY
     vosk_model_path: "./models/vosk"  # Path to Vosk model directory

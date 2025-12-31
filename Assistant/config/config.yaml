@@ -35,7 +35,7 @@ interfaces:
     language: "en-US"
     
     # Voice Activity Detection (VAD) settings - 100% LOCAL
-    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering
+    vad_aggressiveness: 3  # 0-3, higher = more aggressive filtering
                            # 2 = moderate (RECOMMENDED)
     
     silence_duration: 0.4  # Seconds of silence before considering speech ended

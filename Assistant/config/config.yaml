@@ -3,11 +3,16 @@ device:
   id: "local_owner"
   name: "Primary Workstation"
 
-# Models
+# Models - 3 Types for Different Tasks
 models:
-  code: "deepseek-coder:6.7b"
+  # Coding model - for programming tasks
+  coding: "deepseek-coder:6.7b"
+  
+  # General model - for everyday queries
   general: "deepseek-v2:16b-lite-chat-q4_0"
-  reasoning: "deepseek-v2:16b-lite-chat-q4_0"
+  
+  # Reasoning model - for complex analysis, step-by-step thinking
+  reasoning: "deepseek-r1:14b"
 
 # Memory
 memory:
@@ -27,27 +32,17 @@ startup:
 interfaces:
   voice:
     enabled: true
-    vosk_model_path: "./models/vosk"
     language: "en-US"
     
-    # Voice Activity Detection (VAD) settings
-    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering (less sensitive)
-                           # 0 = least aggressive (detects more speech, may catch background)
-                           # 1 = mild
+    # Voice Activity Detection (VAD) settings - 100% LOCAL
+    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering
                            # 2 = moderate (RECOMMENDED)
-                           # 3 = most aggressive (only very clear speech)
     
     silence_duration: 0.4  # Seconds of silence before considering speech ended
-                           # Lower = faster response, but may cut off pauses
-                           # Higher = allows longer pauses, but slower response
-                           # Recommended: 0.8-1.2
+    min_speech_duration: 0.2  # Minimum seconds to be considered valid speech
     
-    min_speech_duration: 0.3  # Minimum seconds to be considered valid speech
-                               # Filters out short noises/coughs
-    
-    # Speech recognition settings
-    energy_threshold: 3000  # Lower = more sensitive
-    dynamic_energy_threshold: false  # VAD handles this
+    # Speech recognition - 100% LOCAL with Vosk ONLY
+    vosk_model_path: "./models/vosk"  # Path to Vosk model directory
     
   tts:
     rate: 175  # Words per minute
@@ -73,6 +68,12 @@ interfaces:
 # If KenzAI is slow to respond:
 #   - Decrease silence_duration to 0.7
 #   - Keep vad_aggressiveness at 2
+
+# Vosk Model Setup (100% OFFLINE):
+# 1. Download model from: https://alphacephei.com/vosk/models
+# 2. Recommended: vosk-model-small-en-us-0.15 (40MB) or vosk-model-en-us-0.22 (1.8GB)
+# 3. Extract to: ./models/vosk/
+# 4. Structure: ./models/vosk/vosk-model-small-en-us-0.15/
     
   gui:
     enabled: true
@@ -87,15 +88,6 @@ interfaces:
   discord:
     enabled: false
     bridge_mode: "direct"
-
-  daemon:
-    enabled: true
-    start_with_windows: true
-     # Custom "kenzai" keyword configuration
-    porcupine_keyword: "kenzai"
-    porcupine_sensitivity: 1.0
-    porcupine_access_key: "MQuwPtdtG5hLtDpRtDaS9qx1QBxQlY82rXSk3Sn0rPEevGdLtQUzxA=="
-    porcupine_keyword_path: "./assets/wake_words/kenzai.ppn"
 
 # Integrations
 integrations:

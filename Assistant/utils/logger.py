@@ -1,6 +1,7 @@
 """
 KenzAI Logging System
 Provides centralized logging with file and console output.
+FIXED: Added exc_info parameter support to all logging methods.
 """
 import logging
 import os
@@ -77,30 +78,30 @@ class KenzAILogger:
             file_handler.setFormatter(file_format)
             self.logger.addHandler(file_handler)
     
-    def debug(self, message: str):
+    def debug(self, message: str, exc_info: bool = False):
         """Log debug message."""
         if self.logger:
-            self.logger.debug(message)
+            self.logger.debug(message, exc_info=exc_info)
     
-    def info(self, message: str):
+    def info(self, message: str, exc_info: bool = False):
         """Log info message."""
         if self.logger:
-            self.logger.info(message)
+            self.logger.info(message, exc_info=exc_info)
     
-    def warning(self, message: str):
+    def warning(self, message: str, exc_info: bool = False):
         """Log warning message."""
         if self.logger:
-            self.logger.warning(message)
+            self.logger.warning(message, exc_info=exc_info)
     
-    def error(self, message: str):
+    def error(self, message: str, exc_info: bool = False):
         """Log error message."""
         if self.logger:
-            self.logger.error(message)
+            self.logger.error(message, exc_info=exc_info)
     
-    def critical(self, message: str):
+    def critical(self, message: str, exc_info: bool = False):
         """Log critical message."""
         if self.logger:
-            self.logger.critical(message)
+            self.logger.critical(message, exc_info=exc_info)
     
     def exception(self, message: str):
         """Log exception with traceback."""
@@ -120,4 +121,3 @@ def get_logger() -> KenzAILogger:
 def initialize_logger(log_level: str = "INFO", log_file: Optional[str] = None):
     """Initialize the global logger."""
     _logger_instance.initialize(log_level, log_file)
-

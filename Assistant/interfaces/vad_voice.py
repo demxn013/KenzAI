@@ -1,5 +1,6 @@
 """
 VAD-Enabled Voice Interface - 100% LOCAL with Vosk
+FIXED: Thread safety issue when stopping from callback thread.
 Works completely offline with Vosk for speech recognition.
 No internet required! No OpenAI! No cloud services!
 
@@ -161,11 +162,15 @@ class VADVoiceInterface:
         # Continuous listening state
         self._listening = False
         self._listen_thread = None
+        self._capture_thread = None
         self._callback = None
         self._audio_stream = None
         self._speech_queue = queue.Queue()
         self._last_speech_time = 0
         self._min_speech_interval = 0.2
+        
+        # FIXED: Flag to prevent thread join deadlock
+        self._stopping = False
         
         # Log final status
         if self.audio_available and self.vad and self.recognizer:
@@ -254,6 +259,7 @@ class VADVoiceInterface:
         logger.info("Starting VAD continuous listening...")
         
         self._listening = True
+        self._stopping = False
         self._callback = callback
         
         # Start processing thread
@@ -413,33 +419,68 @@ class VADVoiceInterface:
             return None
     
     def stop_listening(self):
-        """Stop continuous listening."""
+        """Stop continuous listening - FIXED: Thread-safe."""
         if not self._listening:
             return
         
-        logger.info("Stopping continuous listening...")
-        self._listening = False
+        # FIXED: Check if we're being called from a processing thread
+        current_thread = threading.current_thread()
+        is_processing_thread = (
+            current_thread == self._listen_thread or 
+            current_thread == self._capture_thread
+        )
         
-        if self._audio_stream:
-            try:
-                self._audio_stream.stop()
-                self._audio_stream.close()
-            except Exception as e:
-                logger.debug(f"Error stopping audio stream: {e}")
-            self._audio_stream = None
-        
-        if self._capture_thread:
-            self._capture_thread.join(timeout=2.0)
-        if self._listen_thread:
-            self._listen_thread.join(timeout=2.0)
-        
-        while not self._speech_queue.empty():
-            try:
-                self._speech_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        logger.info("✓ Continuous listening stopped")
+        if is_processing_thread:
+            # We're stopping from within our own thread - don't join, just signal stop
+            logger.info("Stopping continuous listening (from processing thread)...")
+            self._listening = False
+            self._stopping = True
+            
+            # Close audio stream if it exists
+            if self._audio_stream:
+                try:
+                    self._audio_stream.stop()
+                    self._audio_stream.close()
+                except Exception as e:
+                    logger.debug(f"Error stopping audio stream: {e}")
+                self._audio_stream = None
+            
+            # Clear queue without blocking
+            while not self._speech_queue.empty():
+                try:
+                    self._speech_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            logger.info("✓ Continuous listening stopped (cleanup deferred to main thread)")
+            
+        else:
+            # Called from external thread - safe to join
+            logger.info("Stopping continuous listening...")
+            self._listening = False
+            
+            if self._audio_stream:
+                try:
+                    self._audio_stream.stop()
+                    self._audio_stream.close()
+                except Exception as e:
+                    logger.debug(f"Error stopping audio stream: {e}")
+                self._audio_stream = None
+            
+            # Wait for threads to finish
+            if self._capture_thread and self._capture_thread.is_alive():
+                self._capture_thread.join(timeout=2.0)
+            if self._listen_thread and self._listen_thread.is_alive():
+                self._listen_thread.join(timeout=2.0)
+            
+            # Clear queue
+            while not self._speech_queue.empty():
+                try:
+                    self._speech_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            logger.info("✓ Continuous listening stopped")
     
     def speak(self, text: str):
         """Speak text using TTS."""

@@ -1,14 +1,6 @@
 """
-=============================================================================
-FILE 2: core/assistant.py
-=============================================================================
-"""
-
-# core/assistant.py
-"""
-Assistant Core - FIXED VERSION (No Auto-Download)
-Better memory management and error recovery.
-Does NOT auto-download models.
+Assistant Core - FIXED VERSION
+Better memory management and no context leakage.
 """
 import ollama
 from typing import Optional, Dict, Any, List
@@ -61,7 +53,6 @@ class KenzAIAssistant:
         logger.info("Checking configured models...")
         
         try:
-            # This now only checks, doesn't download
             availability = self.model_manager.check_all_models()
             
             available_count = sum(1 for available in availability.values() if available)
@@ -135,7 +126,7 @@ class KenzAIAssistant:
         prompt: str,
         conversation_id: Optional[str] = None,
         use_memory: bool = True,
-        max_memory_results: int = 5
+        max_memory_results: int = 3
     ) -> str:
         """
         Process a user query and return response.
@@ -174,7 +165,7 @@ class KenzAIAssistant:
                     model_name = fallback
                 else:
                     return (
-                        f"I apologize, your Highness, but the required model '{model_name}' is not installed. "
+                        f"I apologize, but the required model '{model_name}' is not installed. "
                         f"Please install it with: ollama pull {model_name}"
                     )
             
@@ -185,13 +176,20 @@ class KenzAIAssistant:
                     f"Please ensure '{model_name}' is installed: ollama pull {model_name}"
                 )
             
-            # Get memory context
-            memory_context = ""
+            # Get memory context (but don't add to conversation - just use as reference)
+            memory_items = []
             if use_memory:
-                memory_context = self.topic_manager.get_memory_context(prompt, max_memory_results)
-                if memory_context:
-                    # Add memory as a separate system message
-                    conversation.add_system_message(f"\n{memory_context}\n")
+                memory_items = self.topic_manager.search_memory(prompt, limit=max_memory_results)
+                
+                # Only add memory context if it's actually relevant
+                if memory_items:
+                    # Create a condensed memory context that won't leak into responses
+                    memory_summary = "Previous relevant context: " + "; ".join([
+                        item[:100] + "..." if len(item) > 100 else item 
+                        for item in memory_items[:2]  # Only use top 2 most relevant
+                    ])
+                    # Add as a system message that will be used but not repeated
+                    conversation.add_system_message(memory_summary)
             
             # Add user message
             conversation.add_user_message(prompt)
@@ -221,7 +219,7 @@ class KenzAIAssistant:
             
         except Exception as e:
             logger.error(f"Error processing query: {e}", exc_info=True)
-            return f"I apologize, your Highness, but I encountered an unexpected error. Please try again."
+            return f"I apologize, but I encountered an unexpected error. Please try again."
     
     def _switch_model_with_retry(self, model_name: str, max_retries: int = 2) -> bool:
         """Switch model with retry logic (no download)."""

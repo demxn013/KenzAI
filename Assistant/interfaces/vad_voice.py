@@ -176,6 +176,18 @@ class VADVoiceInterface:
         # Debug mode - logs energy levels when detecting false triggers
         self._debug_mode = self.voice_config.get('debug_vad', False)
         
+        # Log all config values
+        logger.info(f"VAD Configuration:")
+        logger.info(f"  Aggressiveness: {self.vad_aggressiveness}")
+        logger.info(f"  Silence duration: {self.silence_duration}s")
+        logger.info(f"  Min speech duration: {self.min_speech_duration}s")
+        logger.info(f"  Min energy threshold: {self.min_energy_threshold}")
+        logger.info(f"  Debug mode: {self._debug_mode}")
+        
+        # Energy tracking for adaptive threshold
+        self._energy_samples = []
+        self._max_samples = 100
+        
         # Log final status
         if self.audio_available and self.vad and self.recognizer:
             logger.info(f"✓ VAD Voice Interface ready (Vosk, 100% offline)")
@@ -245,29 +257,39 @@ class VADVoiceInterface:
         
         try:
             # First check: Energy threshold (loudness check)
+            energy = 0
             if audio_int16 is not None:
                 # Calculate RMS (root mean square) energy
                 energy = np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2))
                 
-                # Debug logging
+                # Track energy samples for adaptive threshold
+                self._energy_samples.append(energy)
+                if len(self._energy_samples) > self._max_samples:
+                    self._energy_samples.pop(0)
+                
+                # ALWAYS log in debug mode, regardless of speech detection
                 if self._debug_mode:
-                    logger.debug(f"Audio energy: {energy:.0f} (threshold: {self.min_energy_threshold})")
+                    avg_energy = np.mean(self._energy_samples) if self._energy_samples else 0
+                    logger.debug(f"🔊 Energy: {energy:.0f} | Avg: {avg_energy:.0f} | Threshold: {self.min_energy_threshold}")
                 
                 # If too quiet, not speech
                 if energy < self.min_energy_threshold:
                     if self._debug_mode:
-                        logger.debug(f"Rejected - too quiet ({energy:.0f} < {self.min_energy_threshold})")
+                        logger.debug(f"❌ REJECTED - Too quiet ({energy:.0f} < {self.min_energy_threshold})")
                     return False
             
             # Second check: VAD algorithm
             is_speech = self.vad.is_speech(audio_frame, self.sample_rate)
             
-            if self._debug_mode and is_speech:
-                logger.debug(f"VAD detected speech (energy: {energy:.0f})")
+            if self._debug_mode:
+                if is_speech:
+                    logger.debug(f"✅ VAD DETECTED SPEECH (energy: {energy:.0f})")
+                else:
+                    logger.debug(f"⚪ VAD says no speech (energy: {energy:.0f})")
             
             return is_speech
         except Exception as e:
-            logger.debug(f"VAD error: {e}")
+            logger.error(f"VAD error: {e}", exc_info=True)
             return False
     
     def start_continuous_listening(self, callback: Callable[[str], None]):
@@ -311,11 +333,17 @@ class VADVoiceInterface:
         silence_threshold = int(self.silence_duration * 1000 / self.frame_duration)
         min_speech_frames = int(self.min_speech_duration * 1000 / self.frame_duration)
         
-        logger.debug(f"Silence threshold: {silence_threshold} frames, Min speech: {min_speech_frames} frames")
+        # STRICTER: Require multiple consecutive speech frames before triggering
+        consecutive_speech_frames = 0
+        min_consecutive_speech = 3  # Must detect speech in 3 frames in a row
+        
+        logger.debug(f"Silence threshold: {silence_threshold} frames")
+        logger.debug(f"Min speech: {min_speech_frames} frames")
+        logger.debug(f"Min consecutive speech: {min_consecutive_speech} frames")
         
         try:
             def audio_callback(indata, frames, time_info, status):
-                nonlocal speech_frames, is_speaking, silence_frames
+                nonlocal speech_frames, is_speaking, silence_frames, consecutive_speech_frames
                 
                 if status:
                     logger.debug(f"Audio status: {status}")
@@ -331,31 +359,41 @@ class VADVoiceInterface:
                 contains_speech = self._is_speech(audio_bytes, audio_int16)
                 
                 if contains_speech:
-                    if not is_speaking:
-                        logger.debug("🎤 Speech started")
+                    consecutive_speech_frames += 1
+                    
+                    # Only start speaking after enough consecutive frames
+                    if not is_speaking and consecutive_speech_frames >= min_consecutive_speech:
+                        logger.info(f"🎤 SPEECH STARTED (after {consecutive_speech_frames} consecutive frames)")
                         is_speaking = True
                         speech_frames = []
                     
-                    speech_frames.append(audio_int16)
-                    silence_frames = 0
-                    
-                elif is_speaking:
-                    speech_frames.append(audio_int16)
-                    silence_frames += 1
-                    
-                    if silence_frames >= silence_threshold:
-                        if len(speech_frames) >= min_speech_frames:
-                            now = time.time()
-                            if now - self._last_speech_time >= self._min_speech_interval:
-                                logger.debug(f"🎤 Speech ended ({len(speech_frames)} frames, {len(speech_frames) * self.frame_duration / 1000:.1f}s)")
-                                self._speech_queue.put(speech_frames.copy())
-                                self._last_speech_time = now
-                        else:
-                            logger.debug(f"Speech too short, ignoring ({len(speech_frames)} frames)")
-                        
-                        is_speaking = False
-                        speech_frames = []
+                    if is_speaking:
+                        speech_frames.append(audio_int16)
                         silence_frames = 0
+                    
+                else:
+                    # Reset consecutive counter
+                    consecutive_speech_frames = 0
+                    
+                    if is_speaking:
+                        speech_frames.append(audio_int16)
+                        silence_frames += 1
+                        
+                        if silence_frames >= silence_threshold:
+                            if len(speech_frames) >= min_speech_frames:
+                                now = time.time()
+                                if now - self._last_speech_time >= self._min_speech_interval:
+                                    duration = len(speech_frames) * self.frame_duration / 1000
+                                    logger.info(f"🎤 SPEECH ENDED ({len(speech_frames)} frames, {duration:.1f}s)")
+                                    self._speech_queue.put(speech_frames.copy())
+                                    self._last_speech_time = now
+                            else:
+                                if self._debug_mode:
+                                    logger.debug(f"⚠️ Speech too short, ignoring ({len(speech_frames)} < {min_speech_frames} frames)")
+                            
+                            is_speaking = False
+                            speech_frames = []
+                            silence_frames = 0
             
             # Open audio stream
             self._audio_stream = sd.InputStream(
@@ -450,6 +488,21 @@ class VADVoiceInterface:
         """Stop continuous listening - FIXED: Thread-safe."""
         if not self._listening:
             return
+        
+        # Show energy stats if debug mode
+        if self._debug_mode and self._energy_samples:
+            logger.info("\n" + "="*70)
+            logger.info("ENERGY STATISTICS")
+            logger.info("="*70)
+            logger.info(f"Samples collected: {len(self._energy_samples)}")
+            logger.info(f"Min energy: {np.min(self._energy_samples):.0f}")
+            logger.info(f"Max energy: {np.max(self._energy_samples):.0f}")
+            logger.info(f"Average energy: {np.mean(self._energy_samples):.0f}")
+            logger.info(f"Current threshold: {self.min_energy_threshold}")
+            logger.info("")
+            logger.info("Recommended threshold: Set to 150-200 above average")
+            logger.info(f"Suggested value: {int(np.mean(self._energy_samples) + 200)}")
+            logger.info("="*70 + "\n")
         
         # FIXED: Check if we're being called from a processing thread
         current_thread = threading.current_thread()

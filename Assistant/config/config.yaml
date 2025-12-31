@@ -35,7 +35,7 @@ interfaces:
                            # 2 = moderate (RECOMMENDED)
                            # 3 = most aggressive (only very clear speech)
     
-    silence_duration: 0.9  # Seconds of silence before considering speech ended
+    silence_duration: 0.4  # Seconds of silence before considering speech ended
                            # Lower = faster response, but may cut off pauses
                            # Higher = allows longer pauses, but slower response
                            # Recommended: 0.8-1.2

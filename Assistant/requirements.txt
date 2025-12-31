@@ -33,3 +33,6 @@ keyboard>=0.13.5
 
 # Voice Activity Detection
 webrtcvad>=2.0.10
+
+# Offline Speech Recognition
+vosk>=0.3.45

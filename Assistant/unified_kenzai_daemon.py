@@ -392,12 +392,15 @@ class KenzAIUnifiedDaemon:
         self.logger.info("Say 'go to sleep' or 'goodbye' to return to sleep mode")
         self.logger.info("=" * 70 + "\n")
         
-        # Start continuous listening with VAD
+        # **FIX: Start continuous listening with VAD**
         if self.vad_interface and self.vad_interface.vad:
             try:
                 self.logger.info("Starting VAD continuous listening...")
-                self.vad_interface.start_continuous_listening(self._handle_command)
-                self.logger.info("✓ VAD listening started")
+                # Start listening in a separate thread to not block
+                threading.Thread(
+                    target=self._start_vad_listening,
+                    daemon=True
+                ).start()
             except Exception as e:
                 self.logger.error(f"Failed to start VAD listening: {e}")
                 self.logger.warning("Falling back to command loop...")
@@ -405,6 +408,18 @@ class KenzAIUnifiedDaemon:
         else:
             self.logger.warning("VAD not available - starting command loop")
             threading.Thread(target=self._command_loop, daemon=True).start()
+    
+    def _start_vad_listening(self):
+        """Start VAD listening - runs in separate thread."""
+        try:
+            # Small delay to ensure greeting is done
+            time.sleep(0.5)
+            self.vad_interface.start_continuous_listening(self._handle_command)
+            self.logger.info("✓ VAD listening started")
+        except Exception as e:
+            self.logger.error(f"Error starting VAD: {e}", exc_info=True)
+            # Fallback to command loop
+            self._command_loop()
     
     def _handle_command(self, text: str):
         """Handle voice command (called by VAD)."""
@@ -516,6 +531,8 @@ class KenzAIUnifiedDaemon:
         """Show GUI interface."""
         if self.mode == DaemonMode.SLEEP:
             self.wake_up()
+            # Give it a moment to fully wake up
+            time.sleep(3)
         
         try:
             self.logger.info("Launching GUI...")

@@ -16,3 +16,5 @@ Assistant/core/__pycache__/topic_manager.cpython-311.pyc
 Assistant/memory/local_owner/general.db
 Assistant/interfaces/__pycache__/gui.cpython-311.pyc
 Assistant/config/user_preferences.json
+Assistant/interfaces/__pycache__/voice.cpython-311.pyc
+Assistant/config/user_preferences.json

@@ -1,600 +1,549 @@
 """
-KenzAI Unified Daemon - FIXED VERSION
-Fixes VAD continuous listening startup and adds better error handling.
-Single file for all daemon functionality with proper wake/sleep modes.
-Supports both Porcupine wake word and VAD continuous listening.
+VAD-Enabled Voice Interface - FIXED VERSION
+Fixed to work without PyAudio dependency.
+Voice Activity Detection for natural continuous listening.
 """
 import sys
-import time
-import signal
-import threading
 from pathlib import Path
-from typing import Optional, Callable
-from enum import Enum
+from typing import Optional, Dict, Any, Callable
+import io
+import threading
+import time
+import queue
 
-_current_dir = Path(__file__).parent
+_current_dir = Path(__file__).parent.parent
 if str(_current_dir) not in sys.path:
     sys.path.insert(0, str(_current_dir))
 
-from utils.logger import initialize_logger, get_logger
-from utils.helpers import load_config, load_user_preferences, save_user_preferences
-from utils.windows_integration import WindowsStartupManager, is_windows
+from utils.logger import get_logger
+from utils.helpers import load_config
+
+logger = get_logger()
 
 # Optional imports
 try:
-    import pystray
-    from PIL import Image, ImageDraw
-    SYSTRAY_AVAILABLE = True
+    import sounddevice as sd
+    import soundfile as sf
+    import numpy as np
+    SOUNDDEVICE_AVAILABLE = True
 except ImportError:
-    SYSTRAY_AVAILABLE = False
+    SOUNDDEVICE_AVAILABLE = False
+    logger.warning("sounddevice not available")
 
 try:
-    from interfaces.porcupine_wake import PorcupineWakeWord
-    PORCUPINE_AVAILABLE = True
-except ImportError:
-    PORCUPINE_AVAILABLE = False
-
-try:
-    from interfaces.vad_voice import VADVoiceInterface
+    import webrtcvad
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False
-    # Fallback to regular voice
-    try:
-        from interfaces.voice import VoiceInterface
-        VOICE_AVAILABLE = True
-    except ImportError:
-        VOICE_AVAILABLE = False
+    logger.warning("webrtcvad not available - install with: pip install webrtcvad")
+
+try:
+    import speech_recognition as sr
+    SPEECH_RECOGNITION_AVAILABLE = True
+except ImportError:
+    SPEECH_RECOGNITION_AVAILABLE = False
+    logger.warning("SpeechRecognition not available")
+
+try:
+    import pyttsx3
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
+    logger.warning("pyttsx3 not available")
 
 
-class DaemonMode(Enum):
-    """Daemon operation modes."""
-    SLEEP = "sleep"      # Listening for wake word only (low resource)
-    AWAKE = "awake"      # Fully active, processing commands
-
-
-class SystemTrayIcon:
-    """System tray icon with context menu."""
+class VADVoiceInterface:
+    """Voice interface with Voice Activity Detection for continuous listening."""
     
-    def __init__(self, daemon, logger):
-        self.daemon = daemon
-        self.logger = logger
-        self.icon = None
-    
-    def create_icon_image(self, awake: bool = False) -> Image.Image:
-        """Create icon image based on state."""
-        size = 64
-        image = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize VAD voice interface.
         
-        if awake:
-            # Bright blue glow when awake
-            color = (100, 200, 255, 255)
-            fill = (50, 150, 255, 200)
-        else:
-            # Dim gray when sleeping
-            color = (80, 80, 80, 200)
-            fill = (40, 40, 40, 150)
+        Args:
+            config: Configuration dict. If None, loads from file.
+        """
+        if config is None:
+            config = load_config()
         
-        margin = 8
-        draw.ellipse(
-            [margin, margin, size - margin, size - margin],
-            fill=fill,
-            outline=color,
-            width=3
-        )
+        self.config = config
+        self.voice_config = config.get('interfaces', {}).get('voice', {})
         
-        # Add inner circle for depth
-        inner_margin = 16
-        draw.ellipse(
-            [inner_margin, inner_margin, size - inner_margin, size - inner_margin],
-            outline=color,
-            width=2
-        )
+        self.enabled = self.voice_config.get('enabled', True)
+        self.language = self.voice_config.get('language', 'en-US')
+        self.tts_voice = self.voice_config.get('tts_voice', 'male')
         
-        return image
-    
-    def create_menu(self) -> pystray.Menu:
-        """Create context menu."""
-        return pystray.Menu(
-            pystray.MenuItem(
-                "Wake Up",
-                self._manual_wake,
-                default=True,
-                visible=lambda item: self.daemon.mode == DaemonMode.SLEEP
-            ),
-            pystray.MenuItem(
-                "Go to Sleep",
-                self._manual_sleep,
-                visible=lambda item: self.daemon.mode == DaemonMode.AWAKE
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Settings",
-                pystray.Menu(
-                    pystray.MenuItem(
-                        "Start with Windows",
-                        self._toggle_startup,
-                        checked=lambda item: self._is_startup_enabled(),
-                        enabled=lambda item: is_windows()
-                    ),
-                    pystray.MenuItem(
-                        "Show GUI",
-                        self._show_gui,
-                        visible=lambda item: self.daemon.mode == DaemonMode.AWAKE
-                    )
-                )
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit", self._exit)
-        )
-    
-    def _is_startup_enabled(self) -> bool:
-        """Check if startup is enabled."""
-        try:
-            return WindowsStartupManager.is_startup_enabled() if is_windows() else False
-        except Exception:
-            return False
-    
-    def _manual_wake(self, icon, item):
-        """Manually wake KenzAI."""
-        self.daemon.wake_up()
-    
-    def _manual_sleep(self, icon, item):
-        """Manually put KenzAI to sleep."""
-        self.daemon.go_to_sleep()
-    
-    def _toggle_startup(self, icon, item):
-        """Toggle Windows startup."""
-        if is_windows():
-            try:
-                enabled = WindowsStartupManager.toggle_startup()
-                self.logger.info(f"Start with Windows: {'enabled' if enabled else 'disabled'}")
-            except Exception as e:
-                self.logger.error(f"Failed to toggle startup: {e}")
-    
-    def _show_gui(self, icon, item):
-        """Show GUI interface."""
-        self.daemon.show_gui()
-    
-    def _exit(self, icon, item):
-        """Exit daemon."""
-        self.daemon.shutdown()
-    
-    def start(self):
-        """Start system tray icon."""
-        if not SYSTRAY_AVAILABLE:
-            self.logger.warning("System tray not available (install: pip install pystray pillow)")
-            return
+        # VAD settings - OPTIMIZED for faster response
+        self.vad_aggressiveness = self.voice_config.get('vad_aggressiveness', 2)  # 0-3
+        self.silence_duration = self.voice_config.get('silence_duration', 0.7)
+        self.min_speech_duration = self.voice_config.get('min_speech_duration', 0.2)
         
-        try:
-            image = self.create_icon_image(awake=False)
-            menu = self.create_menu()
-            
-            self.icon = pystray.Icon("KenzAI", image, "KenzAI Assistant", menu)
-            
-            # Run in separate thread
-            threading.Thread(target=self.icon.run, daemon=False).start()
-            
-            self.logger.info("System tray icon started")
-        except Exception as e:
-            self.logger.error(f"Failed to start system tray: {e}")
-    
-    def update_state(self, awake: bool):
-        """Update icon to reflect current state."""
-        if self.icon:
-            self.icon.icon = self.create_icon_image(awake=awake)
-            self.icon.menu = self.create_menu()
-    
-    def stop(self):
-        """Stop system tray icon."""
-        if self.icon:
-            self.icon.stop()
-
-
-class KenzAIUnifiedDaemon:
-    """Unified KenzAI daemon with wake/sleep modes."""
-    
-    def __init__(self):
-        """Initialize daemon."""
-        self.config = load_config()
-        self.preferences = load_user_preferences()
+        # Audio settings (VAD requires 16kHz, 16-bit, mono)
+        self.sample_rate = 16000
+        self.frame_duration = 30  # ms (10, 20, or 30)
+        self.frame_size = int(self.sample_rate * self.frame_duration / 1000)
+        self.channels = 1
         
-        # Initialize logging
-        log_config = self.config.get('logging', {})
-        initialize_logger(
-            log_level=log_config.get('level', 'INFO'),
-            log_file=log_config.get('file')
-        )
-        self.logger = get_logger()
-        
-        self.mode = DaemonMode.SLEEP
-        self.assistant = None
-        self.wake_listener = None
-        self.voice_interface = None
-        self.vad_interface = None
-        self._running = True
-        self._command_lock = threading.Lock()  # Prevent concurrent command processing
-        
-        # Initialize wake word detector
-        self._init_wake_word()
-        
-        # Initialize voice interfaces
-        self._init_voice()
-        
-        # System tray
-        self.tray_icon = SystemTrayIcon(self, self.logger)
-        
-        # Signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        if hasattr(signal, 'SIGTERM'):
-            signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        self.logger.info("KenzAI Unified Daemon initialized")
-    
-    def _init_wake_word(self):
-        """Initialize Porcupine wake word detector."""
-        if not PORCUPINE_AVAILABLE:
-            self.logger.error("Porcupine not available! Install: pip install pvporcupine")
-            return
-        
-        daemon_config = self.config.get('interfaces', {}).get('daemon', {})
-        keyword = daemon_config.get('porcupine_keyword', 'jarvis')
-        sensitivity = daemon_config.get('porcupine_sensitivity', 1.0)
-        access_key = daemon_config.get('porcupine_access_key')
-        keyword_path = daemon_config.get('porcupine_keyword_path')
-        
-        # Resolve keyword path if provided
-        if keyword_path:
-            keyword_path = Path(keyword_path)
-            if not keyword_path.is_absolute():
-                keyword_path = Path(__file__).parent / keyword_path
-            keyword_path = str(keyword_path)
-        
-        try:
-            self.wake_listener = PorcupineWakeWord(
-                keyword=keyword,
-                sensitivity=sensitivity,
-                access_key=access_key,
-                keyword_path=keyword_path
-            )
-            self.logger.info(f"✓ Wake word '{keyword}' initialized")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize wake word: {e}")
-            self.wake_listener = None
-    
-    def _init_voice(self):
-        """Initialize voice interfaces."""
-        # Try VAD interface first (for continuous listening)
+        # Initialize VAD
+        self.vad = None
         if VAD_AVAILABLE:
             try:
-                self.vad_interface = VADVoiceInterface(self.config)
-                if self.vad_interface.audio_available and self.vad_interface.vad:
-                    self.logger.info("✓ VAD voice interface initialized")
-                else:
-                    self.logger.warning("VAD available but audio/VAD not working")
-                    self.vad_interface = None
+                self.vad = webrtcvad.Vad(self.vad_aggressiveness)
+                logger.info(f"VAD initialized (aggressiveness={self.vad_aggressiveness}, silence={self.silence_duration}s)")
             except Exception as e:
-                self.logger.error(f"Failed to initialize VAD: {e}")
-                self.vad_interface = None
+                logger.warning(f"Failed to initialize VAD: {e}")
+                self.vad = None
         
-        # Fallback to regular voice interface (for single commands)
-        if not self.vad_interface and VOICE_AVAILABLE:
+        # Initialize recognizer (for speech-to-text only, not microphone)
+        self.recognizer = None
+        self.audio_available = False
+        
+        if SPEECH_RECOGNITION_AVAILABLE and SOUNDDEVICE_AVAILABLE and self.enabled:
             try:
-                from interfaces.voice import VoiceInterface
-                self.voice_interface = VoiceInterface(self.config)
-                self.logger.info("✓ Voice interface initialized (non-VAD)")
+                # Only create recognizer for speech recognition API
+                self.recognizer = sr.Recognizer()
+                
+                # Optimize recognizer settings
+                self.recognizer.energy_threshold = 3000
+                self.recognizer.dynamic_energy_threshold = False
+                self.recognizer.pause_threshold = 0.5
+                
+                # Test audio device with sounddevice (not PyAudio)
+                devices = sd.query_devices()
+                logger.info(f"Found {len(devices)} audio devices")
+                
+                default_input = sd.query_devices(kind='input')
+                logger.info(f"Default input device: {default_input['name']}")
+                
+                self.audio_available = True
+                logger.info("Voice recognition initialized")
             except Exception as e:
-                self.logger.error(f"Failed to initialize voice: {e}")
-    
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        self.logger.info("\nShutdown signal received")
-        self.shutdown()
-        sys.exit(0)
-    
-    def start(self):
-        """Start the daemon in sleep mode."""
-        self.logger.info("\n" + "=" * 70)
-        self.logger.info("KENZAI UNIFIED DAEMON")
-        self.logger.info("=" * 70)
+                logger.warning(f"Failed to initialize audio: {e}")
+                self.recognizer = None
+                self.audio_available = False
         
-        # Setup Windows startup if configured
-        if is_windows() and self.preferences.get('daemon', {}).get('start_with_windows', False):
+        # Initialize TTS with proper thread safety
+        self.tts_engine = None
+        self._tts_lock = threading.Lock()
+        self._tts_busy = False
+        
+        if TTS_AVAILABLE and self.enabled:
             try:
-                if not WindowsStartupManager.is_startup_enabled():
-                    WindowsStartupManager.enable_startup()
-                    self.logger.info("✓ Enabled Windows startup")
+                self.tts_engine = pyttsx3.init()
+                
+                voices = self.tts_engine.getProperty('voices')
+                if voices:
+                    if self.tts_voice == 'male':
+                        for voice in voices:
+                            if 'male' in voice.name.lower() or 'david' in voice.name.lower():
+                                self.tts_engine.setProperty('voice', voice.id)
+                                break
+                
+                self.tts_engine.setProperty('rate', 175)
+                self.tts_engine.setProperty('volume', 0.8)
+                
+                logger.info("TTS engine initialized")
             except Exception as e:
-                self.logger.warning(f"Could not enable startup: {e}")
+                logger.warning(f"Failed to initialize TTS: {e}")
+                self.tts_engine = None
         
-        # Start system tray
-        self.tray_icon.start()
+        # Continuous listening state
+        self._listening = False
+        self._listen_thread = None
+        self._callback = None
+        self._audio_stream = None
+        self._speech_queue = queue.Queue()
+        self._last_speech_time = 0
+        self._min_speech_interval = 0.5
+    
+    def _is_speech(self, audio_frame: bytes) -> bool:
+        """
+        Check if audio frame contains speech.
         
-        # Enter sleep mode (listening for wake word)
-        self._enter_sleep_mode()
+        Args:
+            audio_frame: Raw audio bytes (16-bit PCM).
         
-        # Main loop
+        Returns:
+            True if speech detected.
+        """
+        if not self.vad:
+            return True
+        
         try:
-            while self._running:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.shutdown()
-    
-    def _enter_sleep_mode(self):
-        """Enter sleep mode (low resource, wake word only)."""
-        self.mode = DaemonMode.SLEEP
-        self.tray_icon.update_state(awake=False)
-        
-        self.logger.info("\n" + "💤" * 35)
-        self.logger.info("SLEEP MODE - Listening for wake word")
-        self.logger.info("Say 'KENZAI' to wake up")
-        self.logger.info("💤" * 35 + "\n")
-        
-        # Stop VAD if running
-        if self.vad_interface and hasattr(self.vad_interface, '_listening'):
-            if self.vad_interface._listening:
-                self.logger.debug("Stopping VAD...")
-                self.vad_interface.stop_listening()
-        
-        # Start wake word detection
-        if self.wake_listener:
-            self.wake_listener.start_listening(self.wake_up)
-        else:
-            self.logger.warning("Wake word not available - use system tray to wake manually")
-    
-    def wake_up(self):
-        """Wake up from sleep mode."""
-        if self.mode == DaemonMode.AWAKE:
-            self.logger.debug("Already awake")
-            return
-        
-        self.logger.info("\n" + "🌟" * 35)
-        self.logger.info("WAKING UP...")
-        self.logger.info("🌟" * 35 + "\n")
-        
-        # Stop wake word detection
-        if self.wake_listener:
-            self.wake_listener.stop_listening()
-        
-        # Change mode
-        self.mode = DaemonMode.AWAKE
-        self.tray_icon.update_state(awake=True)
-        
-        # Initialize assistant if needed
-        if self.assistant is None:
-            try:
-                self.logger.info("Initializing KenzAI core...")
-                from core import KenzAIAssistant
-                self.assistant = KenzAIAssistant(self.config)
-                self.logger.info("✓ Assistant initialized")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize assistant: {e}")
-                self._enter_sleep_mode()
-                return
-        
-        # Speak greeting
-        greeting = self.assistant.get_greeting()
-        self.logger.info(f"Greeting: {greeting}")
-        
-        voice = self.vad_interface or self.voice_interface
-        if voice and hasattr(voice, 'tts_engine') and voice.tts_engine:
-            try:
-                voice.speak(greeting)
-            except Exception as e:
-                self.logger.error(f"Failed to speak greeting: {e}")
-        
-        # Wait for greeting to finish
-        time.sleep(2)
-        
-        self.logger.info("\n" + "=" * 70)
-        self.logger.info("AWAKE MODE - Continuously listening")
-        self.logger.info("Say 'go to sleep' or 'goodbye' to return to sleep mode")
-        self.logger.info("=" * 70 + "\n")
-        
-        # **FIX: Start continuous listening with VAD**
-        if self.vad_interface and self.vad_interface.vad:
-            try:
-                self.logger.info("Starting VAD continuous listening...")
-                # Start listening in a separate thread to not block
-                threading.Thread(
-                    target=self._start_vad_listening,
-                    daemon=True
-                ).start()
-            except Exception as e:
-                self.logger.error(f"Failed to start VAD listening: {e}")
-                self.logger.warning("Falling back to command loop...")
-                threading.Thread(target=self._command_loop, daemon=True).start()
-        else:
-            self.logger.warning("VAD not available - starting command loop")
-            threading.Thread(target=self._command_loop, daemon=True).start()
-    
-    def _start_vad_listening(self):
-        """Start VAD listening - runs in separate thread."""
-        try:
-            # Small delay to ensure greeting is done
-            time.sleep(0.5)
-            self.vad_interface.start_continuous_listening(self._handle_command)
-            self.logger.info("✓ VAD listening started")
+            return self.vad.is_speech(audio_frame, self.sample_rate)
         except Exception as e:
-            self.logger.error(f"Error starting VAD: {e}", exc_info=True)
-            # Fallback to command loop
-            self._command_loop()
+            logger.debug(f"VAD error: {e}")
+            return False
     
-    def _handle_command(self, text: str):
-        """Handle voice command (called by VAD)."""
-        if self.mode != DaemonMode.AWAKE:
+    def start_continuous_listening(self, callback: Callable[[str], None]):
+        """
+        Start continuous listening with VAD.
+        
+        Args:
+            callback: Function to call with recognized text.
+        """
+        if self._listening:
+            logger.warning("Already listening")
             return
         
-        # Prevent concurrent command processing
-        if not self._command_lock.acquire(blocking=False):
-            self.logger.debug("Command already being processed, skipping...")
+        if not self.vad:
+            logger.error("VAD not available - cannot start continuous listening")
             return
+        
+        if not self.audio_available:
+            logger.error("Audio not available")
+            return
+        
+        logger.info("Starting VAD continuous listening...")
+        
+        self._listening = True
+        self._callback = callback
+        
+        # Start processing thread
+        self._listen_thread = threading.Thread(target=self._processing_loop, daemon=True)
+        self._listen_thread.start()
+        
+        # Start audio capture thread
+        self._capture_thread = threading.Thread(target=self._audio_capture_loop, daemon=True)
+        self._capture_thread.start()
+        
+        logger.info("✓ VAD continuous listening started")
+    
+    def _audio_capture_loop(self):
+        """Audio capture loop - runs in separate thread."""
+        logger.info("Audio capture loop started")
+        
+        # Speech detection state
+        speech_frames = []
+        is_speaking = False
+        silence_frames = 0
+        silence_threshold = int(self.silence_duration * 1000 / self.frame_duration)
+        min_speech_frames = int(self.min_speech_duration * 1000 / self.frame_duration)
+        
+        logger.debug(f"Silence threshold: {silence_threshold} frames, Min speech: {min_speech_frames} frames")
         
         try:
-            self.logger.info(f"\n💬 You: {text}")
-            
-            # Check for sleep commands
-            sleep_phrases = [
-                'go to sleep', 'goodbye', 'rest', 'dismiss',
-                'that is all', 'you may leave', 'sleep now',
-                'go back to sleep', 'return to sleep'
-            ]
-            
-            if any(phrase in text.lower() for phrase in sleep_phrases):
-                response = "Rest well, your Highness. I shall await your call."
-                self.logger.info(f"🎙️ KenzAI: {response}\n")
+            # Audio callback
+            def audio_callback(indata, frames, time_info, status):
+                nonlocal speech_frames, is_speaking, silence_frames
                 
-                voice = self.vad_interface or self.voice_interface
-                if voice:
-                    voice.speak(response)
+                if status:
+                    logger.debug(f"Audio status: {status}")
                 
-                time.sleep(2)
-                self.go_to_sleep()
-                return
+                if not self._listening:
+                    raise sd.CallbackStop()
+                
+                # Convert to int16
+                audio_int16 = (indata[:, 0] * 32767).astype(np.int16)
+                audio_bytes = audio_int16.tobytes()
+                
+                # Check if frame contains speech
+                contains_speech = self._is_speech(audio_bytes)
+                
+                if contains_speech:
+                    if not is_speaking:
+                        logger.debug("🎤 Speech started")
+                        is_speaking = True
+                        speech_frames = []
+                    
+                    speech_frames.append(audio_int16)
+                    silence_frames = 0
+                    
+                elif is_speaking:
+                    # In speech, but this frame is silent
+                    speech_frames.append(audio_int16)
+                    silence_frames += 1
+                    
+                    # Check if enough silence to end speech
+                    if silence_frames >= silence_threshold:
+                        # Check if we have minimum speech duration
+                        if len(speech_frames) >= min_speech_frames:
+                            # Check minimum interval between speech
+                            now = time.time()
+                            if now - self._last_speech_time >= self._min_speech_interval:
+                                logger.debug(f"🎤 Speech ended ({len(speech_frames)} frames, {len(speech_frames) * self.frame_duration / 1000:.1f}s)")
+                                
+                                # Queue the speech for processing
+                                self._speech_queue.put(speech_frames.copy())
+                                self._last_speech_time = now
+                            else:
+                                logger.debug("Too soon after last speech, ignoring")
+                        else:
+                            logger.debug(f"Speech too short ({len(speech_frames)} < {min_speech_frames}), ignoring")
+                        
+                        # Reset state
+                        is_speaking = False
+                        speech_frames = []
+                        silence_frames = 0
             
-            # Process command
-            try:
-                self.logger.info("🤔 Processing...")
-                response = self.assistant.process_query(text)
-                self.logger.info(f"🎙️ KenzAI: {response}\n")
-                
-                # Speak response
-                voice = self.vad_interface or self.voice_interface
-                if voice:
-                    voice.speak(response)
-            
-            except Exception as e:
-                self.logger.error(f"Error processing command: {e}", exc_info=True)
-                error_msg = "I apologize, but I encountered an error."
-                
-                voice = self.vad_interface or self.voice_interface
-                if voice:
-                    voice.speak(error_msg)
-        
-        finally:
-            self._command_lock.release()
-    
-    def _command_loop(self):
-        """Fallback command loop (non-VAD)."""
-        consecutive_failures = 0
-        max_failures = 3
-        
-        self.logger.info("📢 Command loop started (listening for single commands)")
-        
-        while self.mode == DaemonMode.AWAKE:
-            try:
-                if not self.voice_interface or not self.voice_interface.audio_available:
-                    self.logger.error("Voice interface not available")
-                    break
-                
-                self.logger.info("\n🎤 Listening...")
-                command = self.voice_interface.listen(timeout=10.0, phrase_time_limit=10.0)
-                
-                if command:
-                    consecutive_failures = 0
-                    self._handle_command(command)
-                else:
-                    consecutive_failures += 1
-                    self.logger.debug(f"No input ({consecutive_failures}/{max_failures})")
-                    if consecutive_failures >= max_failures:
-                        self.logger.info("No activity - returning to sleep mode")
-                        self.go_to_sleep()
-                        break
-            
-            except Exception as e:
-                self.logger.error(f"Error in command loop: {e}")
-                consecutive_failures += 1
-                if consecutive_failures >= max_failures:
-                    self.go_to_sleep()
-                    break
-    
-    def go_to_sleep(self):
-        """Return to sleep mode."""
-        if self.mode == DaemonMode.SLEEP:
-            return
-        
-        self.logger.info("\n💤 Returning to sleep mode...")
-        
-        # Get farewell
-        if self.assistant:
-            try:
-                farewell = self.assistant.get_shutdown_greeting()
-                self.logger.info(farewell)
-            except Exception as e:
-                self.logger.error(f"Failed to get farewell: {e}")
-        
-        # Enter sleep mode
-        self._enter_sleep_mode()
-    
-    def show_gui(self):
-        """Show GUI interface."""
-        if self.mode == DaemonMode.SLEEP:
-            self.wake_up()
-            # Give it a moment to fully wake up
-            time.sleep(3)
-        
-        try:
-            self.logger.info("Launching GUI...")
-            from interfaces.gui import launch_gui
-            
-            gui_thread = threading.Thread(
-                target=launch_gui,
-                args=(self.assistant, self.config, self.preferences),
-                daemon=True
+            # Open audio stream
+            self._audio_stream = sd.InputStream(
+                channels=self.channels,
+                samplerate=self.sample_rate,
+                blocksize=self.frame_size,
+                dtype='float32',
+                callback=audio_callback
             )
-            gui_thread.start()
-        except ImportError:
-            self.logger.error("GUI not available")
-    
-    def shutdown(self):
-        """Shutdown daemon."""
-        self.logger.info("\n" + "=" * 70)
-        self.logger.info("SHUTTING DOWN...")
-        self.logger.info("=" * 70 + "\n")
-        
-        self._running = False
-        
-        # Stop wake word listener
-        if self.wake_listener:
-            try:
-                self.wake_listener.cleanup()
-            except Exception as e:
-                self.logger.error(f"Error stopping wake listener: {e}")
-        
-        # Stop VAD
-        if self.vad_interface and hasattr(self.vad_interface, 'stop_listening'):
-            try:
-                self.vad_interface.stop_listening()
-            except Exception as e:
-                self.logger.error(f"Error stopping VAD: {e}")
-        
-        # Stop system tray
-        try:
-            self.tray_icon.stop()
+            
+            with self._audio_stream:
+                logger.info("🎙️ Audio stream opened, listening for speech...")
+                
+                while self._listening:
+                    time.sleep(0.1)
+            
+            logger.info("Audio stream closed")
+            
         except Exception as e:
-            self.logger.error(f"Error stopping tray: {e}")
+            logger.error(f"Error in audio capture loop: {e}", exc_info=True)
+            self._listening = False
+    
+    def _processing_loop(self):
+        """Speech processing loop - runs in separate thread."""
+        logger.info("Speech processing loop started")
         
-        if self.assistant:
+        while self._listening:
             try:
-                farewell = self.assistant.get_shutdown_greeting()
-                self.logger.info(farewell)
+                # Wait for speech with timeout
+                try:
+                    frames = self._speech_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                
+                # Process the speech
+                self._process_speech(frames)
+                
             except Exception as e:
-                self.logger.error(f"Error getting farewell: {e}")
+                logger.error(f"Error in processing loop: {e}", exc_info=True)
         
-        self.logger.info("✓ Daemon stopped\n")
+        logger.info("Speech processing loop stopped")
+    
+    def _process_speech(self, frames: list):
+        """
+        Process collected speech frames.
+        
+        Args:
+            frames: List of audio frames (numpy arrays).
+        """
+        try:
+            start_time = time.time()
+            logger.debug("Processing speech...")
+            
+            # Combine frames
+            audio_data = np.concatenate(frames)
+            
+            # Convert to bytes for speech recognition
+            wav_buffer = io.BytesIO()
+            sf.write(wav_buffer, audio_data, self.sample_rate, format='WAV', subtype='PCM_16')
+            wav_buffer.seek(0)
+            
+            # Convert to AudioData
+            with sf.SoundFile(wav_buffer) as sound_file:
+                audio_array = sound_file.read(dtype='int16')
+                audio = sr.AudioData(
+                    audio_array.tobytes(),
+                    sample_rate=self.sample_rate,
+                    sample_width=2
+                )
+            
+            # Recognize speech
+            try:
+                logger.debug("Calling Google Speech Recognition...")
+                text = self.recognizer.recognize_google(audio, language=self.language)
+                
+                processing_time = time.time() - start_time
+                logger.info(f"✓ Recognized: {text} (took {processing_time:.1f}s)")
+                
+                # Call callback
+                if self._callback:
+                    try:
+                        self._callback(text)
+                    except Exception as e:
+                        logger.error(f"Error in callback: {e}", exc_info=True)
+                    
+            except sr.UnknownValueError:
+                logger.debug("Could not understand audio")
+            except sr.RequestError as e:
+                logger.error(f"Speech recognition error: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error processing speech: {e}", exc_info=True)
+    
+    def stop_listening(self):
+        """Stop continuous listening."""
+        if not self._listening:
+            logger.debug("Not listening, nothing to stop")
+            return
+        
+        logger.info("Stopping continuous listening...")
+        self._listening = False
+        
+        # Stop audio stream
+        if self._audio_stream:
+            try:
+                self._audio_stream.stop()
+                self._audio_stream.close()
+            except Exception as e:
+                logger.debug(f"Error stopping audio stream: {e}")
+            self._audio_stream = None
+        
+        # Wait for threads
+        if self._capture_thread:
+            self._capture_thread.join(timeout=2.0)
+        if self._listen_thread:
+            self._listen_thread.join(timeout=2.0)
+        
+        # Clear queue
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        logger.info("✓ Continuous listening stopped")
+    
+    def speak(self, text: str):
+        """
+        Speak text using TTS with proper thread safety.
+        
+        Args:
+            text: Text to speak.
+        """
+        if not self.tts_engine:
+            logger.debug(f"Would speak: {text}")
+            return
+        
+        # Check if already speaking
+        if self._tts_busy:
+            logger.debug("TTS busy, queuing speech...")
+            return
+        
+        try:
+            with self._tts_lock:
+                self._tts_busy = True
+                
+                try:
+                    # Create new engine instance for this thread
+                    engine = pyttsx3.init()
+                    
+                    # Apply settings
+                    voices = engine.getProperty('voices')
+                    if voices and self.tts_voice == 'male':
+                        for voice in voices:
+                            if 'male' in voice.name.lower() or 'david' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                    
+                    engine.setProperty('rate', 175)
+                    engine.setProperty('volume', 0.8)
+                    
+                    # Speak
+                    engine.say(text)
+                    engine.runAndWait()
+                    
+                    # Clean up
+                    engine.stop()
+                    
+                except Exception as e:
+                    logger.error(f"TTS error: {e}")
+                finally:
+                    self._tts_busy = False
+                
+        except Exception as e:
+            logger.error(f"Failed to speak: {e}")
+            self._tts_busy = False
+    
+    def listen(self, timeout: float = 5.0, phrase_time_limit: float = 5.0) -> Optional[str]:
+        """
+        Single listen (for compatibility).
+        
+        Args:
+            timeout: Timeout in seconds.
+            phrase_time_limit: Maximum phrase length.
+        
+        Returns:
+            Recognized text or None.
+        """
+        if not self.recognizer or not self.audio_available:
+            logger.warning("Voice recognition not available")
+            return None
+        
+        try:
+            # Simple record for single listen
+            logger.debug(f"Recording for {phrase_time_limit}s...")
+            recording = sd.rec(
+                int(phrase_time_limit * self.sample_rate),
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype='int16'
+            )
+            sd.wait()
+            
+            wav_buffer = io.BytesIO()
+            sf.write(wav_buffer, recording, self.sample_rate, format='WAV', subtype='PCM_16')
+            wav_buffer.seek(0)
+            
+            with sf.SoundFile(wav_buffer) as sound_file:
+                audio_array = sound_file.read(dtype='int16')
+                audio = sr.AudioData(
+                    audio_array.tobytes(),
+                    sample_rate=self.sample_rate,
+                    sample_width=2
+                )
+            
+            try:
+                text = self.recognizer.recognize_google(audio, language=self.language)
+                logger.info(f"Recognized: {text}")
+                return text
+            except sr.UnknownValueError:
+                logger.debug("Could not understand audio")
+                return None
+            except sr.RequestError as e:
+                logger.error(f"Speech recognition error: {e}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error listening: {e}")
+            return None
 
 
-def main():
-    """Main entry point."""
+def create_vad_voice_interface(config: Optional[Dict[str, Any]] = None) -> Optional[VADVoiceInterface]:
+    """
+    Create a VAD voice interface instance.
+    
+    Args:
+        config: Configuration dict.
+    
+    Returns:
+        VADVoiceInterface instance or None.
+    """
     try:
-        daemon = KenzAIUnifiedDaemon()
-        daemon.start()
+        return VADVoiceInterface(config)
     except Exception as e:
-        logger = get_logger()
-        logger.critical(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"Failed to create VAD voice interface: {e}")
+        return None
 
 
 if __name__ == "__main__":
-    main()
+    # Test VAD voice interface
+    print("Testing VAD Voice Interface...")
+    print("Speak naturally - will detect when you stop")
+    print("Press Ctrl+C to exit\n")
+    
+    config = load_config()
+    voice = create_vad_voice_interface(config)
+    
+    if voice and voice.audio_available and voice.vad:
+        def on_speech(text):
+            print(f"\n✓ You said: {text}")
+            voice.speak(f"I heard: {text}")
+        
+        voice.start_continuous_listening(on_speech)
+        
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping...")
+            voice.stop_listening()
+    else:
+        print("VAD voice interface not available")
+        print("Install: pip install webrtcvad sounddevice soundfile numpy SpeechRecognition")

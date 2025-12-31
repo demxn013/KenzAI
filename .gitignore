@@ -2,7 +2,6 @@ Assistant/start_kenzai_silent.bat
 Assistant/start_kenzai.bat
 Assistant/uninstall.py
 Assistant/__pycache__/launcher.cpython-314.pyc
-Assistant/config/user_preferences.json
 Assistant/utils/__pycache__/
 Assistant/interfaces/__pycache__/porcupine_wake.cpython-311.pyc
 Assistant/interfaces/__pycache__/vad_voice.cpython-311.pyc
@@ -15,3 +14,5 @@ Assistant/core/__pycache__/model_manager.cpython-311.pyc
 Assistant/core/__pycache__/personality.cpython-311.pyc
 Assistant/core/__pycache__/topic_manager.cpython-311.pyc
 Assistant/memory/local_owner/general.db
+Assistant/interfaces/__pycache__/gui.cpython-311.pyc
+Assistant/config/user_preferences.json

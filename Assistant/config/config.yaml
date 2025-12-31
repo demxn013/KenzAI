@@ -9,7 +9,7 @@ models:
   coding: "deepseek-coder:6.7b"
   
   # General model - for everyday queries
-  general: "deepseek-v2:16b-lite-chat-q4_0"
+  general: "mistral:7b"
   
   # Reasoning model - for complex analysis, step-by-step thinking
   reasoning: "deepseek-r1:14b"

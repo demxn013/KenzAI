@@ -111,37 +111,39 @@ integrations:
       browser: "chrome"
       spotify: "spotify"
 
-# Personality
+# Personality - Refined Professional Style
+# Combines efficiency, directness, and respectful formality
+# Uses titles (my Lord, Sire, Sir, Emperor, your Highness) naturally without overdoing it
 personality:
-  style: "bushido_butler"
-  verbosity: "concise"
+  verbosity: "balanced"    # Options: "concise", "balanced", "detailed"
   confirmation_required: false
 
-# Greetings
+# Greetings - Professional but not overly formal
+# Comment out this section to use automatic defaults
 greetings:
-  style: "formal_time_aware"
   rotation: true
   morning:
-    - "Good morning, your Highness"
-    - "A new day begins, my Emperor"
-    - "The morning greets you, Sir"
+    - "Good morning"
+    - "Morning"
+    - "Good morning, ready when you are"
   afternoon:
-    - "Good afternoon, Master"
-    - "Your Highness"
-    - "At your service, my Emperor"
+    - "Good afternoon"
+    - "Afternoon"
+    - "Hello"
   evening:
-    - "Good evening, your Grace"
-    - "The evening is yours, my lord"
-    - "Your Highness"
+    - "Good evening"
+    - "Evening"
+    - "Hello"
   night:
-    - "The night welcomes you, your Grace"
-    - "At your command, my Emperor"
-    - "Your Highness"
+    - "Hello"
+    - "Evening"
+    - "Good evening"
   shutdown:
-    - "Rest well, your Highness"
-    - "Until next time, my Emperor"
-    - "The shadows await your return, my liege"
-    - "Farewell, your Grace"
+    - "Goodbye"
+    - "Until next time"
+    - "Take care"
+    - "See you later"
+    - "Talk to you soon"
 
 # Logging
 logging:

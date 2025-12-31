@@ -35,10 +35,10 @@ interfaces:
     language: "en-US"
     
     # Voice Activity Detection (VAD) settings - 100% LOCAL
-    vad_aggressiveness: 3  # 0-3, higher = more aggressive filtering
+    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering
                            # 2 = moderate (RECOMMENDED)
     
-    silence_duration: 0.4  # Seconds of silence before considering speech ended
+    silence_duration: 0.7  # Seconds of silence before considering speech ended
     min_speech_duration: 0.2  # Minimum seconds to be considered valid speech
     
     # Speech recognition - 100% LOCAL with Vosk ONLY

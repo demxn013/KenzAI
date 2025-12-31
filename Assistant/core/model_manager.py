@@ -1,13 +1,32 @@
 """
-Model Manager - UPDATED FOR 3 MODEL TYPES
-Handles Ollama model selection, loading, and management.
+=============================================================================
+PATCH INSTRUCTIONS - Apply These 3 Files
+=============================================================================
+
+This patch prevents KenzAI from auto-downloading models.
+Replace these 3 files in your Assistant/ directory:
+
+1. core/model_manager.py
+2. core/assistant.py  
+3. unified_kenzai_daemon.py (optional improvement)
+
+=============================================================================
+FILE 1: core/model_manager.py
+=============================================================================
+"""
+
+# core/model_manager.py
+"""
+Model Manager - FIXED VERSION (No Auto-Download)
+Handles Ollama model selection and verification.
 Supports: reasoning, code, and general models.
+Does NOT auto-download models - only checks if they exist.
 """
 import subprocess
 import sys
 import time
 import threading
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 try:
@@ -45,6 +64,8 @@ class ModelManager:
         
         self.current_model: Optional[str] = None
         self._daemon_started = False
+        self._available_models: Optional[List[str]] = None
+        self._models_checked = False
         
         logger.info(f"Model Manager initialized with 3 types:")
         logger.info(f"  Reasoning: {self.models['reasoning']}")
@@ -73,10 +94,10 @@ class ModelManager:
             ).start()
             time.sleep(3)  # Give it time to start
             self._daemon_started = True
-            logger.info("Ollama daemon started")
+            logger.info("✓ Ollama daemon started")
             return True
         except FileNotFoundError:
-            logger.error("Ollama CLI not found! Please install Ollama.")
+            logger.error("❌ Ollama CLI not found! Please install Ollama from: https://ollama.ai")
             return False
     
     def _is_daemon_running(self) -> bool:
@@ -93,16 +114,16 @@ class ModelManager:
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return False
     
-    def ensure_model(self, model_name: str) -> bool:
+    def _get_available_models(self) -> List[str]:
         """
-        Ensure a model is available locally.
-        
-        Args:
-            model_name: Name of the model to ensure.
+        Get list of locally available models.
         
         Returns:
-            True if model is available, False otherwise.
+            List of model names that are installed.
         """
+        if self._available_models is not None:
+            return self._available_models
+        
         try:
             models_output = subprocess.check_output(
                 ["ollama", "list"],
@@ -110,51 +131,101 @@ class ModelManager:
                 timeout=10
             )
             
-            if model_name in models_output:
-                logger.debug(f"Model {model_name} found locally")
-                return True
+            # Parse model names from output
+            models = []
+            for line in models_output.strip().split('\n')[1:]:  # Skip header
+                if line.strip():
+                    # First column is model name
+                    model_name = line.split()[0]
+                    models.append(model_name)
             
-            logger.info(f"Downloading model {model_name}...")
-            subprocess.run(
-                ["ollama", "pull", model_name],
-                check=True,
-                timeout=300  # 5 minute timeout for downloads
-            )
-            logger.info(f"Model {model_name} downloaded successfully")
-            return True
+            self._available_models = models
+            logger.debug(f"Found {len(models)} installed models")
+            return models
             
         except FileNotFoundError:
-            logger.error("Ollama CLI not found! Please install Ollama.")
-            return False
+            logger.error("❌ Ollama CLI not found!")
+            return []
         except subprocess.TimeoutExpired:
-            logger.error(f"Timeout while ensuring model {model_name}")
-            return False
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to ensure model {model_name}: {e}")
-            return False
+            logger.error("Timeout while listing models")
+            return []
+        except Exception as e:
+            logger.error(f"Error listing models: {e}")
+            return []
+    
+    def is_model_available(self, model_name: str) -> bool:
+        """
+        Check if a model is available locally (does NOT download).
+        
+        Args:
+            model_name: Name of the model to check.
+        
+        Returns:
+            True if model is installed, False otherwise.
+        """
+        available = self._get_available_models()
+        return model_name in available
+    
+    def check_all_models(self) -> Dict[str, bool]:
+        """
+        Check which configured models are available (does NOT download).
+        
+        Returns:
+            Dictionary mapping model type to availability status.
+        """
+        if not self.ensure_ollama_daemon():
+            return {model_type: False for model_type in self.models.keys()}
+        
+        availability = {}
+        missing_models = []
+        
+        for model_type, model_name in self.models.items():
+            is_available = self.is_model_available(model_name)
+            availability[model_type] = is_available
+            
+            if is_available:
+                logger.info(f"✓ {model_type.capitalize()} model found: {model_name}")
+            else:
+                logger.warning(f"✗ {model_type.capitalize()} model NOT found: {model_name}")
+                missing_models.append((model_type, model_name))
+        
+        if missing_models:
+            logger.warning("\n" + "=" * 70)
+            logger.warning("MISSING MODELS DETECTED")
+            logger.warning("=" * 70)
+            logger.warning("The following models are configured but not installed:\n")
+            for model_type, model_name in missing_models:
+                logger.warning(f"  • {model_type.capitalize()}: {model_name}")
+            logger.warning("\nTo install missing models, run:")
+            for model_type, model_name in missing_models:
+                logger.warning(f"  ollama pull {model_name}")
+            logger.warning("\nOr update config.yaml to use models you already have installed.")
+            logger.warning("=" * 70 + "\n")
+        
+        self._models_checked = True
+        return availability
     
     def ensure_all_models(self) -> bool:
         """
-        Ensure all configured models are available.
+        Check all configured models are available (does NOT download).
+        Logs warnings for missing models.
         
         Returns:
-            True if all models are available, False otherwise.
+            True if all models are available, False if any are missing.
         """
-        if not self.ensure_ollama_daemon():
-            return False
+        availability = self.check_all_models()
+        all_available = all(availability.values())
         
-        success = True
-        for model_type, model_name in self.models.items():
-            logger.info(f"Ensuring {model_type} model: {model_name}")
-            if not self.ensure_model(model_name):
-                logger.error(f"Failed to ensure {model_type} model")
-                success = False
+        if not all_available:
+            logger.warning("⚠ Not all configured models are available!")
+            logger.warning("KenzAI will continue but may have reduced functionality.")
         
-        return success
+        return all_available
     
     def select_model(self, prompt: str) -> str:
         """
         Select appropriate model based on prompt content.
+        Falls back to general model if selected model isn't available.
         
         Args:
             prompt: User prompt to analyze.
@@ -182,19 +253,38 @@ class ModelManager:
             'error', 'exception', 'refactor', 'optimize code', 'implement'
         ]
         
+        selected_model = None
+        
         # Check for reasoning first (most specific)
         if any(keyword in prompt_lower for keyword in reasoning_keywords):
-            logger.debug(f"Selected reasoning model for: {prompt[:50]}...")
-            return self.models['reasoning']
-        
+            selected_model = self.models['reasoning']
+            model_type = 'reasoning'
         # Then check for code
-        if any(keyword in prompt_lower for keyword in code_keywords):
-            logger.debug(f"Selected code model for: {prompt[:50]}...")
-            return self.models['code']
-        
+        elif any(keyword in prompt_lower for keyword in code_keywords):
+            selected_model = self.models['code']
+            model_type = 'code'
         # Default to general
-        logger.debug(f"Selected general model for: {prompt[:50]}...")
-        return self.models['general']
+        else:
+            selected_model = self.models['general']
+            model_type = 'general'
+        
+        # Check if selected model is available, fallback if not
+        if not self.is_model_available(selected_model):
+            logger.warning(f"Selected {model_type} model '{selected_model}' not available")
+            
+            # Try to find an available model
+            for fallback_type in ['general', 'code', 'reasoning']:
+                fallback_model = self.models[fallback_type]
+                if self.is_model_available(fallback_model):
+                    logger.info(f"Using {fallback_type} model '{fallback_model}' as fallback")
+                    return fallback_model
+            
+            # If no models available, return the selected one anyway and let it fail gracefully
+            logger.error("No models available! Returning selected model anyway.")
+            return selected_model
+        
+        logger.debug(f"Selected {model_type} model: {selected_model}")
+        return selected_model
     
     def get_model(self, model_type: str = 'general') -> str:
         """
@@ -210,7 +300,7 @@ class ModelManager:
     
     def switch_model(self, model_name: str) -> bool:
         """
-        Switch to a different model.
+        Switch to a different model (only if it's available).
         
         Args:
             model_name: Name of model to switch to.
@@ -221,16 +311,18 @@ class ModelManager:
         if model_name == self.current_model:
             return True
         
-        if self.ensure_model(model_name):
-            old_model = self.current_model
-            self.current_model = model_name
-            if old_model:
-                logger.info(f"Switched from {old_model} to {model_name}")
-            else:
-                logger.info(f"Using model {model_name}")
-            return True
+        if not self.is_model_available(model_name):
+            logger.error(f"Cannot switch to '{model_name}' - model not installed")
+            logger.error(f"Install it with: ollama pull {model_name}")
+            return False
         
-        return False
+        old_model = self.current_model
+        self.current_model = model_name
+        if old_model:
+            logger.info(f"Switched from {old_model} to {model_name}")
+        else:
+            logger.info(f"Using model {model_name}")
+        return True
     
     def get_current_model(self) -> Optional[str]:
         """Get currently active model."""
@@ -244,3 +336,21 @@ class ModelManager:
             Dictionary with model type -> model name mappings.
         """
         return self.models.copy()
+    
+    def get_installation_status(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get detailed installation status for all models.
+        
+        Returns:
+            Dictionary with model info and installation status.
+        """
+        status = {}
+        
+        for model_type, model_name in self.models.items():
+            status[model_type] = {
+                'name': model_name,
+                'installed': self.is_model_available(model_name),
+                'install_command': f"ollama pull {model_name}"
+            }
+        
+        return status

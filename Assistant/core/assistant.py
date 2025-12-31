@@ -1,6 +1,14 @@
 """
-Assistant Core - IMPROVED VERSION
+=============================================================================
+FILE 2: core/assistant.py
+=============================================================================
+"""
+
+# core/assistant.py
+"""
+Assistant Core - FIXED VERSION (No Auto-Download)
 Better memory management and error recovery.
+Does NOT auto-download models.
 """
 import ollama
 from typing import Optional, Dict, Any, List
@@ -39,32 +47,43 @@ class KenzAIAssistant:
         self.conversation_manager = ConversationManager()
         self.greeting_system = GreetingSystem(config)
         
-        # Ensure models are ready with retry
-        self._ensure_models_with_retry()
+        # Check models availability (does NOT download)
+        self._check_models()
         
         # Initialize conversation with system prompt
         conversation = self.conversation_manager.get_current_conversation()
         conversation.add_system_message(self.personality.get_system_prompt())
         
-        logger.info("KenzAI Assistant initialized")
+        logger.info("✓ KenzAI Assistant initialized")
     
-    def _ensure_models_with_retry(self, max_retries: int = 3, delay: float = 2.0):
-        """Ensure models are available with retry logic."""
-        for attempt in range(max_retries):
-            try:
-                if self.model_manager.ensure_all_models():
-                    logger.info("All models ready")
-                    return
-                else:
-                    logger.warning(f"Some models unavailable (attempt {attempt + 1}/{max_retries})")
-                    if attempt < max_retries - 1:
-                        time.sleep(delay)
-            except Exception as e:
-                logger.error(f"Error ensuring models: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(delay)
+    def _check_models(self):
+        """Check model availability without downloading."""
+        logger.info("Checking configured models...")
         
-        logger.warning("Could not ensure all models after retries")
+        try:
+            # This now only checks, doesn't download
+            availability = self.model_manager.check_all_models()
+            
+            available_count = sum(1 for available in availability.values() if available)
+            total_count = len(availability)
+            
+            if available_count == 0:
+                logger.error("=" * 70)
+                logger.error("NO MODELS AVAILABLE!")
+                logger.error("=" * 70)
+                logger.error("KenzAI cannot function without at least one model installed.")
+                logger.error("\nPlease install at least one model:")
+                logger.error(f"  ollama pull {self.model_manager.models['general']}")
+                logger.error("=" * 70)
+            elif available_count < total_count:
+                logger.warning(f"⚠ {available_count}/{total_count} models available")
+                logger.warning("KenzAI will work but with limited capabilities.")
+            else:
+                logger.info(f"✓ All {total_count} models available")
+                
+        except Exception as e:
+            logger.error(f"Error checking models: {e}")
+            logger.warning("Continuing anyway - models will be checked on first use")
     
     def get_greeting(self) -> str:
         """Get a time-aware greeting."""
@@ -138,12 +157,33 @@ class KenzAIAssistant:
                 conversation = self.conversation_manager.get_conversation(conversation_id)
                 conversation.add_system_message(self.personality.get_system_prompt())
             
-            # Select model
+            # Select model based on prompt
             model_name = self.model_manager.select_model(prompt)
+            logger.info(f"Using model: {model_name}")
             
-            # Try to switch model with retry
+            # Check if model is available before trying to use it
+            if not self.model_manager.is_model_available(model_name):
+                error_msg = f"The selected model '{model_name}' is not installed."
+                logger.error(error_msg)
+                
+                # Try to find ANY available model as emergency fallback
+                available = self.model_manager._get_available_models()
+                if available:
+                    fallback = available[0]
+                    logger.warning(f"Using emergency fallback: {fallback}")
+                    model_name = fallback
+                else:
+                    return (
+                        f"I apologize, your Highness, but the required model '{model_name}' is not installed. "
+                        f"Please install it with: ollama pull {model_name}"
+                    )
+            
+            # Switch to model (this now only works if model exists)
             if not self._switch_model_with_retry(model_name):
-                return "I apologize, but I'm having trouble accessing my language models. Please try again in a moment."
+                return (
+                    "I apologize, but I'm having trouble accessing the language model. "
+                    f"Please ensure '{model_name}' is installed: ollama pull {model_name}"
+                )
             
             # Get memory context
             memory_context = ""
@@ -184,7 +224,7 @@ class KenzAIAssistant:
             return f"I apologize, your Highness, but I encountered an unexpected error. Please try again."
     
     def _switch_model_with_retry(self, model_name: str, max_retries: int = 2) -> bool:
-        """Switch model with retry logic."""
+        """Switch model with retry logic (no download)."""
         for attempt in range(max_retries):
             try:
                 if self.model_manager.switch_model(model_name):
@@ -219,6 +259,14 @@ class KenzAIAssistant:
                     return response['message']['content']
                     
             except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check if it's a "model not found" error
+                if 'not found' in error_str or 'does not exist' in error_str:
+                    logger.error(f"Model '{model_name}' not found in Ollama")
+                    logger.error(f"Install it with: ollama pull {model_name}")
+                    return None
+                
                 logger.error(f"Ollama error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     time.sleep(2)

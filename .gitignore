@@ -13,10 +13,10 @@ Assistant/core/__pycache__/greeting_system.cpython-311.pyc
 Assistant/core/__pycache__/model_manager.cpython-311.pyc
 Assistant/core/__pycache__/personality.cpython-311.pyc
 Assistant/core/__pycache__/topic_manager.cpython-311.pyc
-Assistant/memory/local_owner/general.db
 Assistant/interfaces/__pycache__/gui.cpython-311.pyc
 Assistant\config\user_preferences.json
 Assistant/interfaces/__pycache__/voice.cpython-311.pyc
-Assistant\memory\local_owner\general.db\
+Assistant\memory\local_owner\general.db
 Assistant\memory\local_owner\elementalmc.db
 Assistant\memory\local_owner\yazanaki.db
+Assistant\models\vosk\

@@ -34,12 +34,25 @@ interfaces:
     enabled: true
     language: "en-US"
     
-    # Voice Activity Detection (VAD) settings - 100% LOCAL
-    vad_aggressiveness: 2  # 0-3, higher = more aggressive filtering
-                           # 2 = moderate (RECOMMENDED)
+    # OPTIMIZED VAD SETTINGS - For clean mic with noise suppression
+    # Balanced between accuracy and responsiveness
+    vad_aggressiveness: 2  # Moderate filtering (good for clean mics)
+                           # Your noise suppression handles the rest
     
-    silence_duration: 1.0  # Seconds of silence before considering speech ended
-    min_speech_duration: 0.4  # Minimum seconds to be considered valid speech
+    silence_duration: 1.3  # Wait 1.3 seconds of silence before ending speech
+                          # Sweet spot for natural pauses
+    
+    min_speech_duration: 0.8  # Speech must be at least 0.8 seconds
+                              # Filters out artifacts while keeping responsiveness
+                              # This catches "the" but not real speech
+    
+    # Energy threshold for speech detection (NEW)
+    # Higher = requires louder audio to be considered speech
+    min_energy_threshold: 300  # Default is typically 100-200
+                               # Increase to 500 if still getting false triggers
+    
+    # Debug mode - logs energy levels (useful for tuning)
+    debug_vad: false  # Set to true to see what VAD is detecting
     
     # Speech recognition - 100% LOCAL with Vosk ONLY
     vosk_model_path: "./models/vosk"  # Path to Vosk model directory
@@ -55,19 +68,42 @@ interfaces:
     porcupine_access_key: "MQuwPtdtG5hLtDpRtDaS9qx1QBxQlY82rXSk3Sn0rPEevGdLtQUzxA=="
     porcupine_keyword_path: "assets/wake_words/kenzai.ppn"
 
-# VAD Tuning Guide:
+# VAD Troubleshooting Guide:
+#
+# PROBLEM: Responds to background noise / false "the" triggers
+# SOLUTION: 
+#   - Set vad_aggressiveness = 3 (DONE)
+#   - Set min_speech_duration = 1.0 or higher (DONE)
+#   - Move away from fans, AC, computer noise
+#   - Use push-to-talk mode instead (see below)
+#
+# PROBLEM: Cuts you off mid-sentence
+# SOLUTION:
+#   - Increase silence_duration to 2.0 or 2.5
+#   - Speak without long pauses
+#
+# PROBLEM: Slow to respond
+# SOLUTION:
+#   - Decrease silence_duration to 1.0
+#   - This is the tradeoff for accuracy
+#
+# PROBLEM: Still getting false triggers even at max settings
+# SOLUTION: Your environment is too noisy. Options:
+#   1. Use a directional microphone (cardioid pattern)
+#   2. Enable push-to-talk mode (hold key to talk)
+#   3. Use a quieter room
+#   4. Increase min_speech_duration to 2.0
+
+# Alternative: Push-to-Talk Mode (No VAD false triggers)
+# Uncomment to enable:
 # 
-# If KenzAI responds to background noise:
-#   - Increase vad_aggressiveness to 3
-#   - Increase min_speech_duration to 0.5
-#
-# If KenzAI cuts you off mid-sentence:
-#   - Increase silence_duration to 1.2 or 1.5
-#   - Decrease vad_aggressiveness to 1
-#
-# If KenzAI is slow to respond:
-#   - Decrease silence_duration to 0.7
-#   - Keep vad_aggressiveness at 2
+# interfaces:
+#   voice:
+#     mode: "push_to_talk"  # Hold a key to talk, release to process
+#     push_key: "ctrl+space"  # Key combination to hold while talking
+#     vad_aggressiveness: 2  # Can be lower since manual activation
+#     silence_duration: 0.8  # Faster response with manual control
+#     min_speech_duration: 0.3  # Can be lower with manual control
 
 # Vosk Model Setup (100% OFFLINE):
 # 1. Download model from: https://alphacephei.com/vosk/models
@@ -112,14 +148,11 @@ integrations:
       spotify: "spotify"
 
 # Personality - Refined Professional Style
-# Combines efficiency, directness, and respectful formality
-# Uses titles (my Lord, Sire, Sir, Emperor, your Highness) naturally without overdoing it
 personality:
-  verbosity: "balanced"    # Options: "concise", "balanced", "detailed"
+  verbosity: "balanced"
   confirmation_required: false
 
 # Greetings - Professional with respectful titles
-# Mix of formal and casual greetings for variety
 greetings:
   rotation: true
   morning:

@@ -87,6 +87,7 @@ class VADVoiceInterface:
         self.vad_aggressiveness = self.voice_config.get('vad_aggressiveness', 2)
         self.silence_duration = self.voice_config.get('silence_duration', 0.4)
         self.min_speech_duration = self.voice_config.get('min_speech_duration', 0.2)
+        self.min_energy_threshold = self.voice_config.get('min_energy_threshold', 300)
         
         # Audio settings (VAD requires 16kHz, 16-bit, mono)
         self.sample_rate = 16000
@@ -172,6 +173,9 @@ class VADVoiceInterface:
         # FIXED: Flag to prevent thread join deadlock
         self._stopping = False
         
+        # Debug mode - logs energy levels when detecting false triggers
+        self._debug_mode = self.voice_config.get('debug_vad', False)
+        
         # Log final status
         if self.audio_available and self.vad and self.recognizer:
             logger.info(f"✓ VAD Voice Interface ready (Vosk, 100% offline)")
@@ -231,13 +235,37 @@ class VADVoiceInterface:
             logger.error(f"Failed to initialize Vosk: {e}")
             self.recognizer = None
     
-    def _is_speech(self, audio_frame: bytes) -> bool:
-        """Check if audio frame contains speech."""
+    def _is_speech(self, audio_frame: bytes, audio_int16: np.ndarray = None) -> bool:
+        """
+        Check if audio frame contains speech.
+        Now with energy threshold check to filter weak signals.
+        """
         if not self.vad:
             return True
         
         try:
-            return self.vad.is_speech(audio_frame, self.sample_rate)
+            # First check: Energy threshold (loudness check)
+            if audio_int16 is not None:
+                # Calculate RMS (root mean square) energy
+                energy = np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2))
+                
+                # Debug logging
+                if self._debug_mode:
+                    logger.debug(f"Audio energy: {energy:.0f} (threshold: {self.min_energy_threshold})")
+                
+                # If too quiet, not speech
+                if energy < self.min_energy_threshold:
+                    if self._debug_mode:
+                        logger.debug(f"Rejected - too quiet ({energy:.0f} < {self.min_energy_threshold})")
+                    return False
+            
+            # Second check: VAD algorithm
+            is_speech = self.vad.is_speech(audio_frame, self.sample_rate)
+            
+            if self._debug_mode and is_speech:
+                logger.debug(f"VAD detected speech (energy: {energy:.0f})")
+            
+            return is_speech
         except Exception as e:
             logger.debug(f"VAD error: {e}")
             return False
@@ -299,8 +327,8 @@ class VADVoiceInterface:
                 audio_int16 = (indata[:, 0] * 32767).astype(np.int16)
                 audio_bytes = audio_int16.tobytes()
                 
-                # Check if frame contains speech
-                contains_speech = self._is_speech(audio_bytes)
+                # Check if frame contains speech (with energy check)
+                contains_speech = self._is_speech(audio_bytes, audio_int16)
                 
                 if contains_speech:
                     if not is_speaking:

@@ -26,6 +26,7 @@ startup:
 interfaces:
   voice:
     enabled: true
+    vosk_model_path: "./models/vosk"
     language: "en-US"
     
     # Voice Activity Detection (VAD) settings

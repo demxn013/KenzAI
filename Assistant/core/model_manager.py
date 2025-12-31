@@ -1,6 +1,7 @@
 """
-Model Manager
+Model Manager - UPDATED FOR 3 MODEL TYPES
 Handles Ollama model selection, loading, and management.
+Supports: reasoning, code, and general models.
 """
 import subprocess
 import sys
@@ -20,7 +21,7 @@ logger = get_logger()
 
 
 class ModelManager:
-    """Manages Ollama models and model selection."""
+    """Manages Ollama models with 3 model types: reasoning, code, general."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
@@ -33,12 +34,22 @@ class ModelManager:
             config = load_config()
         
         self.config = config
+        models_config = config.get('models', {})
+        
+        # Support 3 model types
         self.models = {
-            'code': config['models']['code'],
-            'general': config['models']['general']
+            'reasoning': models_config.get('reasoning', 'deepseek-r1:14b'),
+            'code': models_config.get('code', 'deepseek-coder:6.7b'),
+            'general': models_config.get('general', 'deepseek-v2:16b-lite-chat-q4_0')
         }
+        
         self.current_model: Optional[str] = None
         self._daemon_started = False
+        
+        logger.info(f"Model Manager initialized with 3 types:")
+        logger.info(f"  Reasoning: {self.models['reasoning']}")
+        logger.info(f"  Code: {self.models['code']}")
+        logger.info(f"  General: {self.models['general']}")
     
     def ensure_ollama_daemon(self) -> bool:
         """
@@ -72,7 +83,7 @@ class ModelManager:
         """Check if Ollama daemon is running."""
         try:
             subprocess.run(
-                ["ollama", "ping"],
+                ["ollama", "list"],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -134,7 +145,9 @@ class ModelManager:
         
         success = True
         for model_type, model_name in self.models.items():
+            logger.info(f"Ensuring {model_type} model: {model_name}")
             if not self.ensure_model(model_name):
+                logger.error(f"Failed to ensure {model_type} model")
                 success = False
         
         return success
@@ -151,17 +164,36 @@ class ModelManager:
         """
         prompt_lower = prompt.lower()
         
-        # Code-related keywords
-        code_keywords = [
-            "code", "python", "javascript", "typescript", "java", "cpp", "c++",
-            "program", "script", "function", "class", "import", "export",
-            "syntax", "debug", "compile", "algorithm", "data structure",
-            "api", "library", "framework", "package", "module"
+        # Reasoning keywords - for complex problems, step-by-step thinking
+        reasoning_keywords = [
+            'why', 'explain', 'how does', 'what if', 'analyze', 'compare',
+            'evaluate', 'reasoning', 'logic', 'prove', 'deduce', 'infer',
+            'step by step', 'think through', 'problem solving', 'strategy',
+            'pros and cons', 'advantages', 'disadvantages', 'trade-off',
+            'complex', 'intricate', 'elaborate', 'comprehensive analysis'
         ]
         
+        # Code-related keywords
+        code_keywords = [
+            'code', 'python', 'javascript', 'typescript', 'java', 'cpp', 'c++',
+            'program', 'script', 'function', 'class', 'import', 'export',
+            'syntax', 'debug', 'compile', 'algorithm', 'data structure',
+            'api', 'library', 'framework', 'package', 'module', 'bug',
+            'error', 'exception', 'refactor', 'optimize code', 'implement'
+        ]
+        
+        # Check for reasoning first (most specific)
+        if any(keyword in prompt_lower for keyword in reasoning_keywords):
+            logger.debug(f"Selected reasoning model for: {prompt[:50]}...")
+            return self.models['reasoning']
+        
+        # Then check for code
         if any(keyword in prompt_lower for keyword in code_keywords):
+            logger.debug(f"Selected code model for: {prompt[:50]}...")
             return self.models['code']
         
+        # Default to general
+        logger.debug(f"Selected general model for: {prompt[:50]}...")
         return self.models['general']
     
     def get_model(self, model_type: str = 'general') -> str:
@@ -169,7 +201,7 @@ class ModelManager:
         Get model name by type.
         
         Args:
-            model_type: Type of model ('code' or 'general').
+            model_type: Type of model ('reasoning', 'code', or 'general').
         
         Returns:
             Model name.
@@ -203,4 +235,12 @@ class ModelManager:
     def get_current_model(self) -> Optional[str]:
         """Get currently active model."""
         return self.current_model
-
+    
+    def get_model_info(self) -> Dict[str, str]:
+        """
+        Get information about all configured models.
+        
+        Returns:
+            Dictionary with model type -> model name mappings.
+        """
+        return self.models.copy()

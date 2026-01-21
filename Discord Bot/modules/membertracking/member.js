@@ -29,38 +29,51 @@ module.exports = {
 
     let finalMemberData = null;
     let finalMCUsername = null;
-    let discordDisplay = discordArg || null;
+    let discordDisplay = null;
 
     // ============================================================
-    // 1) SEARCH BY DISCORD ID
+    // 1) SEARCH BY DISCORD ID (or default to command user)
     // ============================================================
-    if (discordArg) {
-      const result = getMemberByDiscordId(discordArg.id);
+    const targetDiscordUser = discordArg || interaction.user; // ✅ DEFAULT TO SELF
+    
+    const result = getMemberByDiscordId(targetDiscordUser.id);
 
-      if (result && result.member) {
-        finalMemberData = result.member;
-        finalMCUsername = result.member.minecraftUser || null;
-      } else {
-        return interaction.reply({
-          content: `❌ This Discord user isn't linked to the Empire.`,
-          ephemeral: true,
-        });
-      }
+    if (result && result.member) {
+      finalMemberData = result.member;
+      finalMCUsername = result.member.minecraftUser || null;
+      discordDisplay = targetDiscordUser;
+    } else if (!mcArg) {
+      // If no discord match and no minecraft arg provided, show error
+      return interaction.reply({
+        content: discordArg 
+          ? `❌ This Discord user isn't linked to the Empire.`
+          : `❌ You are not linked. Use \`/link <minecraft_username>\` first.`,
+        ephemeral: true,
+      });
     }
 
     // ============================================================
-    // 2) SEARCH BY MINECRAFT USERNAME
+    // 2) SEARCH BY MINECRAFT USERNAME (if provided and no discord match)
     // ============================================================
     if (!finalMCUsername && mcArg) {
-      const result = getMemberByMinecraftUser(mcArg);
+      const mcResult = getMemberByMinecraftUser(mcArg);
 
-      if (result && result.member) {
-        finalMemberData = result.member;
-        finalMCUsername = result.member.minecraftUser || result.exactUsername || mcArg;
-      } else if (result && result.exactUsername) {
-        finalMCUsername = result.exactUsername;
+      if (mcResult && mcResult.member) {
+        finalMemberData = mcResult.member;
+        finalMCUsername = mcResult.member.minecraftUser || mcResult.exactUsername || mcArg;
+        
+        // Try to get discord user from member data
+        if (mcResult.member.discordId) {
+          try {
+            discordDisplay = await interaction.client.users.fetch(mcResult.member.discordId);
+          } catch (err) {
+            console.warn("Could not fetch discord user:", err);
+          }
+        }
+      } else if (mcResult && mcResult.exactUsername) {
+        finalMCUsername = mcResult.exactUsername;
       } else {
-        finalMCUsername = mcArg; // always show MC username
+        finalMCUsername = mcArg;
       }
     }
 
@@ -89,7 +102,11 @@ module.exports = {
     // ============================================================
     // 5) CREATE EMBED
     // ============================================================
-    const embed = createMemberEmbed(discordDisplay, finalMemberData || { minecraftUser: finalMCUsername }, embedColor);
+    const embed = createMemberEmbed(
+      discordDisplay, 
+      finalMemberData || { minecraftUser: finalMCUsername }, 
+      embedColor
+    );
 
     return interaction.reply({ embeds: [embed] });
   },

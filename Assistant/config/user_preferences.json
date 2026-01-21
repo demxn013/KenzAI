@@ -2,12 +2,12 @@
   "gui": {
     "last_appearance": "line",
     "position": {
-      "x": 1119,
-      "y": 259
+      "x": 729,
+      "y": 306
     },
     "size": {
-      "width": 273,
-      "height": 273
+      "width": 200,
+      "height": 200
     },
     "opacity": 1.0,
     "always_on_top": true,
@@ -16,7 +16,7 @@
   },
   "daemon": {
     "start_with_windows": true,
-    "last_greeting_index": 2
+    "last_greeting_index": 4
   },
   "audio": {
     "startup_volume": 0.5,

@@ -81,18 +81,76 @@ function getMemberByMinecraftUser(inputMC) {
 // Higher-level resolver
 function getMemberByDiscordOrMC(discordId = null, mcUser = null) {
   if (discordId) {
-    const m = getMemberByDiscordId(discordId);
-    if (m) return { discordId, ...m };
+    const directMatch = getMemberByDiscordId(discordId);
+    if (directMatch) {
+      return { member: directMatch, discordId };
+    }
+    
+    // ✅ FIX: Check linking.json for MC username
+    const linkedMC = getMCFromDiscord(discordId);
+    if (linkedMC) {
+      // Check if this MC user is in members.json
+      const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
+      if (mcMatch) {
+        return { member: mcMatch, discordId };
+      }
+      // Return basic structure even if not in members.json yet
+      return {
+        member: {
+          discordId,
+          minecraftUser: linkedMC,
+          minecraftVersion: "n/d",
+          JoinedClan: "n/d",
+          JoinDate: "n/d",
+          YazanakiRank: "n/d",
+          EmpireID: "n/d",
+          Status: "n/d"
+        },
+        discordId
+      };
+    }
   }
+  
   if (mcUser) {
     return getMemberByMinecraftNameInsensitive(mcUser);
   }
+  
   return null;
 }
 
 function getMemberByDiscordId(discordId) {
   const members = readMembers();
-  return members[discordId] || null;
+  const directMatch = members[discordId];
+  
+  if (directMatch) {
+    return { member: directMatch };
+  }
+  
+  // ✅ FIX: Check linking.json if not in members.json
+  const linkedMC = getMCFromDiscord(discordId);
+  if (linkedMC) {
+    // Check if this MC username exists in members.json
+    const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
+    if (mcMatch) {
+      return { member: mcMatch };
+    }
+    
+    // Return basic linked info even if not full member yet
+    return {
+      member: {
+        discordId,
+        minecraftUser: linkedMC,
+        minecraftVersion: "n/d",
+        JoinedClan: "n/d", 
+        JoinDate: "n/d",
+        YazanakiRank: "n/d",
+        EmpireID: "n/d",
+        Status: "n/d"
+      }
+    };
+  }
+  
+  return null;
 }
 
 // ----------- IMAGE / COLOR FUNCTIONS (unchanged) -----------

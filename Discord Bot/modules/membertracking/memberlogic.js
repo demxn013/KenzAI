@@ -31,9 +31,10 @@ function writeMembers() {
 }
 
 // --------------------------------------------------------------
-// FIXED VERSION — Case-insensitive lookup but data remains proper
+// Case-insensitive lookup but data remains proper
 // --------------------------------------------------------------
 function normalizeUsername(u) {
+  if (!u) return "";
   return u.replace(/^"(.+(?="$))"$/, "$1").trim().toLowerCase();
 }
 
@@ -56,11 +57,7 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 }
 
 /**
- * ----------------------------------------------------------
- * PATCH: Compatibility alias for member.js
- * ----------------------------------------------------------
- * /member expects "getMemberByMinecraftUser" to exist.
- * We provide a wrapper that returns the expected structure.
+ * Compatibility wrapper for member.js
  */
 function getMemberByMinecraftUser(inputMC) {
   const result = getMemberByMinecraftNameInsensitive(inputMC);
@@ -78,68 +75,69 @@ function getMemberByMinecraftUser(inputMC) {
   };
 }
 
-// Higher-level resolver
-function getMemberByDiscordOrMC(discordId = null, mcUser = null) {
-  if (discordId) {
-    const directMatch = getMemberByDiscordId(discordId);
-    if (directMatch) {
-      return { member: directMatch, discordId };
-    }
-    
-    // ✅ FIX: Check linking.json for MC username
-    const linkedMC = getMCFromDiscord(discordId);
-    if (linkedMC) {
-      // Check if this MC user is in members.json
-      const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
-      if (mcMatch) {
-        return { member: mcMatch, discordId };
-      }
-      // Return basic structure even if not in members.json yet
-      return {
-        member: {
-          discordId,
-          minecraftUser: linkedMC,
-          minecraftVersion: "n/d",
-          JoinedClan: "n/d",
-          JoinDate: "n/d",
-          YazanakiRank: "n/d",
-          EmpireID: "n/d",
-          Status: "n/d"
-        },
-        discordId
-      };
-    }
-  }
-  
-  if (mcUser) {
-    return getMemberByMinecraftNameInsensitive(mcUser);
-  }
-  
-  return null;
-}
-
+/**
+ * ✅ FIXED: Gets member by Discord ID
+ * PRIMARY SOURCE: linking.json
+ * SECONDARY SOURCE: members.json for extended data
+ */
 function getMemberByDiscordId(discordId) {
-  const members = readMembers();
-  const directMatch = members[discordId];
-  
-  if (directMatch) {
-    return { member: directMatch };
+  if (!discordId) {
+    console.warn("[getMemberByDiscordId] No discordId provided");
+    return null;
   }
   
-  // ✅ FIX: Check linking.json if not in members.json
+  console.log(`[getMemberByDiscordId] Looking up Discord ID: ${discordId}`);
+  
+  // ✅ STEP 1: Check linking.json FIRST (primary source of truth)
   const linkedMC = getMCFromDiscord(discordId);
-  if (linkedMC) {
-    // Check if this MC username exists in members.json
+  
+  if (!linkedMC) {
+    console.log(`[getMemberByDiscordId] No link found in linking.json for ${discordId}`);
+    return null;
+  }
+  
+  console.log(`[getMemberByDiscordId] Found link in linking.json: ${discordId} -> ${linkedMC}`);
+  
+  // ✅ STEP 2: Try to get extended data from members.json
+  const members = readMembers();
+  let extendedData = null;
+  
+  // First try direct Discord ID match
+  if (members[discordId]) {
+    console.log(`[getMemberByDiscordId] Found extended data by Discord ID in members.json`);
+    extendedData = members[discordId];
+  } else {
+    // Try matching by MC username
     const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
     if (mcMatch) {
-      return { member: mcMatch };
+      console.log(`[getMemberByDiscordId] Found extended data by MC username in members.json`);
+      extendedData = mcMatch;
     }
-    
-    // Return basic linked info even if not full member yet
+  }
+  
+  // ✅ STEP 3: Build final member data
+  if (extendedData) {
+    // Has extended empire data
+    console.log(`[getMemberByDiscordId] Returning full member data with extended info`);
     return {
       member: {
         discordId,
-        minecraftUser: linkedMC,
+        minecraftUser: linkedMC, // Always use linking.json username
+        minecraftVersion: extendedData.minecraftVersion || "n/d",
+        JoinedClan: extendedData.JoinedClan || "n/d",
+        JoinDate: extendedData.JoinDate || "n/d",
+        YazanakiRank: extendedData.YazanakiRank || "n/d",
+        EmpireID: extendedData.EmpireID || "n/d",
+        Status: extendedData.Status || "n/d"
+      }
+    };
+  } else {
+    // Linked but no extended data yet
+    console.log(`[getMemberByDiscordId] Linked but no extended data, returning basic structure`);
+    return {
+      member: {
+        discordId,
+        minecraftUser: linkedMC, // From linking.json
         minecraftVersion: "n/d",
         JoinedClan: "n/d", 
         JoinDate: "n/d",
@@ -149,11 +147,42 @@ function getMemberByDiscordId(discordId) {
       }
     };
   }
+}
+
+/**
+ * Higher-level resolver that uses linking.json as primary source
+ */
+function getMemberByDiscordOrMC(discordId = null, mcUser = null) {
+  if (discordId) {
+    const result = getMemberByDiscordId(discordId);
+    if (result && result.member) {
+      return { member: result.member, discordId };
+    }
+  }
+  
+  if (mcUser) {
+    // Try to find discord ID from linking.json first
+    const linkedDiscordId = getDiscordFromMC(mcUser);
+    
+    if (linkedDiscordId) {
+      // Found link, get full data via Discord ID
+      const result = getMemberByDiscordId(linkedDiscordId);
+      if (result && result.member) {
+        return result;
+      }
+    }
+    
+    // No link found, try direct MC lookup in members.json
+    const mcMatch = getMemberByMinecraftNameInsensitive(mcUser);
+    if (mcMatch) {
+      return mcMatch;
+    }
+  }
   
   return null;
 }
 
-// ----------- IMAGE / COLOR FUNCTIONS (unchanged) -----------
+// ----------- IMAGE / COLOR FUNCTIONS -----------
 function fetchImageBuffer(url) {
   return new Promise((resolve, reject) => {
     try {
@@ -233,7 +262,7 @@ async function getDominantColor(url) {
   }
 }
 
-// ----------- MAIN RESOLUTION LOGIC (patched only at the end) -----------
+// ----------- MAIN RESOLUTION LOGIC -----------
 async function resolveCommandTarget(
   client,
   discordUserOption = null,
@@ -248,35 +277,30 @@ async function resolveCommandTarget(
     discordUser = discordUserOption;
 
     const stored = getMemberByDiscordOrMC(discordUserOption.id, null);
-    if (stored) {
-      memberData = stored;
-      mcUsername = stored.minecraftUser || "n/d";
+    if (stored && stored.member) {
+      memberData = stored.member;
+      mcUsername = stored.member.minecraftUser || "n/d";
     } else {
       const linkedMC = getMCFromDiscord(discordUserOption.id);
       if (linkedMC) {
         mcUsername = linkedMC;
-        const storedByMC = getMemberByDiscordOrMC(null, linkedMC);
-        memberData =
-          storedByMC || { minecraftUser: linkedMC, minecraftVersion: "``n/d``" };
+        memberData = { minecraftUser: linkedMC, minecraftVersion: "n/d" };
       }
     }
   } else if (mcOption) {
     const byMC = getMemberByDiscordOrMC(null, mcOption);
 
-    if (byMC) {
-      memberData = byMC;
+    if (byMC && byMC.member) {
+      memberData = byMC.member;
       discordUser = await client.users.fetch(byMC.discordId).catch(() => null);
-      mcUsername = byMC.minecraftUser || mcOption;
+      mcUsername = byMC.member.minecraftUser || mcOption;
     } else {
       const linkedDiscordId = getDiscordFromMC(mcOption);
 
       if (linkedDiscordId) {
         discordUser = await client.users.fetch(linkedDiscordId).catch(() => null);
         mcUsername = mcOption;
-
-        const storedByMC = getMemberByDiscordOrMC(linkedDiscordId, mcOption);
-        memberData =
-          storedByMC || { minecraftUser: mcOption, minecraftVersion: "``n/d``" };
+        memberData = { minecraftUser: mcOption, minecraftVersion: "n/d" };
       } else {
         mcUsername = await getProperMinecraftName(mcOption);
       }
@@ -285,26 +309,21 @@ async function resolveCommandTarget(
     discordUser = invokingUser;
 
     const stored = getMemberByDiscordOrMC(invokingUser.id, null);
-    if (stored) {
-      memberData = stored;
-      mcUsername = stored.minecraftUser || "n/d";
+    if (stored && stored.member) {
+      memberData = stored.member;
+      mcUsername = stored.member.minecraftUser || "n/d";
     } else {
       const linkedMC = getMCFromDiscord(invokingUser.id);
       if (linkedMC) {
         mcUsername = linkedMC;
-        const storedByMC = getMemberByDiscordOrMC(null, linkedMC);
-        memberData =
-          storedByMC || { minecraftUser: linkedMC, minecraftVersion: "``n/d``" };
+        memberData = { minecraftUser: linkedMC, minecraftVersion: "n/d" };
       }
     }
   }
 
-  // -------------------------------
-  // ✅ PATCH: Always output Mojang-correct username
-  // -------------------------------
+  // Always output Mojang-correct username
   if (mcUsername && mcUsername !== "n/d") {
     const proper = await getProperMinecraftName(mcUsername);
-
     mcUsername = proper;
 
     if (memberData) {
@@ -316,9 +335,6 @@ async function resolveCommandTarget(
 }
 
 function isUnlinked(discordId) {
-  const m = getMemberByDiscordId(discordId);
-  if (m) return false;
-
   const linkedMC = getMCFromDiscord(discordId);
   return !linkedMC;
 }
@@ -328,15 +344,11 @@ module.exports = {
   writeMembers,
   getMemberByDiscordId,
   getMemberByMinecraftNameInsensitive,
-
-  // 🔥 Patched compatibility exports
   getMemberByMinecraftUser,
   getMemberByDiscordOrMC,
-
   fetchImageBuffer,
   getProperMinecraftName,
   getDominantColor,
-
   resolveCommandTarget,
   isUnlinked
 };

@@ -2,6 +2,7 @@ const {
   getMemberByDiscordId,
   getMemberByMinecraftUser,
   getDominantColor,
+  getProperMinecraftName,
 } = require("./memberlogic");
 const { SlashCommandBuilder } = require("discord.js");
 const { createMemberEmbed } = require("./memberembed");
@@ -107,14 +108,26 @@ module.exports = {
       });
     }
 
-    console.log(`[/member] Final MC Username: ${finalMCUsername}`);
+    console.log(`[/member] Final MC Username (before Mojang): ${finalMCUsername}`);
+
+    // ============================================================
+    // ✅ GET PROPER CAPITALIZATION FROM MOJANG
+    // ============================================================
+    const properMCUsername = await getProperMinecraftName(finalMCUsername);
+    console.log(`[/member] Proper MC Username (from Mojang): ${properMCUsername}`);
+    
+    // Update the MC username in member data if it exists
+    if (finalMemberData) {
+      finalMemberData.minecraftUser = properMCUsername;
+    }
+
     console.log(`[/member] Final Member Data:`, finalMemberData);
     console.log(`[/member] Discord Display: ${discordDisplay?.tag || 'none'}`);
 
     // ============================================================
     // CALCULATE DOMINANT COLOR FROM PLAYER HEAD
     // ============================================================
-    const avatarURL = `https://mc-heads.net/avatar/${encodeURIComponent(finalMCUsername)}/100`;
+    const avatarURL = `https://mc-heads.net/avatar/${encodeURIComponent(properMCUsername)}/100`;
     let embedColor = 0x339eff; // fallback
 
     try {
@@ -128,7 +141,7 @@ module.exports = {
     // ============================================================
     const embed = createMemberEmbed(
       discordDisplay, 
-      finalMemberData || { minecraftUser: finalMCUsername }, 
+      finalMemberData || { minecraftUser: properMCUsername }, 
       embedColor
     );
 

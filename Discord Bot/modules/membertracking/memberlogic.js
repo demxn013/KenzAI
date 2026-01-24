@@ -6,6 +6,111 @@ const Jimp = require("jimp");
 const { getMCFromDiscord, getDiscordFromMC } = require("../linking/linklogic");
 
 const membersPath = path.join(__dirname, "../data/members.json");
+const rolesConfigPath = path.join(__dirname, "roles.json");
+
+// ============================================================
+// ROLE DETECTION (Integrated from roledetector.js)
+// ============================================================
+
+/**
+ * Load roles configuration from roles.json
+ */
+function loadRolesConfig() {
+  try {
+    if (!fs.existsSync(rolesConfigPath)) {
+      console.error("[memberlogic] roles.json not found!");
+      return null;
+    }
+
+    const raw = fs.readFileSync(rolesConfigPath, "utf8");
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("[memberlogic] Error loading roles.json:", err);
+    return null;
+  }
+}
+
+/**
+ * Detect Yazanaki rank and status from Discord roles
+ * 
+ * @param {string} discordId - Discord user ID
+ * @param {Client} client - Discord.js client
+ * @returns {Promise<{rank: string, status: string}>}
+ */
+async function detectRolesFromDiscord(discordId, client) {
+  const config = loadRolesConfig();
+  
+  if (!config) {
+    return { rank: "n/d", status: "n/d" };
+  }
+
+  try {
+    // Fetch Yazanaki Empire guild
+    const guild = await client.guilds.fetch(config.yazanakiEmpireId).catch(() => null);
+    
+    if (!guild) {
+      console.warn(`[memberlogic] Could not fetch Yazanaki Empire guild`);
+      return { rank: "n/d", status: "n/d" };
+    }
+
+    // Fetch member from guild
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    
+    if (!member) {
+      console.log(`[memberlogic] User ${discordId} not in Yazanaki Empire`);
+      return { rank: "n/d", status: "n/d" };
+    }
+
+    console.log(`[memberlogic] User ${discordId} found in Yazanaki Empire`);
+
+    // Get user's role IDs
+    const userRoleIds = member.roles.cache.map(role => role.id);
+    console.log(`[memberlogic] User roles:`, userRoleIds);
+
+    // ============================================================
+    // DETECT STATUS (first matching role)
+    // ============================================================
+    let status = "n/d";
+    
+    for (const roleId of userRoleIds) {
+      if (config.statusRoles[roleId]) {
+        status = config.statusRoles[roleId];
+        console.log(`[memberlogic] Status detected: ${status}`);
+        break;
+      }
+    }
+
+    // ============================================================
+    // DETECT RANK (highest priority role)
+    // ============================================================
+    let rank = "n/d";
+    let highestPriority = 0;
+    
+    for (const roleId of userRoleIds) {
+      if (config.rankRoles[roleId]) {
+        const roleData = config.rankRoles[roleId];
+        if (roleData.priority > highestPriority) {
+          highestPriority = roleData.priority;
+          rank = roleData.name;
+        }
+      }
+    }
+
+    if (rank !== "n/d") {
+      console.log(`[memberlogic] Rank detected: ${rank} (priority: ${highestPriority})`);
+    }
+
+    return { rank, status };
+
+  } catch (err) {
+    console.error(`[memberlogic] Error detecting roles:`, err);
+    return { rank: "n/d", status: "n/d" };
+  }
+}
+
+// ============================================================
+// DATA ACCESS FUNCTIONS
+// ============================================================
 
 // ---- READ-ONLY VERSION ----
 function readMembers() {
@@ -57,11 +162,12 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 }
 
 /**
- * ✅ FIXED: Search by Minecraft username
+ * Search by Minecraft username
  * Uses linking.json as ONLY source for Discord ↔ MC link
  * Optionally adds empire data from members.json if they're a member
+ * Detects roles from Discord if client is provided
  */
-function getMemberByMinecraftUser(inputMC) {
+async function getMemberByMinecraftUser(inputMC, client = null) {
   if (!inputMC) {
     return { member: null, exactUsername: inputMC };
   }
@@ -101,19 +207,31 @@ function getMemberByMinecraftUser(inputMC) {
     }
   }
   
-  // Build member data (link + optional empire data)
+  // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
+  let detectedRoles = { rank: "n/d", status: "n/d" };
+  if (client && linkedDiscordId) {
+    console.log(`[getMemberByMinecraftUser] Detecting roles for Discord ID: ${linkedDiscordId}`);
+    try {
+      detectedRoles = await detectRolesFromDiscord(linkedDiscordId, client);
+      console.log(`[getMemberByMinecraftUser] Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+    } catch (err) {
+      console.error(`[getMemberByMinecraftUser] Error detecting roles:`, err);
+    }
+  }
+  
+  // Build member data (link + optional empire data + LIVE ROLES)
   const memberData = {
     discordId: linkedDiscordId,
     minecraftUser: linkedMC, // From linking.json
     minecraftVersion: empireData?.minecraftVersion || "n/d",
     JoinedClan: empireData?.JoinedClan || "n/d",
     JoinDate: empireData?.JoinDate || "n/d",
-    YazanakiRank: empireData?.YazanakiRank || "n/d",
+    YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
     EmpireID: empireData?.EmpireID || "n/d",
-    Status: empireData?.Status || "n/d"
+    Status: detectedRoles.status // ✅ FROM DISCORD ROLES
   };
   
-  console.log(`[getMemberByMinecraftUser] Returning ${empireData ? 'linked + empire' : 'linked only'} data`);
+  console.log(`[getMemberByMinecraftUser] Returning data with ${client ? 'live roles' : 'no role detection'}`);
   
   return {
     member: memberData,
@@ -122,11 +240,12 @@ function getMemberByMinecraftUser(inputMC) {
 }
 
 /**
- * ✅ FIXED: Gets member by Discord ID
+ * Gets member by Discord ID
  * Uses linking.json as ONLY source for Discord ↔ MC link
  * Optionally adds empire data from members.json if they're a member
+ * Detects roles from Discord if client is provided
  */
-function getMemberByDiscordId(discordId) {
+async function getMemberByDiscordId(discordId, client = null) {
   if (!discordId) {
     console.warn("[getMemberByDiscordId] No discordId provided");
     return null;
@@ -161,36 +280,49 @@ function getMemberByDiscordId(discordId) {
     }
   }
   
-  // Build member data (link + optional empire data)
+  // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
+  let detectedRoles = { rank: "n/d", status: "n/d" };
+  if (client) {
+    console.log(`[getMemberByDiscordId] Detecting roles for Discord ID: ${discordId}`);
+    try {
+      detectedRoles = await detectRolesFromDiscord(discordId, client);
+      console.log(`[getMemberByDiscordId] Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+    } catch (err) {
+      console.error(`[getMemberByDiscordId] Error detecting roles:`, err);
+    }
+  }
+  
+  // Build member data (link + optional empire data + LIVE ROLES)
   const memberData = {
     discordId,
     minecraftUser: linkedMC, // From linking.json
     minecraftVersion: empireData?.minecraftVersion || "n/d",
     JoinedClan: empireData?.JoinedClan || "n/d",
     JoinDate: empireData?.JoinDate || "n/d",
-    YazanakiRank: empireData?.YazanakiRank || "n/d",
+    YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
     EmpireID: empireData?.EmpireID || "n/d",
-    Status: empireData?.Status || "n/d"
+    Status: detectedRoles.status // ✅ FROM DISCORD ROLES
   };
   
-  console.log(`[getMemberByDiscordId] Returning ${empireData ? 'linked + empire' : 'linked only'} data`);
+  console.log(`[getMemberByDiscordId] Returning data with ${client ? 'live roles' : 'no role detection'}`);
   
   return { member: memberData };
 }
 
 /**
  * Higher-level resolver that uses linking.json as primary source
+ * NOW: Accepts client for role detection
  */
-function getMemberByDiscordOrMC(discordId = null, mcUser = null) {
+async function getMemberByDiscordOrMC(discordId = null, mcUser = null, client = null) {
   if (discordId) {
-    const result = getMemberByDiscordId(discordId);
+    const result = await getMemberByDiscordId(discordId, client);
     if (result && result.member) {
       return { member: result.member, discordId };
     }
   }
   
   if (mcUser) {
-    const result = getMemberByMinecraftUser(mcUser);
+    const result = await getMemberByMinecraftUser(mcUser, client);
     if (result && result.member) {
       return { member: result.member, discordId: result.member.discordId };
     }
@@ -293,7 +425,7 @@ async function resolveCommandTarget(
   if (discordUserOption) {
     discordUser = discordUserOption;
 
-    const stored = getMemberByDiscordOrMC(discordUserOption.id, null);
+    const stored = await getMemberByDiscordOrMC(discordUserOption.id, null, client);
     if (stored && stored.member) {
       memberData = stored.member;
       mcUsername = stored.member.minecraftUser || "n/d";
@@ -305,7 +437,7 @@ async function resolveCommandTarget(
       }
     }
   } else if (mcOption) {
-    const byMC = getMemberByDiscordOrMC(null, mcOption);
+    const byMC = await getMemberByDiscordOrMC(null, mcOption, client);
 
     if (byMC && byMC.member) {
       memberData = byMC.member;
@@ -325,7 +457,7 @@ async function resolveCommandTarget(
   } else {
     discordUser = invokingUser;
 
-    const stored = getMemberByDiscordOrMC(invokingUser.id, null);
+    const stored = await getMemberByDiscordOrMC(invokingUser.id, null, client);
     if (stored && stored.member) {
       memberData = stored.member;
       mcUsername = stored.member.minecraftUser || "n/d";
@@ -367,5 +499,6 @@ module.exports = {
   getProperMinecraftName,
   getDominantColor,
   resolveCommandTarget,
-  isUnlinked
+  isUnlinked,
+  detectRolesFromDiscord // Export for potential external use
 };

@@ -4,7 +4,6 @@ const {
   getDominantColor,
   getProperMinecraftName,
 } = require("./memberlogic");
-const { detectRolesFromDiscord } = require("./roledetector");
 const { SlashCommandBuilder } = require("discord.js");
 const { createMemberEmbed } = require("./memberembed");
 
@@ -47,7 +46,9 @@ module.exports = {
     // ============================================================
     if (!mcArg) {
       console.log(`[/member] No MC arg, searching by Discord ID...`);
-      const result = getMemberByDiscordId(targetDiscordUser.id);
+      
+      // ✅ PASS CLIENT FOR ROLE DETECTION
+      const result = await getMemberByDiscordId(targetDiscordUser.id, interaction.client);
       console.log(`[/member] getMemberByDiscordId result:`, result);
 
       if (result && result.member) {
@@ -56,6 +57,7 @@ module.exports = {
         discordDisplay = targetDiscordUser;
         
         console.log(`[/member] ✅ Found via Discord ID - MC: ${finalMCUsername}`);
+        console.log(`[/member] Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`);
       } else {
         // Not found in linking.json
         console.log(`[/member] ❌ No link found for Discord ID: ${targetDiscordUser.id}`);
@@ -73,12 +75,17 @@ module.exports = {
     // ============================================================
     if (mcArg) {
       console.log(`[/member] Searching by MC username: ${mcArg}`);
-      const mcResult = getMemberByMinecraftUser(mcArg);
+      
+      // ✅ PASS CLIENT FOR ROLE DETECTION
+      const mcResult = await getMemberByMinecraftUser(mcArg, interaction.client);
       console.log(`[/member] getMemberByMinecraftUser result:`, mcResult);
 
       if (mcResult && mcResult.member) {
         finalMemberData = mcResult.member;
         finalMCUsername = mcResult.member.minecraftUser || mcResult.exactUsername || mcArg;
+        
+        console.log(`[/member] ✅ Found via MC username`);
+        console.log(`[/member] Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`);
         
         // Try to get discord user from member data
         if (mcResult.member.discordId) {
@@ -89,8 +96,6 @@ module.exports = {
             console.warn("[/member] Could not fetch discord user:", err);
           }
         }
-        
-        console.log(`[/member] ✅ Found via MC username - Discord: ${discordDisplay?.tag || 'none'}`);
       } else {
         // MC username not found in linking or members
         finalMCUsername = mcResult?.exactUsername || mcArg;
@@ -122,25 +127,6 @@ module.exports = {
       finalMemberData.minecraftUser = properMCUsername;
     }
 
-    // ============================================================
-    // ✅ DETECT RANK AND STATUS FROM DISCORD ROLES
-    // ============================================================
-    if (finalMemberData && finalMemberData.discordId) {
-      console.log(`[/member] Detecting roles for Discord ID: ${finalMemberData.discordId}`);
-      
-      try {
-        const roles = await detectRolesFromDiscord(finalMemberData.discordId, interaction.client);
-        
-        // Update member data with detected roles
-        finalMemberData.YazanakiRank = roles.rank;
-        finalMemberData.Status = roles.status;
-        
-        console.log(`[/member] Roles detected - Rank: ${roles.rank}, Status: ${roles.status}`);
-      } catch (err) {
-        console.error(`[/member] Error detecting roles:`, err);
-      }
-    }
-
     console.log(`[/member] Final Member Data:`, finalMemberData);
     console.log(`[/member] Discord Display: ${discordDisplay?.tag || 'none'}`);
 
@@ -157,7 +143,7 @@ module.exports = {
     }
 
     // ============================================================
-    // CREATE EMBED
+    // CREATE EMBED (unchanged - uses data as-is)
     // ============================================================
     const embed = createMemberEmbed(
       discordDisplay, 

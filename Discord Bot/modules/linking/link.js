@@ -1,4 +1,6 @@
 // modules/linking/link.js
+// ✅ FIXED: Corrected parameter order when calling linkMember()
+
 const { SlashCommandBuilder } = require("discord.js");
 const linklogic = require("./linklogic");
 
@@ -16,16 +18,22 @@ module.exports = {
     async execute(interaction) {
         const mcName = interaction.options.getString("username");
         const discordId = interaction.user.id;
-        const discordTag = interaction.user.tag;
 
-        const result = linklogic.linkMember(discordId, discordTag, mcName);
+        console.log(`[/link] 🔗 Linking attempt by ${interaction.user.tag} (${discordId})`);
+        console.log(`[/link] 🎮 MC Username provided: ${mcName}`);
+
+        // ✅ FIXED: Correct parameter order - linkMember(discordId, mcName, opts)
+        const result = linklogic.linkMember(discordId, mcName);
+
+        console.log(`[/link] 📊 Result:`, result);
 
         // ---------------------------------------------------------
         // ERROR: already linked
         // ---------------------------------------------------------
         if (!result.success && result.reason === "already_linked") {
+            console.log(`[/link] ❌ User already linked to: ${result.details?.minecraftUser}`);
             return interaction.reply({
-                content: "❌ You are already linked to a Minecraft account.",
+                content: `❌ You are already linked to Minecraft account: \`${result.details?.minecraftUser}\``,
                 ephemeral: true
             });
         }
@@ -34,34 +42,45 @@ module.exports = {
         // ERROR: username already linked
         // ---------------------------------------------------------
         if (!result.success && result.reason === "username_used") {
+            console.log(`[/link] ❌ MC username already in use: ${mcName}`);
             return interaction.reply({
-                content: "❌ That Minecraft username is already linked to another Discord user.",
+                content: `❌ That Minecraft username is already linked to another Discord user.`,
                 ephemeral: true
             });
         }
 
         // ---------------------------------------------------------
-        // SUCCESS: brand new applicant created
+        // ERROR: invalid arguments
         // ---------------------------------------------------------
-        if (result.success && result.createdNew) {
+        if (!result.success && result.reason === "invalid_arguments") {
+            console.log(`[/link] ❌ Invalid arguments`);
             return interaction.reply({
-                content:
-                    `✅ **Linked successfully!**\n` +
-                    `**Minecraft:** \`${mcName}\`\n` +
-                    `**Discord:** ${discordTag}`,
-                ephemeral: false
+                content: "⚠️ Invalid arguments. Please provide a valid Minecraft username.",
+                ephemeral: true
             });
         }
 
         // ---------------------------------------------------------
-        // SUCCESS: updated existing applicant
+        // ERROR: no MC name provided
         // ---------------------------------------------------------
-        if (result.success && result.updatedExisting) {
+        if (!result.success && result.reason === "no_mcname_provided") {
+            console.log(`[/link] ❌ No MC name provided`);
+            return interaction.reply({
+                content: "⚠️ Please provide a Minecraft username.",
+                ephemeral: true
+            });
+        }
+
+        // ---------------------------------------------------------
+        // SUCCESS
+        // ---------------------------------------------------------
+        if (result.success) {
+            console.log(`[/link] ✅ Successfully linked: ${discordId} -> ${result.minecraftUser}`);
             return interaction.reply({
                 content:
                     `✅ **Linked successfully!**\n` +
-                    `Your existing applicant file was found and updated.\n` +
-                    `**Minecraft:** \`${mcName}\``,
+                    `**Discord:** ${interaction.user.tag}\n` +
+                    `**Minecraft:** \`${result.minecraftUser}\``,
                 ephemeral: false
             });
         }
@@ -69,6 +88,7 @@ module.exports = {
         // ---------------------------------------------------------
         // FALLBACK ERROR (should never happen)
         // ---------------------------------------------------------
+        console.error(`[/link] ⚠️ Unexpected result:`, result);
         return interaction.reply({
             content: "⚠️ An unexpected error occurred while linking your account.",
             ephemeral: true

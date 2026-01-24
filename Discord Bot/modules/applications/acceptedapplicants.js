@@ -51,8 +51,15 @@ function formatDate(dateString) {
     return `${dd}.${mm}.${yyyy}`;
 }
 
-// MAIN FUNCTION
-module.exports.acceptApplicant = function (discordId) {
+// ✅ Import role detection from memberlogic
+const { detectRolesFromDiscord } = require("../membertracking/memberlogic");
+
+/**
+ * ✅ UPDATED: Accept applicant and detect roles from Discord
+ * @param {string} discordId - Discord user ID
+ * @param {Client} client - Discord.js client (REQUIRED for role detection)
+ */
+module.exports.acceptApplicant = async function (discordId, client = null) {
 
     console.log(`[acceptedapps] Attempting to accept applicant ${discordId}`);
 
@@ -72,18 +79,33 @@ module.exports.acceptApplicant = function (discordId) {
         return;
     }
 
-    // FIX 1 — Correct field names coming from saveApplicant()
+    // Correct field names coming from saveApplicant()
     const discordUser = data.discordUser || "";
-    const minecraftUser = data.minecraftUser || "";   // (correct field)
-    const minecraftVersion = data.minecraftVersion || ""; // (correct field)
+    const minecraftUser = data.minecraftUser || "";
+    const minecraftVersion = data.minecraftVersion || "";
 
-    // FIX 2 — Application acceptance date is NOW, not closedAt
+    // Application acceptance date is NOW
     const closeDate = formatDate(new Date().toISOString());
 
     // Detect clan based on guild/server ID
     const clanName = clans[data.server]?.name || "Unknown";
 
-    // Create the final entry
+    // ✅ DETECT ROLES FROM DISCORD
+    let detectedRoles = { rank: "n/d", status: "n/d" };
+    
+    if (client) {
+        console.log(`[acceptedapps] Detecting roles for ${discordId}...`);
+        try {
+            detectedRoles = await detectRolesFromDiscord(discordId, client);
+            console.log(`[acceptedapps] Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+        } catch (err) {
+            console.error(`[acceptedapps] Error detecting roles:`, err);
+        }
+    } else {
+        console.warn(`[acceptedapps] No client provided - roles will be 'n/d'`);
+    }
+
+    // Create the final entry with detected roles
     const entry = {
         discordId,
         discordUser,
@@ -91,9 +113,9 @@ module.exports.acceptApplicant = function (discordId) {
         minecraftVersion,
         JoinedClan: clanName,
         JoinDate: closeDate,
-        YazanakiRank: "",
+        YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
         EmpireID: "",
-        Status: ""
+        Status: detectedRoles.status // ✅ FROM DISCORD ROLES
     };
 
     console.log(`[acceptedapps] Writing entry for ${discordId}:`, entry);
@@ -102,5 +124,5 @@ module.exports.acceptApplicant = function (discordId) {
     members[discordId] = entry;
     saveJSON(membersPath, members);
 
-    console.log(`[acceptedapps] SUCCESS: Added ${discordId} to members.json`);
+    console.log(`[acceptedapps] SUCCESS: Added ${discordId} to members.json with roles`);
 };

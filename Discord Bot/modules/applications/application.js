@@ -167,20 +167,16 @@ module.exports = {
         });
       }
 
-      // Normalize values from applicantData (support both keys)
+      // Normalize values from applicantData
       const savedMCUser = applicantData.minecraftUser || applicantData.minecraftName || "";
       const savedMCVersion = applicantData.minecraftVersion || applicantData.minecraftVersion || "";
 
-      // Save applicant with unified fields (preserve original values where possible)
+      // Save applicant with unified fields
       saveApplicant(
         discordId,
         {
           discordId,
-          // keep original applicant's tag if available; interaction.user is the staff member pressing accept,
-          // applicantData.discordUser is the applicant's discord tag
           discordUser: applicantData.discordUser || applicantData.discordTag || null,
-
-          // ensure we persist the user's chosen MC username & version
           minecraftUser: savedMCUser,
           ticketChannel: applicantData.ticketChannel,
           ticketNumber: applicantData.ticketNumber,
@@ -193,12 +189,12 @@ module.exports = {
         applicantData.server ?? interaction.guild.id,
         applicantData.closeReason ?? null,
         isAccepted,
-        // set closedAt right now when accept/reject occurs
         new Date().toISOString()
       );
 
       if (isAccepted) {
-        acceptApplicant(discordId);
+        // ✅ PASS CLIENT FOR ROLE DETECTION
+        await acceptApplicant(discordId, interaction.client);
       }
 
       return interaction.reply({
@@ -363,7 +359,6 @@ module.exports = {
       if (ticketData) {
         const applicantData = getApplicant(ticketData.openerId);
         if (applicantData) {
-          // preserve applicantData minecraft fields, supporting both keys
           const mcUser = applicantData.minecraftUser || applicantData.minecraftName || "";
           saveApplicant(
             ticketData.openerId,

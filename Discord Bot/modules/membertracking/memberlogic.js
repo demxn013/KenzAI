@@ -112,7 +112,6 @@ async function detectRolesFromDiscord(discordId, client) {
 // DATA ACCESS FUNCTIONS
 // ============================================================
 
-// ---- READ-ONLY VERSION ----
 function readMembers() {
   try {
     if (!fs.existsSync(membersPath)) {
@@ -130,9 +129,50 @@ function readMembers() {
   }
 }
 
-// Disabled writer – kept exported for compatibility, but does nothing
-function writeMembers() {
-  console.warn("writeMembers() was called but writing to members.json is disabled.");
+/**
+ * ✅ ENABLED: Write members.json to disk
+ */
+function writeMembers(data) {
+  try {
+    fs.writeFileSync(membersPath, JSON.stringify(data, null, 4));
+    console.log("[memberlogic] ✅ Saved members.json");
+  } catch (err) {
+    console.error("[memberlogic] ❌ Failed to write members.json:", err);
+  }
+}
+
+/**
+ * ✅ NEW: Update a member's rank and status in members.json
+ */
+function updateMemberRoles(discordId, rank, status) {
+  try {
+    const members = readMembers();
+    
+    if (!members[discordId]) {
+      console.log(`[memberlogic] Creating new member entry for ${discordId}`);
+      members[discordId] = {
+        discordId,
+        discordUser: "",
+        minecraftUser: "",
+        minecraftVersion: "n/d",
+        JoinedClan: "n/d",
+        JoinDate: "n/d",
+        YazanakiRank: rank,
+        EmpireID: "",
+        Status: status
+      };
+    } else {
+      console.log(`[memberlogic] Updating roles for ${discordId}: Rank=${rank}, Status=${status}`);
+      members[discordId].YazanakiRank = rank;
+      members[discordId].Status = status;
+    }
+    
+    writeMembers(members);
+    return true;
+  } catch (err) {
+    console.error(`[memberlogic] Failed to update member roles:`, err);
+    return false;
+  }
 }
 
 // --------------------------------------------------------------
@@ -166,6 +206,7 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
  * Uses linking.json as ONLY source for Discord ↔ MC link
  * Optionally adds empire data from members.json if they're a member
  * Detects roles from Discord if client is provided
+ * ✅ SAVES roles to members.json
  */
 async function getMemberByMinecraftUser(inputMC, client = null) {
   if (!inputMC) {
@@ -214,6 +255,10 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     try {
       detectedRoles = await detectRolesFromDiscord(linkedDiscordId, client);
       console.log(`[getMemberByMinecraftUser] Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+      
+      // ✅ SAVE TO members.json
+      updateMemberRoles(linkedDiscordId, detectedRoles.rank, detectedRoles.status);
+      
     } catch (err) {
       console.error(`[getMemberByMinecraftUser] Error detecting roles:`, err);
     }
@@ -227,11 +272,11 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     JoinedClan: empireData?.JoinedClan || "n/d",
     JoinDate: empireData?.JoinDate || "n/d",
     YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
-    EmpireID: empireData?.EmpireID || "n/d",
+    EmpireID: empireData?.EmpireID || "",
     Status: detectedRoles.status // ✅ FROM DISCORD ROLES
   };
   
-  console.log(`[getMemberByMinecraftUser] Returning data with ${client ? 'live roles' : 'no role detection'}`);
+  console.log(`[getMemberByMinecraftUser] Returning data with ${client ? 'live roles (saved)' : 'no role detection'}`);
   
   return {
     member: memberData,
@@ -244,6 +289,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
  * Uses linking.json as ONLY source for Discord ↔ MC link
  * Optionally adds empire data from members.json if they're a member
  * Detects roles from Discord if client is provided
+ * ✅ SAVES roles to members.json
  */
 async function getMemberByDiscordId(discordId, client = null) {
   if (!discordId) {
@@ -287,6 +333,10 @@ async function getMemberByDiscordId(discordId, client = null) {
     try {
       detectedRoles = await detectRolesFromDiscord(discordId, client);
       console.log(`[getMemberByDiscordId] Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+      
+      // ✅ SAVE TO members.json
+      updateMemberRoles(discordId, detectedRoles.rank, detectedRoles.status);
+      
     } catch (err) {
       console.error(`[getMemberByDiscordId] Error detecting roles:`, err);
     }
@@ -300,11 +350,11 @@ async function getMemberByDiscordId(discordId, client = null) {
     JoinedClan: empireData?.JoinedClan || "n/d",
     JoinDate: empireData?.JoinDate || "n/d",
     YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
-    EmpireID: empireData?.EmpireID || "n/d",
+    EmpireID: empireData?.EmpireID || "",
     Status: detectedRoles.status // ✅ FROM DISCORD ROLES
   };
   
-  console.log(`[getMemberByDiscordId] Returning data with ${client ? 'live roles' : 'no role detection'}`);
+  console.log(`[getMemberByDiscordId] Returning data with ${client ? 'live roles (saved)' : 'no role detection'}`);
   
   return { member: memberData };
 }
@@ -500,5 +550,6 @@ module.exports = {
   getDominantColor,
   resolveCommandTarget,
   isUnlinked,
-  detectRolesFromDiscord // Export for potential external use
+  detectRolesFromDiscord,
+  updateMemberRoles // Export for external use
 };

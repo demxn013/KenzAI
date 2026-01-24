@@ -1,0 +1,68 @@
+{
+  "yazanakiEmpireId": "1292396778595024957",
+  
+  "statusRoles": {
+    "1344899309199687730": "Enemy",
+    "1344899694572208158": "Ally",
+    "1334641779009519668": "Citizen",
+    "1345398371522842624": "Draft",
+    "1334641887017177141": "Military",
+    "1334641955891580969": "Council",
+    "1334642034472128654": "Royalty"
+  },
+  
+  "rankRoles": {
+    "1334641779009519668": {
+      "name": "Citizen",
+      "priority": 1
+    },
+    "1345398371522842624": {
+      "name": "Recruit",
+      "priority": 2
+    },
+    "1345398184653885440": {
+      "name": "Imperial Army",
+      "priority": 3
+    },
+    "1345405623344431145": {
+      "name": "Captain",
+      "priority": 4
+    },
+    "1345405459951124533": {
+      "name": "General",
+      "priority": 5
+    },
+    "1345398004894535763": {
+      "name": "High Inquisitor",
+      "priority": 6
+    },
+    "1334904242795974736": {
+      "name": "High General",
+      "priority": 7
+    },
+    "1334898961114202263": {
+      "name": "Minister of Economy",
+      "priority": 8
+    },
+    "1334903559963021382": {
+      "name": "Grand Magistrate",
+      "priority": 9
+    },
+    "1334899326853582920": {
+      "name": "Grand Vizier",
+      "priority": 10
+    },
+    "1334899020270665861": {
+      "name": "Daiyu",
+      "priority": 11
+    },
+    "1345701150933909604": {
+      "name": "Empress",
+      "priority": 12
+    },
+    "1220847062011351175": {
+      "name": "Emperor",
+      "priority": 13
+    }
+  }
+}

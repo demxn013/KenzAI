@@ -1,5 +1,5 @@
 // modules/applications/acceptedapplicants.js
-// ✅ UPDATED: Now uses multi-guild role detection from modules/roles/
+// ✅ UPDATED: Now assigns Empire IDs when accepting applicants
 
 const fs = require("fs");
 const path = require("path");
@@ -60,8 +60,11 @@ function formatDate(dateString) {
 // ✅ Import multi-guild role detection
 const { detectRolesFromDiscord } = require("../roles/roledetector");
 
+// ✅ Import Empire ID system
+const { assignEmpireId } = require("../empire/empireid");
+
 /**
- * ✅ Accept applicant and detect roles from ALL guilds
+ * ✅ Accept applicant and assign Empire ID
  * @param {string} discordId - Discord user ID
  * @param {Client} client - Discord.js client (REQUIRED for role detection)
  */
@@ -103,6 +106,26 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     // Detect clan based on guild/server ID
     const clanName = clans[data.server]?.name || "Unknown";
     console.log(`  - Clan: ${clanName}`);
+    console.log(`  - Guild ID: ${data.server}`);
+
+    // ✅ ASSIGN EMPIRE ID
+    console.log(`[acceptedapps] 🆔 Assigning Empire ID...`);
+    const empireIdResult = assignEmpireId(discordId, minecraftUser, data.server);
+    
+    let empireId = "";
+    
+    if (empireIdResult.success) {
+        empireId = empireIdResult.empireId;
+        
+        if (empireIdResult.isReturning) {
+            console.log(`[acceptedapps] ♻️ RETURNING MEMBER! Restored Empire ID: ${empireId}`);
+        } else {
+            console.log(`[acceptedapps] ✨ NEW MEMBER! Assigned Empire ID: ${empireId}`);
+        }
+    } else {
+        console.error(`[acceptedapps] ❌ Failed to assign Empire ID: ${empireIdResult.reason}`);
+        empireId = "ERROR";
+    }
 
     // ✅ DETECT ROLES FROM ALL GUILDS (multi-guild support)
     let detectedRoles = { rank: "n/d", status: "n/d" };
@@ -137,7 +160,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
         }
     }
 
-    // Create the final entry with detected roles
+    // Create the final entry with detected roles AND Empire ID
     const entry = {
         discordId,
         discordUser,
@@ -145,9 +168,9 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
         minecraftVersion,
         JoinedClan: clanName,
         JoinDate: closeDate,
-        YazanakiRank: detectedRoles.rank, // ✅ FROM MULTI-GUILD DETECTION
-        EmpireID: "",
-        Status: detectedRoles.status // ✅ FROM MULTI-GUILD DETECTION
+        YazanakiRank: detectedRoles.rank,
+        EmpireID: empireId, // ✅ EMPIRE ID ASSIGNED!
+        Status: detectedRoles.status
     };
 
     console.log(`[acceptedapps] 📝 Creating entry for ${discordId}:`, entry);
@@ -156,6 +179,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     members[discordId] = entry;
     saveJSON(membersPath, members);
 
-    console.log(`[acceptedapps] ✅ SUCCESS: Added ${discordId} to members.json with roles`);
+    console.log(`[acceptedapps] ✅ SUCCESS: Added ${discordId} to members.json`);
+    console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 };

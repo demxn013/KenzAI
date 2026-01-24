@@ -4,7 +4,7 @@
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require("discord.js");
 const clanlogic = require("./clanlogic");
 const { createClanEmbed } = require("./clanembed");
-const { addGuildRoles, removeGuildRoles } = require("../membertracking/roledetector");
+const { addGuildRoles, removeGuildRoles } = require("../roles/roledetector");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");

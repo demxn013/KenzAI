@@ -4,6 +4,7 @@ const {
   getDominantColor,
   getProperMinecraftName,
 } = require("./memberlogic");
+const { detectRolesFromDiscord } = require("./roledetector");
 const { SlashCommandBuilder } = require("discord.js");
 const { createMemberEmbed } = require("./memberembed");
 
@@ -111,7 +112,7 @@ module.exports = {
     console.log(`[/member] Final MC Username (before Mojang): ${finalMCUsername}`);
 
     // ============================================================
-    // ✅ GET PROPER CAPITALIZATION FROM MOJANG
+    // GET PROPER CAPITALIZATION FROM MOJANG
     // ============================================================
     const properMCUsername = await getProperMinecraftName(finalMCUsername);
     console.log(`[/member] Proper MC Username (from Mojang): ${properMCUsername}`);
@@ -119,6 +120,25 @@ module.exports = {
     // Update the MC username in member data if it exists
     if (finalMemberData) {
       finalMemberData.minecraftUser = properMCUsername;
+    }
+
+    // ============================================================
+    // ✅ DETECT RANK AND STATUS FROM DISCORD ROLES
+    // ============================================================
+    if (finalMemberData && finalMemberData.discordId) {
+      console.log(`[/member] Detecting roles for Discord ID: ${finalMemberData.discordId}`);
+      
+      try {
+        const roles = await detectRolesFromDiscord(finalMemberData.discordId, interaction.client);
+        
+        // Update member data with detected roles
+        finalMemberData.YazanakiRank = roles.rank;
+        finalMemberData.Status = roles.status;
+        
+        console.log(`[/member] Roles detected - Rank: ${roles.rank}, Status: ${roles.status}`);
+      } catch (err) {
+        console.error(`[/member] Error detecting roles:`, err);
+      }
     }
 
     console.log(`[/member] Final Member Data:`, finalMemberData);

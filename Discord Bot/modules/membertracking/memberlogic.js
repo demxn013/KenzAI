@@ -1,13 +1,12 @@
 // modules/membertracking/memberlogic.js
-// ✅ FIXED: Removed duplicate role detection, using roledetector.js as single source of truth
-// Added proper error handling, logging, and data migration
+// ✅ UPDATED: Now uses new multi-guild role detection from modules/roles/
 
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const Jimp = require("jimp");
 const { getMCFromDiscord, getDiscordFromMC } = require("../linking/linklogic");
-const { detectRolesFromDiscord, batchDetectRoles } = require("./roledetector");
+const { detectRolesFromDiscord, batchDetectRoles } = require("../roles/roledetector");
 
 const membersPath = path.join(__dirname, "../data/members.json");
 
@@ -118,6 +117,7 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 
 /**
  * ✅ Search by Minecraft username with role detection and saving
+ * Now uses multi-guild role detection
  */
 async function getMemberByMinecraftUser(inputMC, client = null) {
   if (!inputMC) {
@@ -154,10 +154,10 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     }
   }
   
-  // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
+  // ✅ DETECT ROLES FROM ALL GUILDS IF CLIENT PROVIDED
   let detectedRoles = { rank: "n/d", status: "n/d" };
   if (client && linkedDiscordId) {
-    console.log(`[memberlogic] 🎭 Detecting roles for Discord ID: ${linkedDiscordId}`);
+    console.log(`[memberlogic] 🎭 Detecting roles across all guilds for Discord ID: ${linkedDiscordId}`);
     try {
       detectedRoles = await detectRolesFromDiscord(linkedDiscordId, client);
       console.log(`[memberlogic] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
@@ -200,6 +200,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 
 /**
  * ✅ Gets member by Discord ID with role detection and saving
+ * Now uses multi-guild role detection
  */
 async function getMemberByDiscordId(discordId, client = null) {
   if (!discordId) {
@@ -232,10 +233,10 @@ async function getMemberByDiscordId(discordId, client = null) {
     }
   }
   
-  // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
+  // ✅ DETECT ROLES FROM ALL GUILDS IF CLIENT PROVIDED
   let detectedRoles = { rank: "n/d", status: "n/d" };
   if (client) {
-    console.log(`[memberlogic] 🎭 Detecting roles for Discord ID: ${discordId}`);
+    console.log(`[memberlogic] 🎭 Detecting roles across all guilds for Discord ID: ${discordId}`);
     try {
       detectedRoles = await detectRolesFromDiscord(discordId, client);
       console.log(`[memberlogic] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
@@ -451,11 +452,11 @@ function isUnlinked(discordId) {
 }
 
 /**
- * ✅ NEW: Migrate all existing members - detect and update their roles
- * Useful for fixing empty rank/status fields
+ * ✅ Migrate all existing members - detect and update their roles
+ * Now uses multi-guild detection
  */
 async function migrateAllMemberRoles(client) {
-  console.log("[memberlogic] 🔄 Starting member role migration...");
+  console.log("[memberlogic] 🔄 Starting member role migration (multi-guild)...");
   
   const members = readMembers();
   const discordIds = Object.keys(members);
@@ -515,5 +516,5 @@ module.exports = {
   resolveCommandTarget,
   isUnlinked,
   updateMemberRoles,
-  migrateAllMemberRoles  // ✅ NEW
+  migrateAllMemberRoles
 };

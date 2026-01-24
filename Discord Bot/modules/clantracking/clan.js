@@ -1,7 +1,10 @@
 // modules/clantracking/clan.js
+// ✅ UPDATED: Now automatically adds guilds to role detection when adding clans
+
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require("discord.js");
 const clanlogic = require("./clanlogic");
 const { createClanEmbed } = require("./clanembed");
+const { addGuildRoles } = require("../roles/rolesconfig");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -77,6 +80,27 @@ module.exports = {
 
       clanlogic.writeClans(clans);
 
+      // ✅ AUTOMATICALLY ADD GUILD TO ROLE DETECTION
+      console.log(`[clan add] 🎭 Adding guild to role detection: ${name} (${guildId})`);
+      
+      try {
+        const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
+        
+        if (guild) {
+          const roleSuccess = await addGuildRoles(guildId, name, guild);
+          
+          if (roleSuccess) {
+            console.log(`[clan add] ✅ Successfully added guild roles for ${name}`);
+          } else {
+            console.warn(`[clan add] ⚠️ Failed to add guild roles for ${name}`);
+          }
+        } else {
+          console.warn(`[clan add] ⚠️ Could not fetch guild ${guildId} for role detection`);
+        }
+      } catch (err) {
+        console.error(`[clan add] ❌ Error adding guild roles:`, err);
+      }
+
       if (flagAttachment) {
         try {
           if (!flagAttachment.name.toLowerCase().endsWith(".png")) {
@@ -96,7 +120,7 @@ module.exports = {
       }
 
       return interaction.editReply({
-        content: `✅ Clan **${abbr}: ${name}** added.`,
+        content: `✅ Clan **${abbr}: ${name}** added.\n🎭 Guild roles automatically imported for role detection.`,
         ephemeral: false
       });
     }
@@ -121,7 +145,7 @@ module.exports = {
       } catch {}
 
       return interaction.editReply({
-        content: `🗑 Removed clan **${removed.abbr}: ${removed.name}**.`
+        content: `🗑 Removed clan **${removed.abbr}: ${removed.name}**.\n\n💡 Note: Role detection config for this guild remains. Use \`/roles remove ${guildId}\` to remove it.`
       });
     }
 
@@ -248,10 +272,10 @@ module.exports = {
 
       const embed = new EmbedBuilder()
         .setTitle("__Registered Clans__")
-        .setColor(000000)
+        .setColor(0x000000)
         .setDescription(arr.map(([id, c]) => {
           const invite = c.invite || "n/d";
-          return `[${c.abbr}: ${c.name} ${invite}]`;
+          return `[${c.abbr}: ${c.name}](${invite})`;
         }).join("\n"));
 
       return interaction.editReply({ embeds: [embed] });

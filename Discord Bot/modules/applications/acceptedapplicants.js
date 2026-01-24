@@ -1,5 +1,5 @@
 // modules/applications/acceptedapplicants.js
-// ✅ FIXED: Now uses roledetector.js, better error handling, always detects roles
+// ✅ UPDATED: Now uses multi-guild role detection from modules/roles/
 
 const fs = require("fs");
 const path = require("path");
@@ -57,11 +57,11 @@ function formatDate(dateString) {
     return `${dd}.${mm}.${yyyy}`;
 }
 
-// ✅ Import role detection from roledetector.js (single source of truth)
-const { detectRolesFromDiscord } = require("../membertracking/roledetector");
+// ✅ Import multi-guild role detection
+const { detectRolesFromDiscord } = require("../roles/roledetector");
 
 /**
- * ✅ FIXED: Accept applicant and detect roles from Discord
+ * ✅ Accept applicant and detect roles from ALL guilds
  * @param {string} discordId - Discord user ID
  * @param {Client} client - Discord.js client (REQUIRED for role detection)
  */
@@ -104,14 +104,14 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     const clanName = clans[data.server]?.name || "Unknown";
     console.log(`  - Clan: ${clanName}`);
 
-    // ✅ DETECT ROLES FROM DISCORD
+    // ✅ DETECT ROLES FROM ALL GUILDS (multi-guild support)
     let detectedRoles = { rank: "n/d", status: "n/d" };
     
     if (!client) {
         console.warn(`[acceptedapps] ⚠️ No client provided - roles will be 'n/d'`);
         console.warn(`[acceptedapps] ⚠️ Please update application.js to pass client to acceptApplicant()`);
     } else {
-        console.log(`[acceptedapps] 🎭 Detecting roles for ${discordId}...`);
+        console.log(`[acceptedapps] 🎭 Detecting roles across ALL guilds for ${discordId}...`);
         try {
             detectedRoles = await detectRolesFromDiscord(discordId, client);
             
@@ -119,6 +119,18 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
                 console.warn(`[acceptedapps] ⚠️ Role detection had issues: ${detectedRoles.error}`);
             } else {
                 console.log(`[acceptedapps] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
+                
+                // Log which guilds were checked
+                if (detectedRoles.guilds) {
+                    const checkedGuilds = Object.entries(detectedRoles.guilds)
+                        .filter(([, data]) => !data.error)
+                        .map(([id, data]) => data.guild)
+                        .join(", ");
+                    
+                    if (checkedGuilds) {
+                        console.log(`[acceptedapps] 🌐 Checked guilds: ${checkedGuilds}`);
+                    }
+                }
             }
         } catch (err) {
             console.error(`[acceptedapps] ❌ Error detecting roles:`, err);
@@ -133,9 +145,9 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
         minecraftVersion,
         JoinedClan: clanName,
         JoinDate: closeDate,
-        YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
+        YazanakiRank: detectedRoles.rank, // ✅ FROM MULTI-GUILD DETECTION
         EmpireID: "",
-        Status: detectedRoles.status // ✅ FROM DISCORD ROLES
+        Status: detectedRoles.status // ✅ FROM MULTI-GUILD DETECTION
     };
 
     console.log(`[acceptedapps] 📝 Creating entry for ${discordId}:`, entry);

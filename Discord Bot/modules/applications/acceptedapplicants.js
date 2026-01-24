@@ -1,5 +1,5 @@
 // modules/applications/acceptedapplicants.js
-// ✅ UPDATED: Now assigns Empire IDs when accepting applicants
+// ✅ UPDATED: Now assigns clan roles in Yazanaki Empire when accepting applicants
 
 const fs = require("fs");
 const path = require("path");
@@ -11,6 +11,9 @@ const dataDir = path.join(__dirname, "..", "data");
 const applicantsPath = path.join(dataDir, "applicants.json");
 const membersPath = path.join(dataDir, "members.json");
 const clansPath = path.join(dataDir, "clans.json");
+
+// Yazanaki Empire Guild ID (hardcoded - the main empire server)
+const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
 // Ensure /modules/data exists
 if (!fs.existsSync(dataDir)) {
@@ -64,9 +67,87 @@ const { detectRolesFromDiscord } = require("../roles/roledetector");
 const { assignEmpireId } = require("../empire/empireid");
 
 /**
- * ✅ Accept applicant and assign Empire ID
+ * ✅ Assign clan role in Yazanaki Empire discord
+ * @param {Client} client - Discord.js client
+ * @param {string} discordId - User's Discord ID
+ * @param {string} clanGuildId - Guild ID where they applied
+ * @returns {Promise<boolean>} Success status
+ */
+async function assignClanRoleInYazanaki(client, discordId, clanGuildId) {
+    try {
+        console.log(`[acceptedapps] 🎭 Assigning clan role in Yazanaki Empire...`);
+        
+        // Load clans to find the role ID
+        const clans = loadJSON(clansPath);
+        const clan = clans[clanGuildId];
+        
+        if (!clan) {
+            console.warn(`[acceptedapps] ⚠️ Clan not found for guild ${clanGuildId}`);
+            return false;
+        }
+        
+        if (!clan.yazanakiRoleId) {
+            console.warn(`[acceptedapps] ⚠️ Clan ${clan.abbr} has no yazanakiRoleId configured`);
+            console.warn(`[acceptedapps] ⚠️ Please update clans.json with the Yazanaki Empire role ID for ${clan.abbr}`);
+            return false;
+        }
+        
+        console.log(`[acceptedapps] 🎯 Clan: ${clan.abbr} (${clan.name})`);
+        console.log(`[acceptedapps] 🎯 Yazanaki Role ID: ${clan.yazanakiRoleId}`);
+        
+        // Fetch Yazanaki Empire guild
+        const yazanakiGuild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+        
+        if (!yazanakiGuild) {
+            console.error(`[acceptedapps] ❌ Could not fetch Yazanaki Empire guild (${YAZANAKI_EMPIRE_GUILD_ID})`);
+            return false;
+        }
+        
+        console.log(`[acceptedapps] ✅ Fetched Yazanaki Empire guild: ${yazanakiGuild.name}`);
+        
+        // Fetch member in Yazanaki Empire
+        const member = await yazanakiGuild.members.fetch(discordId).catch(() => null);
+        
+        if (!member) {
+            console.warn(`[acceptedapps] ⚠️ User ${discordId} is not in Yazanaki Empire guild`);
+            console.warn(`[acceptedapps] ⚠️ Role assignment skipped - they need to join Yazanaki Empire first`);
+            return false;
+        }
+        
+        console.log(`[acceptedapps] ✅ Found member in Yazanaki Empire: ${member.user.tag}`);
+        
+        // Check if role exists
+        const role = yazanakiGuild.roles.cache.get(clan.yazanakiRoleId);
+        
+        if (!role) {
+            console.error(`[acceptedapps] ❌ Role ${clan.yazanakiRoleId} not found in Yazanaki Empire`);
+            return false;
+        }
+        
+        console.log(`[acceptedapps] ✅ Found role: ${role.name}`);
+        
+        // Check if member already has the role
+        if (member.roles.cache.has(clan.yazanakiRoleId)) {
+            console.log(`[acceptedapps] ℹ️ Member already has role ${role.name}`);
+            return true;
+        }
+        
+        // Assign the role
+        await member.roles.add(clan.yazanakiRoleId);
+        
+        console.log(`[acceptedapps] ✅ Assigned role ${role.name} to ${member.user.tag} in Yazanaki Empire!`);
+        return true;
+        
+    } catch (err) {
+        console.error(`[acceptedapps] ❌ Error assigning clan role:`, err);
+        return false;
+    }
+}
+
+/**
+ * ✅ Accept applicant, assign Empire ID, and assign clan role in Yazanaki Empire
  * @param {string} discordId - Discord user ID
- * @param {Client} client - Discord.js client (REQUIRED for role detection)
+ * @param {Client} client - Discord.js client (REQUIRED for role detection and assignment)
  */
 module.exports.acceptApplicant = async function (discordId, client = null) {
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -125,6 +206,20 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     } else {
         console.error(`[acceptedapps] ❌ Failed to assign Empire ID: ${empireIdResult.reason}`);
         empireId = "ERROR";
+    }
+
+    // ✅ ASSIGN CLAN ROLE IN YAZANAKI EMPIRE
+    if (client && data.server) {
+        console.log(`[acceptedapps] 🎭 Attempting to assign clan role in Yazanaki Empire...`);
+        const roleAssigned = await assignClanRoleInYazanaki(client, discordId, data.server);
+        
+        if (roleAssigned) {
+            console.log(`[acceptedapps] ✅ Clan role assigned successfully in Yazanaki Empire!`);
+        } else {
+            console.warn(`[acceptedapps] ⚠️ Could not assign clan role in Yazanaki Empire`);
+        }
+    } else {
+        console.warn(`[acceptedapps] ⚠️ Client not provided or no server ID - skipping clan role assignment`);
     }
 
     // ✅ DETECT ROLES FROM ALL GUILDS (multi-guild support)

@@ -1,5 +1,5 @@
 // modules/clantracking/clan.js
-// ✅ UPDATED: Now automatically adds guilds to role detection when adding clans
+// ✅ UPDATED: Now supports setting Yazanaki Empire role ID for cross-guild role assignment
 
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require("discord.js");
 const clanlogic = require("./clanlogic");
@@ -20,7 +20,15 @@ module.exports = {
         .addStringOption(opt => opt.setName("guildid").setDescription("Discord Guild ID").setRequired(true))
         .addStringOption(opt => opt.setName("abbreviation").setDescription("Clan abbreviation").setRequired(true))
         .addStringOption(opt => opt.setName("name").setDescription("Clan name").setRequired(true))
+        .addRoleOption(opt => opt.setName("yazanakirole").setDescription("Yazanaki Empire role for this clan").setRequired(false))
         .addAttachmentOption(opt => opt.setName("flag").setDescription("Optional clan flag PNG (must be PNG)"))
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName("setrole")
+        .setDescription("Set the Yazanaki Empire role for a clan")
+        .addStringOption(opt => opt.setName("clan").setDescription("Clan name or abbreviation").setRequired(true))
+        .addRoleOption(opt => opt.setName("role").setDescription("Yazanaki Empire role").setRequired(true))
     )
     .addSubcommand(sub =>
       sub
@@ -53,6 +61,7 @@ module.exports = {
       const guildId = interaction.options.getString("guildid");
       const abbr = interaction.options.getString("abbreviation").toUpperCase();
       const name = interaction.options.getString("name");
+      const yazanakiRole = interaction.options.getRole("yazanakirole");
       const flagAttachment = interaction.options.getAttachment("flag");
 
       if (clans[guildId]) {
@@ -65,7 +74,8 @@ module.exports = {
       clans[guildId] = {
         abbr,
         name,
-        joinedEmpire: new Date().toISOString().split("T")[0]
+        joinedEmpire: new Date().toISOString().split("T")[0],
+        yazanakiRoleId: yazanakiRole ? yazanakiRole.id : null
       };
 
       // Create a new invite in the channel the command was used in
@@ -92,14 +102,24 @@ module.exports = {
           if (roleSuccess) {
             console.log(`[clan add] ✅ Successfully added guild roles for ${name}`);
             
+            let response = 
+              `✅ Clan **${abbr}: ${name}** added.\n` +
+              `🎭 Guild roles automatically imported to \`modules/data/roles.json\`\n\n`;
+            
+            if (yazanakiRole) {
+              response += `✅ Yazanaki Empire role set to: ${yazanakiRole}\n\n`;
+            } else {
+              response += `⚠️ **No Yazanaki Empire role set!** Use \`/clan setrole\` to set it.\n\n`;
+            }
+            
+            response += 
+              `⚠️ **Next Step:** Edit \`modules/data/roles.json\` to organize roles into:\n` +
+              `  • \`statusRoles\` - Enemy, Ally, Citizen, Draft, Military, Council, Royalty\n` +
+              `  • \`rankRoles\` - Citizen, Recruit, Captain, General, etc.\n\n` +
+              `All roles are currently in \`rankRoles\` by default.`;
+            
             return interaction.editReply({
-              content: 
-                `✅ Clan **${abbr}: ${name}** added.\n` +
-                `🎭 Guild roles automatically imported to \`modules/data/roles.json\`\n\n` +
-                `⚠️ **Next Step:** Edit \`modules/data/roles.json\` to organize roles into:\n` +
-                `  • \`statusRoles\` - Enemy, Ally, Citizen, Draft, Military, Council, Royalty\n` +
-                `  • \`rankRoles\` - Citizen, Recruit, Captain, General, etc.\n\n` +
-                `All roles are currently in \`rankRoles\` by default.`,
+              content: response,
               ephemeral: false
             });
           } else {
@@ -130,6 +150,43 @@ module.exports = {
           ephemeral: false
         });
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // SET ROLE
+    // -------------------------------------------------------------------------
+    if (sub === "setrole") {
+      await interaction.deferReply();
+
+      const clanInput = interaction.options.getString("clan");
+      const role = interaction.options.getRole("role");
+
+      // Find clan by abbr or name
+      const guildId = Object.keys(clans).find(id =>
+        clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
+        clans[id].name.toLowerCase() === clanInput.toLowerCase()
+      );
+
+      if (!guildId || !clans[guildId]) {
+        return interaction.editReply({
+          content: `❌ Clan **${clanInput}** not found.`,
+          ephemeral: true
+        });
+      }
+
+      const clan = clans[guildId];
+      
+      // Update the role ID
+      clan.yazanakiRoleId = role.id;
+      clanlogic.writeClans(clans);
+
+      return interaction.editReply({
+        content: 
+          `✅ Updated **${clan.abbr}: ${clan.name}**\n` +
+          `🎭 Yazanaki Empire role set to: ${role}\n\n` +
+          `ℹ️ When users apply to this clan and get accepted, they will automatically receive this role in the Yazanaki Empire discord!`,
+        ephemeral: false
+      });
     }
 
     // -------------------------------------------------------------------------
@@ -282,6 +339,27 @@ module.exports = {
         embedColor
       );
 
+      // Add Yazanaki role info to embed
+      if (clan.yazanakiRoleId) {
+        const yazanakiGuild = await interaction.client.guilds.fetch("1220847061797179524").catch(() => null);
+        if (yazanakiGuild) {
+          const yazanakiRole = yazanakiGuild.roles.cache.get(clan.yazanakiRoleId);
+          if (yazanakiRole) {
+            embed.addFields({
+              name: "🎭 Yazanaki Empire Role",
+              value: `${yazanakiRole}`,
+              inline: false
+            });
+          }
+        }
+      } else {
+        embed.addFields({
+          name: "🎭 Yazanaki Empire Role",
+          value: "`Not set - use /clan setrole`",
+          inline: false
+        });
+      }
+
       if (useBannerPath || flagExists) {
         const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
         return interaction.editReply({ embeds: [embed], files: [attachment] });
@@ -303,8 +381,10 @@ module.exports = {
         .setColor(0x000000)
         .setDescription(arr.map(([id, c]) => {
           const invite = c.invite || "n/d";
-          return `[${c.abbr}: ${c.name}](${invite})`;
-        }).join("\n"));
+          const roleStatus = c.yazanakiRoleId ? "✅" : "❌";
+          return `${roleStatus} [${c.abbr}: ${c.name}](${invite})`;
+        }).join("\n"))
+        .setFooter({ text: "✅ = Yazanaki role configured | ❌ = No role set" });
 
       return interaction.editReply({ embeds: [embed] });
     }

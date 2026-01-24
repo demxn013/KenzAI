@@ -57,28 +57,74 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 }
 
 /**
- * Compatibility wrapper for member.js
+ * ✅ FIXED: Search by Minecraft username
+ * Uses linking.json as ONLY source for Discord ↔ MC link
+ * Optionally adds empire data from members.json if they're a member
  */
 function getMemberByMinecraftUser(inputMC) {
-  const result = getMemberByMinecraftNameInsensitive(inputMC);
+  if (!inputMC) {
+    return { member: null, exactUsername: inputMC };
+  }
 
-  if (!result) {
+  console.log(`[getMemberByMinecraftUser] Searching for MC username: ${inputMC}`);
+
+  // ✅ ONLY SOURCE: linking.json
+  const linkedDiscordId = getDiscordFromMC(inputMC);
+  
+  if (!linkedDiscordId) {
+    console.log(`[getMemberByMinecraftUser] Not linked in linking.json`);
     return {
       member: null,
       exactUsername: inputMC
     };
   }
 
+  console.log(`[getMemberByMinecraftUser] Found link: ${inputMC} -> Discord ID ${linkedDiscordId}`);
+  
+  // Get the MC username from linking.json (preserves capitalization)
+  const linkedMC = getMCFromDiscord(linkedDiscordId);
+  
+  // Try to get empire-specific data from members.json (optional)
+  const members = readMembers();
+  let empireData = null;
+  
+  // Try direct Discord ID match
+  if (members[linkedDiscordId]) {
+    console.log(`[getMemberByMinecraftUser] Found empire data by Discord ID`);
+    empireData = members[linkedDiscordId];
+  } else {
+    // Try by MC username
+    const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
+    if (mcMatch) {
+      console.log(`[getMemberByMinecraftUser] Found empire data by MC username`);
+      empireData = mcMatch;
+    }
+  }
+  
+  // Build member data (link + optional empire data)
+  const memberData = {
+    discordId: linkedDiscordId,
+    minecraftUser: linkedMC, // From linking.json
+    minecraftVersion: empireData?.minecraftVersion || "n/d",
+    JoinedClan: empireData?.JoinedClan || "n/d",
+    JoinDate: empireData?.JoinDate || "n/d",
+    YazanakiRank: empireData?.YazanakiRank || "n/d",
+    EmpireID: empireData?.EmpireID || "n/d",
+    Status: empireData?.Status || "n/d"
+  };
+  
+  console.log(`[getMemberByMinecraftUser] Returning ${empireData ? 'linked + empire' : 'linked only'} data`);
+  
   return {
-    member: result,
-    exactUsername: result.minecraftUser || inputMC
+    member: memberData,
+    exactUsername: linkedMC
   };
 }
 
 /**
  * ✅ FIXED: Gets member by Discord ID
- * PRIMARY SOURCE: linking.json
- * SECONDARY SOURCE: members.json for extended data
+ * Uses linking.json as ONLY source for Discord ↔ MC link
+ * Optionally adds empire data from members.json if they're a member
  */
 function getMemberByDiscordId(discordId) {
   if (!discordId) {
@@ -88,65 +134,48 @@ function getMemberByDiscordId(discordId) {
   
   console.log(`[getMemberByDiscordId] Looking up Discord ID: ${discordId}`);
   
-  // ✅ STEP 1: Check linking.json FIRST (primary source of truth)
+  // ✅ ONLY SOURCE: linking.json
   const linkedMC = getMCFromDiscord(discordId);
   
   if (!linkedMC) {
-    console.log(`[getMemberByDiscordId] No link found in linking.json for ${discordId}`);
+    console.log(`[getMemberByDiscordId] Not linked in linking.json`);
     return null;
   }
   
-  console.log(`[getMemberByDiscordId] Found link in linking.json: ${discordId} -> ${linkedMC}`);
+  console.log(`[getMemberByDiscordId] Found link: ${discordId} -> ${linkedMC}`);
   
-  // ✅ STEP 2: Try to get extended data from members.json
+  // Try to get empire-specific data from members.json (optional)
   const members = readMembers();
-  let extendedData = null;
+  let empireData = null;
   
-  // First try direct Discord ID match
+  // Try direct Discord ID match
   if (members[discordId]) {
-    console.log(`[getMemberByDiscordId] Found extended data by Discord ID in members.json`);
-    extendedData = members[discordId];
+    console.log(`[getMemberByDiscordId] Found empire data by Discord ID`);
+    empireData = members[discordId];
   } else {
-    // Try matching by MC username
+    // Try by MC username
     const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
     if (mcMatch) {
-      console.log(`[getMemberByDiscordId] Found extended data by MC username in members.json`);
-      extendedData = mcMatch;
+      console.log(`[getMemberByDiscordId] Found empire data by MC username`);
+      empireData = mcMatch;
     }
   }
   
-  // ✅ STEP 3: Build final member data
-  if (extendedData) {
-    // Has extended empire data
-    console.log(`[getMemberByDiscordId] Returning full member data with extended info`);
-    return {
-      member: {
-        discordId,
-        minecraftUser: linkedMC, // Always use linking.json username
-        minecraftVersion: extendedData.minecraftVersion || "n/d",
-        JoinedClan: extendedData.JoinedClan || "n/d",
-        JoinDate: extendedData.JoinDate || "n/d",
-        YazanakiRank: extendedData.YazanakiRank || "n/d",
-        EmpireID: extendedData.EmpireID || "n/d",
-        Status: extendedData.Status || "n/d"
-      }
-    };
-  } else {
-    // Linked but no extended data yet
-    console.log(`[getMemberByDiscordId] Linked but no extended data, returning basic structure`);
-    return {
-      member: {
-        discordId,
-        minecraftUser: linkedMC, // From linking.json
-        minecraftVersion: "n/d",
-        JoinedClan: "n/d", 
-        JoinDate: "n/d",
-        YazanakiRank: "n/d",
-        EmpireID: "n/d",
-        Status: "n/d"
-      }
-    };
-  }
+  // Build member data (link + optional empire data)
+  const memberData = {
+    discordId,
+    minecraftUser: linkedMC, // From linking.json
+    minecraftVersion: empireData?.minecraftVersion || "n/d",
+    JoinedClan: empireData?.JoinedClan || "n/d",
+    JoinDate: empireData?.JoinDate || "n/d",
+    YazanakiRank: empireData?.YazanakiRank || "n/d",
+    EmpireID: empireData?.EmpireID || "n/d",
+    Status: empireData?.Status || "n/d"
+  };
+  
+  console.log(`[getMemberByDiscordId] Returning ${empireData ? 'linked + empire' : 'linked only'} data`);
+  
+  return { member: memberData };
 }
 
 /**
@@ -161,21 +190,9 @@ function getMemberByDiscordOrMC(discordId = null, mcUser = null) {
   }
   
   if (mcUser) {
-    // Try to find discord ID from linking.json first
-    const linkedDiscordId = getDiscordFromMC(mcUser);
-    
-    if (linkedDiscordId) {
-      // Found link, get full data via Discord ID
-      const result = getMemberByDiscordId(linkedDiscordId);
-      if (result && result.member) {
-        return result;
-      }
-    }
-    
-    // No link found, try direct MC lookup in members.json
-    const mcMatch = getMemberByMinecraftNameInsensitive(mcUser);
-    if (mcMatch) {
-      return mcMatch;
+    const result = getMemberByMinecraftUser(mcUser);
+    if (result && result.member) {
+      return { member: result.member, discordId: result.member.discordId };
     }
   }
   

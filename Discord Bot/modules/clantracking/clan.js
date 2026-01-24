@@ -4,7 +4,7 @@
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require("discord.js");
 const clanlogic = require("./clanlogic");
 const { createClanEmbed } = require("./clanembed");
-const { addGuildRoles } = require("../roles/rolesconfig");
+const { addGuildRoles, removeGuildRoles } = require("../membertracking/roledetector");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -91,38 +91,45 @@ module.exports = {
           
           if (roleSuccess) {
             console.log(`[clan add] ✅ Successfully added guild roles for ${name}`);
+            
+            return interaction.editReply({
+              content: 
+                `✅ Clan **${abbr}: ${name}** added.\n` +
+                `🎭 Guild roles automatically imported to \`modules/data/roles.json\`\n\n` +
+                `⚠️ **Next Step:** Edit \`modules/data/roles.json\` to organize roles into:\n` +
+                `  • \`statusRoles\` - Enemy, Ally, Citizen, Draft, Military, Council, Royalty\n` +
+                `  • \`rankRoles\` - Citizen, Recruit, Captain, General, etc.\n\n` +
+                `All roles are currently in \`rankRoles\` by default.`,
+              ephemeral: false
+            });
           } else {
             console.warn(`[clan add] ⚠️ Failed to add guild roles for ${name}`);
+            
+            return interaction.editReply({
+              content: 
+                `✅ Clan **${abbr}: ${name}** added.\n` +
+                `⚠️ Could not auto-import roles. Manually add them to \`modules/data/roles.json\``,
+              ephemeral: false
+            });
           }
         } else {
           console.warn(`[clan add] ⚠️ Could not fetch guild ${guildId} for role detection`);
+          
+          return interaction.editReply({
+            content: 
+              `✅ Clan **${abbr}: ${name}** added.\n` +
+              `⚠️ Bot is not in that guild. Add bot to guild, then manually import roles.`,
+            ephemeral: false
+          });
         }
       } catch (err) {
         console.error(`[clan add] ❌ Error adding guild roles:`, err);
+        
+        return interaction.editReply({
+          content: `⚠️ Clan added, but role import failed: ${err.message}`,
+          ephemeral: false
+        });
       }
-
-      if (flagAttachment) {
-        try {
-          if (!flagAttachment.name.toLowerCase().endsWith(".png")) {
-            return interaction.editReply({
-              content: "❌ Flag must be a PNG.",
-              ephemeral: true
-            });
-          }
-          await clanlogic.saveFlagFromAttachment(abbr, flagAttachment);
-        } catch (err) {
-          console.error("Flag save error:", err);
-          return interaction.editReply({
-            content: `⚠️ Clan added, but failed to save flag: ${err.message}`,
-            ephemeral: true
-          });
-        }
-      }
-
-      return interaction.editReply({
-        content: `✅ Clan **${abbr}: ${name}** added.\n🎭 Guild roles automatically imported for role detection.`,
-        ephemeral: false
-      });
     }
 
     // -------------------------------------------------------------------------
@@ -144,9 +151,30 @@ module.exports = {
         clanlogic.deleteFlag(removed.abbr);
       } catch {}
 
-      return interaction.editReply({
-        content: `🗑 Removed clan **${removed.abbr}: ${removed.name}**.\n\n💡 Note: Role detection config for this guild remains. Use \`/roles remove ${guildId}\` to remove it.`
-      });
+      // ✅ OPTIONALLY REMOVE FROM ROLE DETECTION
+      try {
+        const roleRemoved = removeGuildRoles(guildId);
+        
+        if (roleRemoved) {
+          return interaction.editReply({
+            content: 
+              `🗑 Removed clan **${removed.abbr}: ${removed.name}**.\n` +
+              `🎭 Also removed from role detection.`
+          });
+        } else {
+          return interaction.editReply({
+            content: 
+              `🗑 Removed clan **${removed.abbr}: ${removed.name}**.\n` +
+              `⚠️ Guild was not in role detection config.`
+          });
+        }
+      } catch (err) {
+        return interaction.editReply({
+          content: 
+            `🗑 Removed clan **${removed.abbr}: ${removed.name}**.\n` +
+            `⚠️ Could not remove from role detection: ${err.message}`
+        });
+      }
     }
 
     // -------------------------------------------------------------------------

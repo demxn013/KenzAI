@@ -1,296 +1,238 @@
-// modules/roles/roledetector.js
-// ✅ Multi-guild role detection with priority-based selection
-// Detects highest priority rank and status from ANY guild the user is in
+// modules/membertracking/roledetector.js
+const fs = require("fs");
+const path = require("path");
 
-const { loadRolesConfig, getAllGuildRoles } = require("./rolesconfig");
+const rolesConfigPath = path.join(__dirname, "../data/roles.json");
 
-/**
- * ✅ Detect Yazanaki rank and status from ALL guilds with role configs
- * 
- * Priority system:
- * - For RANK: Selects the role with the HIGHEST priority across all guilds
- * - For STATUS: Selects the role with the HIGHEST priority across all guilds
- * 
- * @param {string} discordId - Discord user ID
- * @param {Client} client - Discord.js client
- * @returns {Promise<{rank: string, status: string, error?: string, guilds?: Object}>}
- */
-async function detectRolesFromDiscord(discordId, client) {
-  // Validate inputs
-  if (!discordId) {
-    console.warn("[roledetector] ⚠️ No discordId provided");
-    return { rank: "n/d", status: "n/d", error: "no_discord_id" };
-  }
+// Yazanaki Empire Guild ID (hardcoded for now)
+const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
-  if (!client) {
-    console.warn("[roledetector] ⚠️ No client provided - cannot detect roles");
-    return { rank: "n/d", status: "n/d", error: "no_client" };
-  }
-
-  const allGuildConfigs = getAllGuildRoles();
-  
-  if (!allGuildConfigs || Object.keys(allGuildConfigs).length === 0) {
-    console.warn("[roledetector] ⚠️ No guild role configs found in roles.json");
-    return { rank: "n/d", status: "n/d", error: "no_guild_configs" };
-  }
-
-  console.log(`[roledetector] 🔍 Checking ${Object.keys(allGuildConfigs).length} guilds for user ${discordId}`);
-
-  // Track highest priority role found across ALL guilds
-  let highestRank = { name: "n/d", priority: -1, guildId: null };
-  let highestStatus = { name: "n/d", priority: -1, guildId: null };
-  
-  const guildsChecked = {};
-
-  // Check each guild in the config
-  for (const [guildId, guildConfig] of Object.entries(allGuildConfigs)) {
-    try {
-      console.log(`[roledetector] 🔍 Checking guild: ${guildConfig.name} (${guildId})`);
-      
-      // Fetch guild
-      const guild = await client.guilds.fetch(guildId).catch(() => null);
-      
-      if (!guild) {
-        console.warn(`[roledetector] ⚠️ Could not fetch guild ${guildId}`);
-        guildsChecked[guildId] = { error: "guild_not_found" };
-        continue;
-      }
-
-      // Fetch member from guild
-      const member = await guild.members.fetch(discordId).catch(() => null);
-      
-      if (!member) {
-        console.log(`[roledetector] ℹ️ User ${discordId} not in guild ${guildConfig.name}`);
-        guildsChecked[guildId] = { error: "not_in_guild" };
-        continue;
-      }
-
-      console.log(`[roledetector] ✅ Found member in ${guildConfig.name}`);
-
-      // Get user's role IDs
-      const userRoleIds = member.roles.cache.map(role => role.id);
-      const roleNames = member.roles.cache.map(role => role.name).join(", ");
-      console.log(`[roledetector] 🎭 Member has ${userRoleIds.length} roles: ${roleNames}`);
-
-      guildsChecked[guildId] = {
-        guild: guildConfig.name,
-        roles: roleNames,
-        rank: null,
-        status: null
-      };
-
-      // ============================================================
-      // CHECK STATUS ROLES (highest priority wins)
-      // ============================================================
-      if (guildConfig.statusRoles) {
-        for (const roleId of userRoleIds) {
-          const statusRole = guildConfig.statusRoles[roleId];
-          
-          if (statusRole) {
-            const priority = statusRole.priority || 0;
-            
-            console.log(`[roledetector] 🎯 Found status role: ${statusRole.name} (Priority: ${priority})`);
-            
-            // Update if this is higher priority than current highest
-            if (priority > highestStatus.priority) {
-              highestStatus = {
-                name: statusRole.name,
-                priority: priority,
-                guildId: guildId,
-                roleId: roleId
-              };
-              guildsChecked[guildId].status = statusRole.name;
-              console.log(`[roledetector] ⬆️ New highest status: ${statusRole.name}`);
-            }
-          }
-        }
-      }
-
-      // ============================================================
-      // CHECK RANK ROLES (highest priority wins)
-      // ============================================================
-      if (guildConfig.rankRoles) {
-        for (const roleId of userRoleIds) {
-          const rankRole = guildConfig.rankRoles[roleId];
-          
-          if (rankRole) {
-            const priority = rankRole.priority || 0;
-            
-            console.log(`[roledetector] 🎯 Found rank role: ${rankRole.name} (Priority: ${priority})`);
-            
-            // Update if this is higher priority than current highest
-            if (priority > highestRank.priority) {
-              highestRank = {
-                name: rankRole.name,
-                priority: priority,
-                guildId: guildId,
-                roleId: roleId
-              };
-              guildsChecked[guildId].rank = rankRole.name;
-              console.log(`[roledetector] ⬆️ New highest rank: ${rankRole.name}`);
-            }
-          }
-        }
-      }
-
-    } catch (err) {
-      console.error(`[roledetector] ❌ Error checking guild ${guildId}:`, err.message);
-      guildsChecked[guildId] = { error: err.message };
+// Load roles configuration
+function loadRolesConfig() {
+  try {
+    if (!fs.existsSync(rolesConfigPath)) {
+      console.error("roles.json not found!");
+      return null;
     }
+
+    const raw = fs.readFileSync(rolesConfigPath, "utf8");
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Error loading roles.json:", err);
+    return null;
   }
+}
 
-  // ============================================================
-  // RETURN HIGHEST PRIORITY ROLES FOUND
-  // ============================================================
-  const result = {
-    rank: highestRank.name,
-    status: highestStatus.name,
-    guilds: guildsChecked
-  };
+// Save roles configuration
+function saveRolesConfig(config) {
+  try {
+    const dir = path.dirname(rolesConfigPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
-  if (highestRank.guildId) {
-    console.log(`[roledetector] ✅ Final rank: ${highestRank.name} (Priority: ${highestRank.priority}, Guild: ${allGuildConfigs[highestRank.guildId]?.name})`);
-  } else {
-    console.log(`[roledetector] ℹ️ No rank role found for ${discordId}`);
+    fs.writeFileSync(rolesConfigPath, JSON.stringify(config, null, 2));
+    console.log("[roledetector] Saved roles.json");
+  } catch (err) {
+    console.error("Error saving roles.json:", err);
   }
-
-  if (highestStatus.guildId) {
-    console.log(`[roledetector] ✅ Final status: ${highestStatus.name} (Priority: ${highestStatus.priority}, Guild: ${allGuildConfigs[highestStatus.guildId]?.name})`);
-  } else {
-    console.log(`[roledetector] ℹ️ No status role found for ${discordId}`);
-  }
-
-  console.log(`[roledetector] 📊 Final result for ${discordId}:`, result);
-  
-  return result;
 }
 
 /**
- * ✅ Detect roles from a specific guild only
- * @param {string} discordId - Discord user ID
+ * Add a guild's roles to roles.json
+ * Automatically imports all roles from the guild with position-based priority
+ * 
  * @param {string} guildId - Discord guild ID
- * @param {Client} client - Discord.js client
- * @returns {Promise<{rank: string, status: string, error?: string}>}
+ * @param {string} guildName - Guild name
+ * @param {Guild} guild - Discord.js Guild object
+ * @returns {boolean} Success status
  */
-async function detectRolesFromGuild(discordId, guildId, client) {
-  if (!discordId || !guildId || !client) {
-    console.warn("[roledetector] ⚠️ Missing required parameters");
-    return { rank: "n/d", status: "n/d", error: "missing_parameters" };
-  }
+async function addGuildRoles(guildId, guildName, guild) {
+  try {
+    let config = loadRolesConfig();
+    
+    if (!config) {
+      // Create new config structure
+      config = { guilds: {} };
+    }
 
+    if (!config.guilds) {
+      config.guilds = {};
+    }
+
+    // Fetch all roles from guild
+    const roles = guild.roles.cache;
+    
+    console.log(`[roledetector] Importing roles for ${guildName} (${roles.size} roles)`);
+
+    // Initialize guild entry
+    config.guilds[guildId] = {
+      name: guildName,
+      statusRoles: {},
+      rankRoles: {}
+    };
+
+    // Import all roles (excluding @everyone)
+    roles.forEach(role => {
+      if (role.name === "@everyone") return;
+
+      const roleData = {
+        name: role.name,
+        priority: role.position,
+        position: role.position
+      };
+
+      // Add to both status and rank roles
+      // (You can manually edit roles.json later to organize them properly)
+      config.guilds[guildId].rankRoles[role.id] = roleData;
+      
+      console.log(`[roledetector] Imported: ${role.name} (position: ${role.position})`);
+    });
+
+    // Save updated config
+    saveRolesConfig(config);
+
+    console.log(`[roledetector] ✅ Successfully imported ${roles.size - 1} roles for ${guildName}`);
+    console.log(`[roledetector] ⚠️ Edit modules/data/roles.json to organize status vs rank roles`);
+
+    return true;
+
+  } catch (err) {
+    console.error(`[roledetector] Error adding guild roles:`, err);
+    return false;
+  }
+}
+
+/**
+ * Remove a guild from roles.json
+ */
+function removeGuildRoles(guildId) {
+  try {
+    const config = loadRolesConfig();
+    
+    if (!config || !config.guilds || !config.guilds[guildId]) {
+      console.warn(`[roledetector] Guild ${guildId} not found in roles.json`);
+      return false;
+    }
+
+    const guildName = config.guilds[guildId].name;
+    delete config.guilds[guildId];
+    
+    saveRolesConfig(config);
+    
+    console.log(`[roledetector] Removed guild: ${guildName}`);
+    return true;
+
+  } catch (err) {
+    console.error(`[roledetector] Error removing guild roles:`, err);
+    return false;
+  }
+}
+
+/**
+ * Detect Yazanaki rank and status from Discord roles
+ * ✅ ONLY checks Yazanaki Empire guild (hardcoded)
+ * Other guilds are stored in roles.json for future features
+ * 
+ * @param {string} discordId - Discord user ID
+ * @param {Client} client - Discord.js client
+ * @returns {Promise<{rank: string, status: string}>}
+ */
+async function detectRolesFromDiscord(discordId, client) {
   const config = loadRolesConfig();
   
-  if (!config || !config.guilds || !config.guilds[guildId]) {
-    console.warn(`[roledetector] ⚠️ No config for guild ${guildId}`);
-    return { rank: "n/d", status: "n/d", error: "guild_not_configured" };
+  if (!config || !config.guilds) {
+    console.warn("[roledetector] No guilds configured in roles.json");
+    return { rank: "n/d", status: "n/d" };
+  }
+
+  // ✅ ONLY CHECK YAZANAKI EMPIRE
+  const yazanakiData = config.guilds[YAZANAKI_EMPIRE_GUILD_ID];
+  
+  if (!yazanakiData) {
+    console.warn("[roledetector] Yazanaki Empire not configured in roles.json");
+    return { rank: "n/d", status: "n/d" };
   }
 
   try {
-    const guildConfig = config.guilds[guildId];
-    
-    // Fetch guild
-    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    console.log(`[roledetector] Checking Yazanaki Empire only (${YAZANAKI_EMPIRE_GUILD_ID})`);
+
+    // Fetch Yazanaki Empire guild
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
     
     if (!guild) {
-      console.warn(`[roledetector] ⚠️ Could not fetch guild ${guildId}`);
-      return { rank: "n/d", status: "n/d", error: "guild_not_found" };
+      console.warn(`[roledetector] Could not fetch Yazanaki Empire guild`);
+      return { rank: "n/d", status: "n/d" };
     }
 
-    // Fetch member
+    // Fetch member from guild
     const member = await guild.members.fetch(discordId).catch(() => null);
     
     if (!member) {
-      console.log(`[roledetector] ℹ️ User ${discordId} not in guild ${guildConfig.name}`);
-      return { rank: "n/d", status: "n/d", error: "not_in_guild" };
+      console.log(`[roledetector] User ${discordId} not in Yazanaki Empire`);
+      return { rank: "n/d", status: "n/d" };
     }
 
-    console.log(`[roledetector] ✅ Found member in ${guildConfig.name}`);
+    console.log(`[roledetector] User ${discordId} found in Yazanaki Empire`);
 
+    // Get user's role IDs
     const userRoleIds = member.roles.cache.map(role => role.id);
-    
-    // Find highest priority status
-    let status = "n/d";
-    let highestStatusPriority = -1;
-    
-    for (const roleId of userRoleIds) {
-      if (guildConfig.statusRoles[roleId]) {
-        const roleData = guildConfig.statusRoles[roleId];
-        const priority = roleData.priority || 0;
-        
-        if (priority > highestStatusPriority) {
-          highestStatusPriority = priority;
-          status = roleData.name;
+    console.log(`[roledetector] User has ${userRoleIds.length} roles`);
+
+    let bestRank = "n/d";
+    let bestStatus = "n/d";
+    let highestRankPriority = 0;
+    let highestStatusPriority = 0;
+
+    // ============================================================
+    // DETECT STATUS (highest priority)
+    // ============================================================
+    if (yazanakiData.statusRoles) {
+      for (const roleId of userRoleIds) {
+        if (yazanakiData.statusRoles[roleId]) {
+          const roleData = yazanakiData.statusRoles[roleId];
+          const priority = roleData.priority || 0;
+          
+          if (priority > highestStatusPriority) {
+            highestStatusPriority = priority;
+            bestStatus = roleData.name;
+            console.log(`[roledetector] Status: ${bestStatus} (priority: ${priority})`);
+          }
         }
       }
     }
 
-    // Find highest priority rank
-    let rank = "n/d";
-    let highestRankPriority = -1;
-    
-    for (const roleId of userRoleIds) {
-      if (guildConfig.rankRoles[roleId]) {
-        const roleData = guildConfig.rankRoles[roleId];
-        const priority = roleData.priority || 0;
-        
-        if (priority > highestRankPriority) {
-          highestRankPriority = priority;
-          rank = roleData.name;
+    // ============================================================
+    // DETECT RANK (highest priority)
+    // ============================================================
+    if (yazanakiData.rankRoles) {
+      for (const roleId of userRoleIds) {
+        if (yazanakiData.rankRoles[roleId]) {
+          const roleData = yazanakiData.rankRoles[roleId];
+          const priority = roleData.priority || 0;
+          
+          if (priority > highestRankPriority) {
+            highestRankPriority = priority;
+            bestRank = roleData.name;
+            console.log(`[roledetector] Rank: ${bestRank} (priority: ${priority})`);
+          }
         }
       }
     }
 
-    console.log(`[roledetector] 📊 Result for ${discordId} in ${guildConfig.name}: Rank=${rank}, Status=${status}`);
-    
-    return { rank, status };
+    console.log(`[roledetector] Final - Rank: ${bestRank}, Status: ${bestStatus}`);
+    return { rank: bestRank, status: bestStatus };
 
   } catch (err) {
-    console.error(`[roledetector] ❌ Error detecting roles:`, err);
-    return { rank: "n/d", status: "n/d", error: err.message };
+    console.error(`[roledetector] Error detecting roles:`, err);
+    return { rank: "n/d", status: "n/d" };
   }
-}
-
-/**
- * ✅ Batch detect roles for multiple users (from all guilds)
- * Useful for background sync operations
- * @param {Array<string>} discordIds - Array of Discord user IDs
- * @param {Client} client - Discord.js client
- * @returns {Promise<Object>} Map of discordId -> role data
- */
-async function batchDetectRoles(discordIds, client) {
-  console.log(`[roledetector] 🔄 Batch detecting roles for ${discordIds.length} users...`);
-  
-  const results = {};
-  let successCount = 0;
-  let errorCount = 0;
-
-  for (const discordId of discordIds) {
-    try {
-      const result = await detectRolesFromDiscord(discordId, client);
-      results[discordId] = result;
-      
-      if (!result.error) {
-        successCount++;
-      } else {
-        errorCount++;
-      }
-      
-      // Small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-    } catch (err) {
-      console.error(`[roledetector] ❌ Failed to detect roles for ${discordId}:`, err);
-      results[discordId] = { rank: "n/d", status: "n/d", error: err.message };
-      errorCount++;
-    }
-  }
-
-  console.log(`[roledetector] ✅ Batch complete: ${successCount} success, ${errorCount} errors`);
-  return results;
 }
 
 module.exports = {
   detectRolesFromDiscord,
-  detectRolesFromGuild,
-  batchDetectRoles
+  loadRolesConfig,
+  saveRolesConfig,
+  addGuildRoles,
+  removeGuildRoles
 };

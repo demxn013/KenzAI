@@ -339,27 +339,7 @@ module.exports = {
         embedColor
       );
 
-      // Add Yazanaki role info to embed
-      if (clan.yazanakiRoleId) {
-        const yazanakiGuild = await interaction.client.guilds.fetch("1220847061797179524").catch(() => null);
-        if (yazanakiGuild) {
-          const yazanakiRole = yazanakiGuild.roles.cache.get(clan.yazanakiRoleId);
-          if (yazanakiRole) {
-            embed.addFields({
-              name: "🎭 Yazanaki Empire Role",
-              value: `${yazanakiRole}`,
-              inline: false
-            });
-          }
-        }
-      } else {
-        embed.addFields({
-          name: "🎭 Yazanaki Empire Role",
-          value: "`Not set - use /clan setrole`",
-          inline: false
-        });
-      }
-
+      
       if (useBannerPath || flagExists) {
         const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
         return interaction.editReply({ embeds: [embed], files: [attachment] });

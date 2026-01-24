@@ -40,10 +40,10 @@ module.exports = {
         .setStyle(ButtonStyle.Primary)
     );
 
+    // ✅ FIXED: Removed ephemeral flag to make it publicly visible
     await interaction.reply({
       embeds: [appEmbed],
-      components: [row],
-      flags: MessageFlags.Ephemeral
+      components: [row]
     });
   },
 

@@ -9,7 +9,7 @@ const membersPath = path.join(__dirname, "../data/members.json");
 const rolesConfigPath = path.join(__dirname, "roles.json");
 
 // ============================================================
-// ROLE DETECTION (Integrated from roledetector.js)
+// ROLE DETECTION
 // ============================================================
 
 /**
@@ -41,7 +41,8 @@ async function detectRolesFromDiscord(discordId, client) {
   const config = loadRolesConfig();
   
   if (!config) {
-    return { rank: "n/d", status: "n/d" };
+    console.warn("[memberlogic] roles.json not loaded");
+    return { rank: "", status: "" };
   }
 
   try {
@@ -49,8 +50,8 @@ async function detectRolesFromDiscord(discordId, client) {
     const guild = await client.guilds.fetch(config.yazanakiEmpireId).catch(() => null);
     
     if (!guild) {
-      console.warn(`[memberlogic] Could not fetch Yazanaki Empire guild`);
-      return { rank: "n/d", status: "n/d" };
+      console.warn(`[memberlogic] Could not fetch Yazanaki Empire guild (${config.yazanakiEmpireId})`);
+      return { rank: "", status: "" };
     }
 
     // Fetch member from guild
@@ -58,7 +59,7 @@ async function detectRolesFromDiscord(discordId, client) {
     
     if (!member) {
       console.log(`[memberlogic] User ${discordId} not in Yazanaki Empire`);
-      return { rank: "n/d", status: "n/d" };
+      return { rank: "", status: "" };
     }
 
     console.log(`[memberlogic] User ${discordId} found in Yazanaki Empire`);
@@ -70,7 +71,7 @@ async function detectRolesFromDiscord(discordId, client) {
     // ============================================================
     // DETECT STATUS (first matching role)
     // ============================================================
-    let status = "n/d";
+    let status = "";
     
     for (const roleId of userRoleIds) {
       if (config.statusRoles[roleId]) {
@@ -83,7 +84,7 @@ async function detectRolesFromDiscord(discordId, client) {
     // ============================================================
     // DETECT RANK (highest priority role)
     // ============================================================
-    let rank = "n/d";
+    let rank = "";
     let highestPriority = 0;
     
     for (const roleId of userRoleIds) {
@@ -96,7 +97,7 @@ async function detectRolesFromDiscord(discordId, client) {
       }
     }
 
-    if (rank !== "n/d") {
+    if (rank) {
       console.log(`[memberlogic] Rank detected: ${rank} (priority: ${highestPriority})`);
     }
 
@@ -104,7 +105,7 @@ async function detectRolesFromDiscord(discordId, client) {
 
   } catch (err) {
     console.error(`[memberlogic] Error detecting roles:`, err);
-    return { rank: "n/d", status: "n/d" };
+    return { rank: "", status: "" };
   }
 }
 
@@ -142,7 +143,7 @@ function writeMembers(data) {
 }
 
 /**
- * ✅ NEW: Update a member's rank and status in members.json
+ * ✅ Update a member's rank and status in members.json
  */
 function updateMemberRoles(discordId, rank, status) {
   try {
@@ -154,9 +155,9 @@ function updateMemberRoles(discordId, rank, status) {
         discordId,
         discordUser: "",
         minecraftUser: "",
-        minecraftVersion: "n/d",
-        JoinedClan: "n/d",
-        JoinDate: "n/d",
+        minecraftVersion: "",
+        JoinedClan: "",
+        JoinDate: "",
         YazanakiRank: rank,
         EmpireID: "",
         Status: status
@@ -176,7 +177,7 @@ function updateMemberRoles(discordId, rank, status) {
 }
 
 // --------------------------------------------------------------
-// Case-insensitive lookup but data remains proper
+// Case-insensitive lookup
 // --------------------------------------------------------------
 function normalizeUsername(u) {
   if (!u) return "";
@@ -202,11 +203,7 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 }
 
 /**
- * Search by Minecraft username
- * Uses linking.json as ONLY source for Discord ↔ MC link
- * Optionally adds empire data from members.json if they're a member
- * Detects roles from Discord if client is provided
- * ✅ SAVES roles to members.json
+ * ✅ Search by Minecraft username with role detection and saving
  */
 async function getMemberByMinecraftUser(inputMC, client = null) {
   if (!inputMC) {
@@ -215,7 +212,6 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 
   console.log(`[getMemberByMinecraftUser] Searching for MC username: ${inputMC}`);
 
-  // ✅ ONLY SOURCE: linking.json
   const linkedDiscordId = getDiscordFromMC(inputMC);
   
   if (!linkedDiscordId) {
@@ -228,19 +224,15 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 
   console.log(`[getMemberByMinecraftUser] Found link: ${inputMC} -> Discord ID ${linkedDiscordId}`);
   
-  // Get the MC username from linking.json (preserves capitalization)
   const linkedMC = getMCFromDiscord(linkedDiscordId);
   
-  // Try to get empire-specific data from members.json (optional)
   const members = readMembers();
   let empireData = null;
   
-  // Try direct Discord ID match
   if (members[linkedDiscordId]) {
     console.log(`[getMemberByMinecraftUser] Found empire data by Discord ID`);
     empireData = members[linkedDiscordId];
   } else {
-    // Try by MC username
     const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
     if (mcMatch) {
       console.log(`[getMemberByMinecraftUser] Found empire data by MC username`);
@@ -249,7 +241,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
   }
   
   // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
-  let detectedRoles = { rank: "n/d", status: "n/d" };
+  let detectedRoles = { rank: "", status: "" };
   if (client && linkedDiscordId) {
     console.log(`[getMemberByMinecraftUser] Detecting roles for Discord ID: ${linkedDiscordId}`);
     try {
@@ -264,16 +256,15 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     }
   }
   
-  // Build member data (link + optional empire data + LIVE ROLES)
   const memberData = {
     discordId: linkedDiscordId,
-    minecraftUser: linkedMC, // From linking.json
-    minecraftVersion: empireData?.minecraftVersion || "n/d",
-    JoinedClan: empireData?.JoinedClan || "n/d",
-    JoinDate: empireData?.JoinDate || "n/d",
-    YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
+    minecraftUser: linkedMC,
+    minecraftVersion: empireData?.minecraftVersion || "",
+    JoinedClan: empireData?.JoinedClan || "",
+    JoinDate: empireData?.JoinDate || "",
+    YazanakiRank: detectedRoles.rank,
     EmpireID: empireData?.EmpireID || "",
-    Status: detectedRoles.status // ✅ FROM DISCORD ROLES
+    Status: detectedRoles.status
   };
   
   console.log(`[getMemberByMinecraftUser] Returning data with ${client ? 'live roles (saved)' : 'no role detection'}`);
@@ -285,11 +276,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 }
 
 /**
- * Gets member by Discord ID
- * Uses linking.json as ONLY source for Discord ↔ MC link
- * Optionally adds empire data from members.json if they're a member
- * Detects roles from Discord if client is provided
- * ✅ SAVES roles to members.json
+ * ✅ Gets member by Discord ID with role detection and saving
  */
 async function getMemberByDiscordId(discordId, client = null) {
   if (!discordId) {
@@ -299,7 +286,6 @@ async function getMemberByDiscordId(discordId, client = null) {
   
   console.log(`[getMemberByDiscordId] Looking up Discord ID: ${discordId}`);
   
-  // ✅ ONLY SOURCE: linking.json
   const linkedMC = getMCFromDiscord(discordId);
   
   if (!linkedMC) {
@@ -309,16 +295,13 @@ async function getMemberByDiscordId(discordId, client = null) {
   
   console.log(`[getMemberByDiscordId] Found link: ${discordId} -> ${linkedMC}`);
   
-  // Try to get empire-specific data from members.json (optional)
   const members = readMembers();
   let empireData = null;
   
-  // Try direct Discord ID match
   if (members[discordId]) {
     console.log(`[getMemberByDiscordId] Found empire data by Discord ID`);
     empireData = members[discordId];
   } else {
-    // Try by MC username
     const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
     if (mcMatch) {
       console.log(`[getMemberByDiscordId] Found empire data by MC username`);
@@ -327,7 +310,7 @@ async function getMemberByDiscordId(discordId, client = null) {
   }
   
   // ✅ DETECT ROLES FROM DISCORD IF CLIENT PROVIDED
-  let detectedRoles = { rank: "n/d", status: "n/d" };
+  let detectedRoles = { rank: "", status: "" };
   if (client) {
     console.log(`[getMemberByDiscordId] Detecting roles for Discord ID: ${discordId}`);
     try {
@@ -342,16 +325,15 @@ async function getMemberByDiscordId(discordId, client = null) {
     }
   }
   
-  // Build member data (link + optional empire data + LIVE ROLES)
   const memberData = {
     discordId,
-    minecraftUser: linkedMC, // From linking.json
-    minecraftVersion: empireData?.minecraftVersion || "n/d",
-    JoinedClan: empireData?.JoinedClan || "n/d",
-    JoinDate: empireData?.JoinDate || "n/d",
-    YazanakiRank: detectedRoles.rank, // ✅ FROM DISCORD ROLES
+    minecraftUser: linkedMC,
+    minecraftVersion: empireData?.minecraftVersion || "",
+    JoinedClan: empireData?.JoinedClan || "",
+    JoinDate: empireData?.JoinDate || "",
+    YazanakiRank: detectedRoles.rank,
     EmpireID: empireData?.EmpireID || "",
-    Status: detectedRoles.status // ✅ FROM DISCORD ROLES
+    Status: detectedRoles.status
   };
   
   console.log(`[getMemberByDiscordId] Returning data with ${client ? 'live roles (saved)' : 'no role detection'}`);
@@ -360,8 +342,7 @@ async function getMemberByDiscordId(discordId, client = null) {
 }
 
 /**
- * Higher-level resolver that uses linking.json as primary source
- * NOW: Accepts client for role detection
+ * Higher-level resolver
  */
 async function getMemberByDiscordOrMC(discordId = null, mcUser = null, client = null) {
   if (discordId) {
@@ -520,7 +501,6 @@ async function resolveCommandTarget(
     }
   }
 
-  // Always output Mojang-correct username
   if (mcUsername && mcUsername !== "n/d") {
     const proper = await getProperMinecraftName(mcUsername);
     mcUsername = proper;
@@ -551,5 +531,5 @@ module.exports = {
   resolveCommandTarget,
   isUnlinked,
   detectRolesFromDiscord,
-  updateMemberRoles // Export for external use
+  updateMemberRoles
 };

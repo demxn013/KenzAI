@@ -1,14 +1,13 @@
 // index.js
-// ✅ Smart command deployment - only deploys when commands actually change
+// ✅ FORCE DEPLOY MODE - Deploys ALL commands on every restart
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 // ============================================================
-// ✅ DRAFT SYSTEM IMPORTS (SIMPLIFIED - Only 2 imports!)
+// ✅ DRAFT SYSTEM IMPORTS
 // ============================================================
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { handleDraftChoice } = require('./modules/empire/draftlogic');
@@ -28,47 +27,11 @@ const client = new Client({
 client.commands = new Collection();
 
 // ============================================================
-// COMMAND HASH CACHE (to detect changes)
-// ============================================================
-const commandHashPath = path.join(__dirname, '.command-hash.json');
-
-function getCommandHash(commands) {
-  // Create a hash of all command data to detect changes
-  const commandsString = JSON.stringify(commands.map(cmd => ({
-    name: cmd.name,
-    description: cmd.description,
-    options: cmd.options
-  })).sort((a, b) => a.name.localeCompare(b.name)));
-  
-  return crypto.createHash('md5').update(commandsString).digest('hex');
-}
-
-function loadPreviousHash() {
-  try {
-    if (fs.existsSync(commandHashPath)) {
-      const data = JSON.parse(fs.readFileSync(commandHashPath, 'utf8'));
-      return data.hash;
-    }
-  } catch (err) {
-    console.warn('⚠️ Could not load previous command hash:', err.message);
-  }
-  return null;
-}
-
-function savePreviousHash(hash) {
-  try {
-    fs.writeFileSync(commandHashPath, JSON.stringify({ hash, timestamp: new Date().toISOString() }, null, 2));
-  } catch (err) {
-    console.error('❌ Could not save command hash:', err.message);
-  }
-}
-
-// ============================================================
-// ✅ SMART COMMAND DEPLOYMENT (only deploys if changed)
+// ✅ DEPLOY COMMANDS (ALWAYS DEPLOYS ON STARTUP)
 // ============================================================
 async function deployCommands() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🔄 CHECKING COMMANDS FOR CHANGES...');
+  console.log('🔄 LOADING AND DEPLOYING COMMANDS...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   const commands = [];
@@ -79,38 +42,34 @@ async function deployCommands() {
     
     if (!fs.statSync(folderPath).isDirectory()) continue;
     
-    const commandFiles = fs.readdirSync(folderPath).filter(file => 
-      file.endsWith('.js') && 
-      (file.endsWith('-command.js') || file === 'ping.js' || file === 'member.js' || file === 'application.js' || file === 'clan.js' || file === 'link.js' || file === 'roles.js')
-    );
+    // Get ALL .js files in the folder
+    const commandFiles = fs.readdirSync(folderPath).filter(file => file.endsWith('.js'));
     
     for (const file of commandFiles) {
       const filePath = path.join(folderPath, file);
-      const command = require(`./${filePath}`);
       
-      if ('data' in command && 'execute' in command) {
-        client.commands.set(command.data.name, command);
-        commands.push(command.data.toJSON());
-        console.log(`✅ Loaded command: ${command.data.name}`);
+      try {
+        const command = require(`./${filePath}`);
+        
+        // Check if it's a valid command
+        if ('data' in command && 'execute' in command) {
+          client.commands.set(command.data.name, command);
+          commands.push(command.data.toJSON());
+          console.log(`✅ Loaded: /${command.data.name} (from ${folder}/${file})`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to load ${folder}/${file}:`, err.message);
       }
     }
   }
 
-  // Calculate hash of current commands
-  const currentHash = getCommandHash(commands);
-  const previousHash = loadPreviousHash();
-
-  // Check if commands have changed
-  if (currentHash === previousHash) {
-    console.log('\n✅ Commands unchanged - skipping deployment');
-    console.log(`📋 ${commands.length} commands loaded (already deployed)`);
+  if (commands.length === 0) {
+    console.error('❌ No commands loaded!');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     return;
   }
 
-  // Commands have changed, deploy them
-  console.log('\n🔄 Commands have changed - deploying updates...');
-  
+  // Deploy to Discord
   try {
     const rest = new REST().setToken(process.env.TOKEN);
     
@@ -120,9 +79,6 @@ async function deployCommands() {
       Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands },
     );
-
-    // Save new hash
-    savePreviousHash(currentHash);
 
     console.log(`✅ Successfully deployed ${data.length} commands!`);
     console.log('\n📋 Registered commands:');
@@ -143,7 +99,7 @@ async function deployCommands() {
 client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   
-  // ✅ SMART DEPLOY - only if commands changed
+  // ✅ ALWAYS DEPLOY ON STARTUP
   await deployCommands();
   
   // ============================================================
@@ -163,7 +119,7 @@ client.on('interactionCreate', async (interaction) => {
   // ============================================================
   if (interaction.isButton()) {
     
-    // ✅ DRAFT CHOICE BUTTONS (Now handled in draftlogic.js!)
+    // ✅ DRAFT CHOICE BUTTONS
     if (interaction.customId.startsWith('draft_')) {
       return handleDraftChoice(interaction);
     }

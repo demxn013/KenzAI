@@ -30,7 +30,12 @@ client.commands = new Collection();
 // ============================================================
 // ✅ AUTO-CLEAR MODE (Set to true ONCE to clear duplicates)
 // ============================================================
-const AUTO_CLEAR_COMMANDS = false; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+const AUTO_CLEAR_COMMANDS = true; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+
+// ============================================================
+// ✅ FORCE DEPLOY COMMANDS (Set to true ONCE to force deploy commands)
+// ============================================================
+const FORCE_DEPLOY = true; 
 
 // ============================================================
 // COMMAND DEPLOYMENT MODE
@@ -99,10 +104,15 @@ async function deployCommands(force = false) {
     lastHash = fs.readFileSync(hashFile, 'utf8').trim();
   }
 
-  if (!force && commandsHash === lastHash) {
+  // ✅ Check if deployment should be skipped (unless forced)
+  if (!force && !FORCE_DEPLOY && commandsHash === lastHash) {
     console.log('✅ Commands unchanged - skipping deployment');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     return;
+  }
+  
+  if (FORCE_DEPLOY && !force) {
+    console.log('⚡ FORCE_DEPLOY enabled - deploying regardless of changes\n');
   }
 
   // ============================================================

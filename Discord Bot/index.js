@@ -1,10 +1,11 @@
 // index.js
-// ✅ FORCE DEPLOY MODE - Deploys ALL commands on every restart
+// ✅ FIXED: Smart command deployment - only deploys when needed
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // ============================================================
 // ✅ DRAFT SYSTEM IMPORTS
@@ -27,31 +28,45 @@ const client = new Client({
 client.commands = new Collection();
 
 // ============================================================
-// ✅ DEPLOY COMMANDS (ALWAYS DEPLOYS ON STARTUP)
+// ✅ AUTO-CLEAR MODE (Set to true ONCE to clear duplicates)
 // ============================================================
-async function deployCommands() {
+const AUTO_CLEAR_COMMANDS = true; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+
+// ============================================================
+// COMMAND DEPLOYMENT MODE
+// ============================================================
+// Set to 'all-guilds' to deploy to every server (instant updates)
+// Set to 'global' for global commands (1-hour propagation)
+const DEPLOYMENT_MODE = 'all-guilds'; // ✅ DEPLOY TO ALL GUILDS
+
+// ============================================================
+// ✅ SMART COMMAND DEPLOYMENT (prevents duplicates)
+// ============================================================
+async function deployCommands(force = false) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🔄 LOADING AND DEPLOYING COMMANDS...');
+  console.log('🔄 LOADING COMMANDS...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   const commands = [];
   const commandFolders = fs.readdirSync('./modules');
 
+  // Load all commands
   for (const folder of commandFolders) {
     const folderPath = path.join('./modules', folder);
     
     if (!fs.statSync(folderPath).isDirectory()) continue;
     
-    // Get ALL .js files in the folder
     const commandFiles = fs.readdirSync(folderPath).filter(file => file.endsWith('.js'));
     
     for (const file of commandFiles) {
       const filePath = path.join(folderPath, file);
       
       try {
+        // Clear cache to get latest version
+        delete require.cache[require.resolve(`./${filePath}`)];
+        
         const command = require(`./${filePath}`);
         
-        // Check if it's a valid command
         if ('data' in command && 'execute' in command) {
           client.commands.set(command.data.name, command);
           commands.push(command.data.toJSON());
@@ -69,20 +84,82 @@ async function deployCommands() {
     return;
   }
 
-  // Deploy to Discord
+  // ============================================================
+  // CHECK IF DEPLOYMENT IS NEEDED
+  // ============================================================
+  const commandsHash = crypto
+    .createHash('md5')
+    .update(JSON.stringify(commands))
+    .digest('hex');
+
+  const hashFile = path.join(__dirname, '.commands-hash');
+  let lastHash = '';
+  
+  if (fs.existsSync(hashFile)) {
+    lastHash = fs.readFileSync(hashFile, 'utf8').trim();
+  }
+
+  if (!force && commandsHash === lastHash) {
+    console.log('✅ Commands unchanged - skipping deployment');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    return;
+  }
+
+  // ============================================================
+  // DEPLOY TO DISCORD
+  // ============================================================
   try {
     const rest = new REST().setToken(process.env.TOKEN);
     
-    console.log(`\n🔄 Deploying ${commands.length} commands to Discord...`);
+    console.log(`\n🔄 Deploying ${commands.length} commands in ${DEPLOYMENT_MODE.toUpperCase()} mode...`);
     
-    const data = await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands },
-    );
+    if (DEPLOYMENT_MODE === 'all-guilds') {
+      // ✅ DEPLOY TO ALL GUILDS (instant updates)
+      const guilds = client.guilds.cache;
+      console.log(`📍 Target: ${guilds.size} guild(s)`);
+      console.log(`⚡ Updates: INSTANT\n`);
+      
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const [guildId, guild] of guilds) {
+        try {
+          await rest.put(
+            Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
+            { body: commands },
+          );
+          
+          console.log(`   ✅ ${guild.name} (${guildId})`);
+          successCount++;
+          
+        } catch (error) {
+          console.error(`   ❌ ${guild.name} (${guildId}): ${error.message}`);
+          failCount++;
+        }
+      }
+      
+      console.log(`\n📊 Deployment Summary:`);
+      console.log(`   ✅ Success: ${successCount}`);
+      if (failCount > 0) console.log(`   ❌ Failed: ${failCount}`);
+      
+    } else {
+      // GLOBAL MODE (1 hour propagation)
+      console.log(`🌍 Target: All guilds (global)`);
+      console.log(`⏰ Propagation time: Up to 1 hour`);
+      
+      const data = await rest.put(
+        Routes.applicationCommands(process.env.CLIENT_ID),
+        { body: commands },
+      );
+      
+      console.log(`✅ Deployed ${data.length} commands globally!`);
+    }
 
-    console.log(`✅ Successfully deployed ${data.length} commands!`);
-    console.log('\n📋 Registered commands:');
-    data.forEach(cmd => {
+    // Save hash to prevent unnecessary deployments
+    fs.writeFileSync(hashFile, commandsHash);
+
+    console.log(`\n📋 Registered ${commands.length} commands:`);
+    commands.forEach(cmd => {
       console.log(`   - /${cmd.name}`);
     });
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
@@ -94,13 +171,70 @@ async function deployCommands() {
 }
 
 // ============================================================
+// ✅ COMMAND TO CLEAR DUPLICATES
+// ============================================================
+async function clearDuplicateCommands() {
+  console.log('🧹 Clearing duplicate commands...\n');
+  
+  const rest = new REST().setToken(process.env.TOKEN);
+  
+  try {
+    // Clear global commands first (in case you had any)
+    console.log('🌍 Clearing global commands...');
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: [] }
+    );
+    console.log('✅ Global commands cleared\n');
+    
+    // Clear guild commands from all guilds
+    if (DEPLOYMENT_MODE === 'all-guilds') {
+      const guilds = client.guilds.cache;
+      console.log(`📍 Clearing commands from ${guilds.size} guild(s)...\n`);
+      
+      for (const [guildId, guild] of guilds) {
+        try {
+          await rest.put(
+            Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
+            { body: [] }
+          );
+          console.log(`   ✅ Cleared: ${guild.name}`);
+        } catch (error) {
+          console.error(`   ❌ Failed: ${guild.name} - ${error.message}`);
+        }
+      }
+      
+      console.log('\n✅ All guild commands cleared!\n');
+    }
+    
+    console.log('✅ All commands cleared! Redeploying in 3 seconds...\n');
+    
+    // Wait for Discord to process
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Force redeploy
+    await deployCommands(true);
+    
+  } catch (error) {
+    console.error('❌ Error clearing commands:', error);
+  }
+}
+
+// ============================================================
 // READY EVENT
 // ============================================================
 client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   
-  // ✅ ALWAYS DEPLOY ON STARTUP
-  await deployCommands();
+  // ✅ AUTO-CLEAR MODE - CLEARS ALL COMMANDS AUTOMATICALLY
+  if (AUTO_CLEAR_COMMANDS) {
+    console.log('\n⚠️⚠️⚠️ AUTO-CLEAR MODE ENABLED ⚠️⚠️⚠️');
+    console.log('This will DELETE ALL COMMANDS and redeploy fresh\n');
+    await clearDuplicateCommands();
+    console.log('\n✅ DONE! Now set AUTO_CLEAR_COMMANDS = false and restart\n');
+  } else {
+    await deployCommands();
+  }
   
   // ============================================================
   // ✅ START DRAFT SCHEDULER

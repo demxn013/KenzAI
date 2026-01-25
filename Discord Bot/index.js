@@ -1,71 +1,167 @@
-require("dotenv").config();
-const fs = require("fs");
-const path = require("path");
-const { Client, Collection, GatewayIntentBits, REST, Routes } = require("discord.js");
+// index.js or bot.js
+// ✅ Example main bot file with SIMPLIFIED draft system integration
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+
+// ============================================================
+// ✅ DRAFT SYSTEM IMPORTS (SIMPLIFIED - Only 2 imports!)
+// ============================================================
+const { startScheduler } = require('./modules/empire/draftscheduler');
+const { handleDraftChoice } = require('./modules/empire/draftlogic');
+
+// ============================================================
+// CLIENT SETUP
+// ============================================================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.MessageContent,
+  ],
+});
+
 client.commands = new Collection();
 
-// Recursive loader for modules
-function loadModuleFiles(dir) {
-  let files = [];
-  for (const entry of fs.readdirSync(dir)) {
-    const fullPath = path.join(dir, entry);
-    const stat = fs.statSync(fullPath);
+// ============================================================
+// LOAD COMMANDS
+// ============================================================
+const commandFolders = fs.readdirSync('./modules');
 
-    if (stat.isDirectory()) {
-      files = files.concat(loadModuleFiles(fullPath));
-    } else if (entry.endsWith(".js")) {
-      files.push(fullPath);
+for (const folder of commandFolders) {
+  const folderPath = path.join('./modules', folder);
+  
+  if (!fs.statSync(folderPath).isDirectory()) continue;
+  
+  const commandFiles = fs.readdirSync(folderPath).filter(file => 
+    file.endsWith('.js') && 
+    (file.endsWith('-command.js') || file === 'ping.js' || file === 'member.js' || file === 'application.js' || file === 'clan.js' || file === 'link.js' || file === 'roles.js')
+  );
+  
+  for (const file of commandFiles) {
+    const filePath = path.join(folderPath, file);
+    const command = require(filePath);
+    
+    if ('data' in command && 'execute' in command) {
+      client.commands.set(command.data.name, command);
+      console.log(`✅ Loaded command: ${command.data.name}`);
     }
   }
-  return files;
 }
 
-// Load modules
-const modulesPath = path.join(__dirname, "modules");
-const moduleFiles = loadModuleFiles(modulesPath);
+// ============================================================
+// READY EVENT
+// ============================================================
+client.on('ready', () => {
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log(`✅ Bot logged in as ${client.user.tag}`);
+  console.log(`🌐 Serving ${client.guilds.cache.size} guilds`);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+  
+  // ============================================================
+  // ✅ START DRAFT SCHEDULER
+  // ============================================================
+  console.log("🎖️ Starting draft system...");
+  startScheduler(client);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+});
 
-const commands = [];
-for (const file of moduleFiles) {
-  const command = require(file);
-  if (command.data && command.execute) {
-    client.commands.set(command.data.name, command);
-    commands.push(command.data.toJSON());
-  }
-}
-
-// Load events
-const eventsPath = path.join(__dirname, "events");
-for (const file of fs.readdirSync(eventsPath).filter(f => f.endsWith(".js"))) {
-  const event = require(path.join(eventsPath, file));
-  if (event.once) {
-    client.once(event.name, (...args) => event.execute(...args, client));
-  } else {
-    client.on(event.name, (...args) => event.execute(...args, client));
-  }
-}
-
-// Deploy guild commands for every server the bot is in
-client.once("ready", async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
-  try {
-    for (const guild of client.guilds.cache.values()) {
-      console.log(`🔄 Registering commands in guild: ${guild.name} (${guild.id})`);
-      await rest.put(
-        Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id),
-        { body: commands }
-      );
-      console.log(`✅ Commands registered in guild: ${guild.name}`);
+// ============================================================
+// INTERACTION HANDLER
+// ============================================================
+client.on('interactionCreate', async (interaction) => {
+  
+  // ============================================================
+  // BUTTON INTERACTIONS
+  // ============================================================
+  if (interaction.isButton()) {
+    
+    // ✅ DRAFT CHOICE BUTTONS (Now handled in draftlogic.js!)
+    if (interaction.customId.startsWith('draft_')) {
+      return handleDraftChoice(interaction);
     }
-
-    console.log("🎉 All guild commands refreshed!");
-  } catch (error) {
-    console.error("❌ Error reloading commands:", error);
+    
+    // Application system buttons
+    if (interaction.customId === 'start_application' ||
+        interaction.customId === 'close_ticket' ||
+        interaction.customId.startsWith('accept_application_') ||
+        interaction.customId.startsWith('reject_application_')) {
+      
+      const applicationCommand = client.commands.get('application');
+      if (applicationCommand && applicationCommand.buttonHandler) {
+        return applicationCommand.buttonHandler(interaction);
+      }
+    }
+  }
+  
+  // ============================================================
+  // MODAL SUBMISSIONS
+  // ============================================================
+  if (interaction.isModalSubmit()) {
+    
+    // Application modals
+    if (interaction.customId.startsWith('application_modal_') ||
+        interaction.customId.startsWith('close_reason_modal_')) {
+      
+      const applicationCommand = client.commands.get('application');
+      if (applicationCommand && applicationCommand.modalHandler) {
+        return applicationCommand.modalHandler(interaction);
+      }
+    }
+  }
+  
+  // ============================================================
+  // SLASH COMMANDS
+  // ============================================================
+  if (interaction.isChatInputCommand()) {
+    const command = client.commands.get(interaction.commandName);
+    
+    if (!command) {
+      console.warn(`⚠️ No command found: ${interaction.commandName}`);
+      return interaction.reply({
+        content: '❌ Command not found!',
+        ephemeral: true
+      });
+    }
+    
+    try {
+      await command.execute(interaction);
+    } catch (error) {
+      console.error(`❌ Error executing ${interaction.commandName}:`, error);
+      
+      const errorMessage = {
+        content: '❌ An error occurred while executing this command.',
+        ephemeral: true
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
+    }
   }
 });
 
-client.login(process.env.TOKEN);
+// ============================================================
+// ERROR HANDLING
+// ============================================================
+client.on('error', error => {
+  console.error('❌ Discord client error:', error);
+});
+
+process.on('unhandledRejection', error => {
+  console.error('❌ Unhandled promise rejection:', error);
+});
+
+// ============================================================
+// LOGIN
+// ============================================================
+const token = process.env.DISCORD_TOKEN || 'YOUR_BOT_TOKEN_HERE';
+
+client.login(token).catch(error => {
+  console.error('❌ Failed to login:', error);
+  process.exit(1);
+});

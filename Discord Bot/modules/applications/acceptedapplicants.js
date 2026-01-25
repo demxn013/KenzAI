@@ -1,5 +1,5 @@
 // modules/applications/acceptedapplicants.js
-// ✅ UPDATED: Now assigns clan roles in Yazanaki Empire when accepting applicants
+// ✅ UPDATED: Now assigns clan roles AND starts draft system
 
 const fs = require("fs");
 const path = require("path");
@@ -65,6 +65,9 @@ const { detectRolesFromDiscord } = require("../roles/roledetector");
 
 // ✅ Import Empire ID system
 const { assignEmpireId } = require("../empire/empireid");
+
+// ✅ Import Draft system
+const { startDraft } = require("../empire/draftlogic");
 
 /**
  * ✅ Assign clan role in Yazanaki Empire discord
@@ -145,7 +148,7 @@ async function assignClanRoleInYazanaki(client, discordId, clanGuildId) {
 }
 
 /**
- * ✅ Accept applicant, assign Empire ID, and assign clan role in Yazanaki Empire
+ * ✅ Accept applicant, assign Empire ID, assign clan role, and start draft
  * @param {string} discordId - Discord user ID
  * @param {Client} client - Discord.js client (REQUIRED for role detection and assignment)
  */
@@ -264,7 +267,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
         JoinedClan: clanName,
         JoinDate: closeDate,
         YazanakiRank: detectedRoles.rank,
-        EmpireID: empireId, // ✅ EMPIRE ID ASSIGNED!
+        EmpireID: empireId,
         Status: detectedRoles.status
     };
 
@@ -276,5 +279,20 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
 
     console.log(`[acceptedapps] ✅ SUCCESS: Added ${discordId} to members.json`);
     console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);
+
+    // ✅ START DRAFT IF RANK IS "DRAFT"
+    if (detectedRoles.rank === "Draft") {
+        console.log(`[acceptedapps] 🎖️ Member has Draft rank - starting draft system...`);
+        const draftStarted = startDraft(discordId);
+        
+        if (draftStarted) {
+            console.log(`[acceptedapps] ✅ Draft started successfully for ${discordId}`);
+        } else {
+            console.error(`[acceptedapps] ❌ Failed to start draft for ${discordId}`);
+        }
+    } else {
+        console.log(`[acceptedapps] ℹ️ Member rank is ${detectedRoles.rank} - no draft needed`);
+    }
+
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 };

@@ -1,10 +1,11 @@
 // index.js
-// ✅ Auto-deploys commands WITHOUT clearing old ones first
+// ✅ Smart command deployment - only deploys when commands actually change
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // ============================================================
 // ✅ DRAFT SYSTEM IMPORTS (SIMPLIFIED - Only 2 imports!)
@@ -27,11 +28,47 @@ const client = new Client({
 client.commands = new Collection();
 
 // ============================================================
-// ✅ AUTO-DEPLOY COMMANDS (WITHOUT DELETING OLD ONES)
+// COMMAND HASH CACHE (to detect changes)
+// ============================================================
+const commandHashPath = path.join(__dirname, '.command-hash.json');
+
+function getCommandHash(commands) {
+  // Create a hash of all command data to detect changes
+  const commandsString = JSON.stringify(commands.map(cmd => ({
+    name: cmd.name,
+    description: cmd.description,
+    options: cmd.options
+  })).sort((a, b) => a.name.localeCompare(b.name)));
+  
+  return crypto.createHash('md5').update(commandsString).digest('hex');
+}
+
+function loadPreviousHash() {
+  try {
+    if (fs.existsSync(commandHashPath)) {
+      const data = JSON.parse(fs.readFileSync(commandHashPath, 'utf8'));
+      return data.hash;
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not load previous command hash:', err.message);
+  }
+  return null;
+}
+
+function savePreviousHash(hash) {
+  try {
+    fs.writeFileSync(commandHashPath, JSON.stringify({ hash, timestamp: new Date().toISOString() }, null, 2));
+  } catch (err) {
+    console.error('❌ Could not save command hash:', err.message);
+  }
+}
+
+// ============================================================
+// ✅ SMART COMMAND DEPLOYMENT (only deploys if changed)
 // ============================================================
 async function deployCommands() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🔄 AUTO-DEPLOYING COMMANDS TO DISCORD...');
+  console.log('🔄 CHECKING COMMANDS FOR CHANGES...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   const commands = [];
@@ -59,7 +96,21 @@ async function deployCommands() {
     }
   }
 
-  // Deploy to Discord (this will update existing commands, not duplicate)
+  // Calculate hash of current commands
+  const currentHash = getCommandHash(commands);
+  const previousHash = loadPreviousHash();
+
+  // Check if commands have changed
+  if (currentHash === previousHash) {
+    console.log('\n✅ Commands unchanged - skipping deployment');
+    console.log(`📋 ${commands.length} commands loaded (already deployed)`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    return;
+  }
+
+  // Commands have changed, deploy them
+  console.log('\n🔄 Commands have changed - deploying updates...');
+  
   try {
     const rest = new REST().setToken(process.env.TOKEN);
     
@@ -69,6 +120,9 @@ async function deployCommands() {
       Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands },
     );
+
+    // Save new hash
+    savePreviousHash(currentHash);
 
     console.log(`✅ Successfully deployed ${data.length} commands!`);
     console.log('\n📋 Registered commands:');
@@ -89,7 +143,7 @@ async function deployCommands() {
 client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   
-  // ✅ AUTO-DEPLOY COMMANDS ON STARTUP
+  // ✅ SMART DEPLOY - only if commands changed
   await deployCommands();
   
   // ============================================================

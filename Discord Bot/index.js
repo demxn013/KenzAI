@@ -1,5 +1,5 @@
 // index.js
-// ✅ Auto-deploys commands with DETAILED DEBUG LOGGING
+// ✅ Auto-deploys commands WITHOUT clearing old ones first
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
@@ -27,7 +27,7 @@ const client = new Client({
 client.commands = new Collection();
 
 // ============================================================
-// ✅ AUTO-DEPLOY COMMANDS FUNCTION (WITH DEBUG LOGGING)
+// ✅ AUTO-DEPLOY COMMANDS (WITHOUT DELETING OLD ONES)
 // ============================================================
 async function deployCommands() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -53,50 +53,17 @@ async function deployCommands() {
       
       if ('data' in command && 'execute' in command) {
         client.commands.set(command.data.name, command);
-        const jsonData = command.data.toJSON();
-        commands.push(jsonData);
+        commands.push(command.data.toJSON());
         console.log(`✅ Loaded command: ${command.data.name}`);
-        
-        // ✅ DEBUG: Show full structure of clan command
-        if (command.data.name === 'clan') {
-          console.log('\n🔍 DEBUG: Full clan command structure:');
-          console.log(JSON.stringify(jsonData, null, 2));
-          console.log('\n🔍 Checking setrole subcommand...');
-          const setrole = jsonData.options?.find(opt => opt.name === 'setrole');
-          if (setrole) {
-            console.log('✅ Found setrole subcommand');
-            console.log('📋 Setrole options:', JSON.stringify(setrole.options, null, 2));
-            const typeOption = setrole.options?.find(opt => opt.name === 'type');
-            if (typeOption) {
-              console.log('✅ TYPE OPTION FOUND:', JSON.stringify(typeOption, null, 2));
-            } else {
-              console.log('❌ TYPE OPTION MISSING FROM SETROLE!');
-            }
-          } else {
-            console.log('❌ setrole subcommand not found!');
-          }
-          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        }
       }
     }
   }
 
-  // Deploy to Discord with FORCE REFRESH
+  // Deploy to Discord (this will update existing commands, not duplicate)
   try {
     const rest = new REST().setToken(process.env.TOKEN);
     
-    console.log(`\n🔄 Clearing old commands...`);
-    
-    // ✅ STEP 1: DELETE ALL EXISTING COMMANDS (force refresh)
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: [] }
-    );
-    
-    console.log(`✅ Old commands cleared!`);
-    
-    // ✅ STEP 2: DEPLOY NEW COMMANDS
-    console.log(`\n🔄 Deploying ${commands.length} new commands...`);
+    console.log(`\n🔄 Deploying ${commands.length} commands to Discord...`);
     
     const data = await rest.put(
       Routes.applicationCommands(process.env.CLIENT_ID),
@@ -107,27 +74,12 @@ async function deployCommands() {
     console.log('\n📋 Registered commands:');
     data.forEach(cmd => {
       console.log(`   - /${cmd.name}`);
-      
-      // ✅ DEBUG: Verify clan command in Discord's response
-      if (cmd.name === 'clan') {
-        console.log('\n🔍 DEBUG: Discord\'s response for clan command:');
-        console.log(JSON.stringify(cmd, null, 2));
-        const setrole = cmd.options?.find(opt => opt.name === 'setrole');
-        if (setrole) {
-          console.log('\n🔍 Setrole in Discord response:', JSON.stringify(setrole.options, null, 2));
-        }
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      }
     });
-    console.log('\n⚠️ Commands may take 1-5 minutes to update in Discord');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     
   } catch (error) {
     console.error('❌ Failed to deploy commands:', error);
     console.error('Full error:', error.message);
-    if (error.rawError) {
-      console.error('Raw error:', JSON.stringify(error.rawError, null, 2));
-    }
   }
 }
 
@@ -238,24 +190,20 @@ process.on('unhandledRejection', error => {
 // ============================================================
 // LOGIN
 // ============================================================
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('🤖 YAZANAKI EMPIRE BOT STARTING...');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('📁 Directory:', __dirname);
-console.log('🔑 Token:', process.env.TOKEN ? `Loaded (${process.env.TOKEN.length} chars)` : '❌ NOT FOUND');
-console.log('🆔 Client ID:', process.env.CLIENT_ID ? `Loaded (${process.env.CLIENT_ID})` : '❌ NOT FOUND');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+console.log('🔐 Attempting to login...');
+console.log('📁 Current directory:', __dirname);
+console.log('🔑 Token loaded:', process.env.TOKEN ? `Yes (${process.env.TOKEN.length} chars)` : 'NO - TOKEN NOT FOUND');
+console.log('🆔 Client ID loaded:', process.env.CLIENT_ID ? 'Yes' : 'No');
 
 if (!process.env.TOKEN) {
   console.error('❌ TOKEN not found in environment variables!');
-  console.error('Make sure .env file exists with TOKEN=your_bot_token');
+  console.error('Make sure .env file exists in:', __dirname);
   process.exit(1);
 }
 
 if (!process.env.CLIENT_ID) {
   console.error('❌ CLIENT_ID not found in environment variables!');
-  console.error('Add CLIENT_ID=your_application_id to your .env file');
-  console.error('Find it at: Discord Developer Portal → Your App → General Information → Application ID');
+  console.error('Add CLIENT_ID to your .env file');
   process.exit(1);
 }
 

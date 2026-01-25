@@ -29,6 +29,7 @@ module.exports = {
         .setDescription("Setup application panel in current channel")
     ),
 
+  // ✅ FIXED: Added async
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
 
@@ -80,6 +81,7 @@ module.exports = {
   // ============================================================
   // BUTTON HANDLER
   // ============================================================
+  // ✅ FIXED: Added async
   async buttonHandler(interaction) {
     const customId = interaction.customId;
 
@@ -299,6 +301,7 @@ module.exports = {
   // ============================================================
   // MODAL HANDLER
   // ============================================================
+  // ✅ FIXED: Added async
   async modalHandler(interaction) {
     const customId = interaction.customId;
 

@@ -1,6 +1,7 @@
 // index.js or bot.js
 // ✅ Example main bot file with SIMPLIFIED draft system integration
 
+require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -42,7 +43,7 @@ for (const folder of commandFolders) {
   
   for (const file of commandFiles) {
     const filePath = path.join(folderPath, file);
-    const command = require(filePath);
+    const command = require(`./${filePath}`);
     
     if ('data' in command && 'execute' in command) {
       client.commands.set(command.data.name, command);
@@ -55,17 +56,13 @@ for (const folder of commandFolders) {
 // READY EVENT
 // ============================================================
 client.on('ready', () => {
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log(`✅ Bot logged in as ${client.user.tag}`);
-  console.log(`🌐 Serving ${client.guilds.cache.size} guilds`);
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+  console.log(`✅ Logged in as ${client.user.tag}`);
   
   // ============================================================
   // ✅ START DRAFT SCHEDULER
   // ============================================================
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 });
 
 // ============================================================
@@ -159,9 +156,7 @@ process.on('unhandledRejection', error => {
 // ============================================================
 // LOGIN
 // ============================================================
-const token = process.env.DISCORD_TOKEN || 'YOUR_BOT_TOKEN_HERE';
-
-client.login(token).catch(error => {
+client.login(process.env.TOKEN).catch(error => {
   console.error('❌ Failed to login:', error);
   process.exit(1);
 });

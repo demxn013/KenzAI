@@ -135,6 +135,7 @@ async function assignYazanakiRoles(client, discordId, clanGuildId) {
     const rolesToAdd = [
       { id: ROLES.MILITARY, name: "Military" },
       { id: ROLES.RECRUIT, name: "Recruit" },
+      { id: ROLES.CITIZEN, name: "Citizen" },
       { id: clan.yazanakiRoleId, name: clan.abbr }
     ];
     

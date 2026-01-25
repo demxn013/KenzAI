@@ -1,298 +1,349 @@
 // modules/applications/acceptedapplicants.js
-// ✅ UPDATED: Now assigns clan roles AND starts draft system
+// ✅ COMPLETE: Assigns roles in BOTH Yazanaki discord AND clan discord
+// ✅ BLOCKS acceptance if user is not in Yazanaki Empire
 
 const fs = require("fs");
 const path = require("path");
 
-// ABSOLUTE data directory (GUARANTEED CORRECT)
 const dataDir = path.join(__dirname, "..", "data");
-
-// Files
 const applicantsPath = path.join(dataDir, "applicants.json");
 const membersPath = path.join(dataDir, "members.json");
 const clansPath = path.join(dataDir, "clans.json");
 
-// Yazanaki Empire Guild ID (hardcoded - the main empire server)
+// Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
-// Ensure /modules/data exists
+// Role IDs from Yazanaki Empire
+const ROLES = {
+  MILITARY: "1334641887017177141",
+  RECRUIT: "1345398371522842624",  // Draft role
+};
+
+// Ensure data files
 if (!fs.existsSync(dataDir)) {
-    console.log("[acceptedapps] 📁 Creating data directory:", dataDir);
-    fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Ensure members.json exists
 if (!fs.existsSync(membersPath)) {
-    console.log("[acceptedapps] 📝 Creating members.json");
-    fs.writeFileSync(membersPath, JSON.stringify({}, null, 4));
+  fs.writeFileSync(membersPath, JSON.stringify({}, null, 4));
 }
 
-// Safe JSON loaders
 function loadJSON(filePath) {
-    if (!fs.existsSync(filePath)) {
-        console.warn(`[acceptedapps] ⚠️ Missing file: ${filePath}`);
-        return {};
-    }
-
-    try {
-        const raw = fs.readFileSync(filePath, "utf8");
-        return raw.trim() ? JSON.parse(raw) : {};
-    } catch (err) {
-        console.error(`[acceptedapps] ❌ JSON parse error in ${filePath}`, err);
-        return {};
-    }
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error(`[acceptedapps] ❌ JSON parse error in ${filePath}`, err);
+    return {};
+  }
 }
 
 function saveJSON(filePath, data) {
-    try {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 4));
-        console.log(`[acceptedapps] ✅ Saved ${path.basename(filePath)}`);
-    } catch (err) {
-        console.error(`[acceptedapps] ❌ Failed to save ${path.basename(filePath)}:`, err);
-    }
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 4));
+    console.log(`[acceptedapps] ✅ Saved ${path.basename(filePath)}`);
+  } catch (err) {
+    console.error(`[acceptedapps] ❌ Failed to save ${path.basename(filePath)}:`, err);
+  }
 }
 
 function formatDate(dateString) {
-    const d = new Date(dateString);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    return `${dd}.${mm}.${yyyy}`;
+  const d = new Date(dateString);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}.${mm}.${yyyy}`;
 }
 
-// ✅ Import multi-guild role detection
-const { detectRolesFromDiscord } = require("../roles/roledetector");
-
-// ✅ Import Empire ID system
 const { assignEmpireId } = require("../empire/empireid");
-
-// ✅ Import Draft system
 const { startDraft } = require("../empire/draftlogic");
 
 /**
- * ✅ Assign clan role in Yazanaki Empire discord
- * @param {Client} client - Discord.js client
- * @param {string} discordId - User's Discord ID
- * @param {string} clanGuildId - Guild ID where they applied
- * @returns {Promise<boolean>} Success status
+ * ✅ STEP 1: Verify user is in Yazanaki Empire (BLOCKS acceptance if not)
  */
-async function assignClanRoleInYazanaki(client, discordId, clanGuildId) {
-    try {
-        console.log(`[acceptedapps] 🎭 Assigning clan role in Yazanaki Empire...`);
-        
-        // Load clans to find the role ID
-        const clans = loadJSON(clansPath);
-        const clan = clans[clanGuildId];
-        
-        if (!clan) {
-            console.warn(`[acceptedapps] ⚠️ Clan not found for guild ${clanGuildId}`);
-            return false;
-        }
-        
-        if (!clan.yazanakiRoleId) {
-            console.warn(`[acceptedapps] ⚠️ Clan ${clan.abbr} has no yazanakiRoleId configured`);
-            console.warn(`[acceptedapps] ⚠️ Please update clans.json with the Yazanaki Empire role ID for ${clan.abbr}`);
-            return false;
-        }
-        
-        console.log(`[acceptedapps] 🎯 Clan: ${clan.abbr} (${clan.name})`);
-        console.log(`[acceptedapps] 🎯 Yazanaki Role ID: ${clan.yazanakiRoleId}`);
-        
-        // Fetch Yazanaki Empire guild
-        const yazanakiGuild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
-        
-        if (!yazanakiGuild) {
-            console.error(`[acceptedapps] ❌ Could not fetch Yazanaki Empire guild (${YAZANAKI_EMPIRE_GUILD_ID})`);
-            return false;
-        }
-        
-        console.log(`[acceptedapps] ✅ Fetched Yazanaki Empire guild: ${yazanakiGuild.name}`);
-        
-        // Fetch member in Yazanaki Empire
-        const member = await yazanakiGuild.members.fetch(discordId).catch(() => null);
-        
-        if (!member) {
-            console.warn(`[acceptedapps] ⚠️ User ${discordId} is not in Yazanaki Empire guild`);
-            console.warn(`[acceptedapps] ⚠️ Role assignment skipped - they need to join Yazanaki Empire first`);
-            return false;
-        }
-        
-        console.log(`[acceptedapps] ✅ Found member in Yazanaki Empire: ${member.user.tag}`);
-        
-        // Check if role exists
-        const role = yazanakiGuild.roles.cache.get(clan.yazanakiRoleId);
-        
-        if (!role) {
-            console.error(`[acceptedapps] ❌ Role ${clan.yazanakiRoleId} not found in Yazanaki Empire`);
-            return false;
-        }
-        
-        console.log(`[acceptedapps] ✅ Found role: ${role.name}`);
-        
-        // Check if member already has the role
-        if (member.roles.cache.has(clan.yazanakiRoleId)) {
-            console.log(`[acceptedapps] ℹ️ Member already has role ${role.name}`);
-            return true;
-        }
-        
-        // Assign the role
-        await member.roles.add(clan.yazanakiRoleId);
-        
-        console.log(`[acceptedapps] ✅ Assigned role ${role.name} to ${member.user.tag} in Yazanaki Empire!`);
-        return true;
-        
-    } catch (err) {
-        console.error(`[acceptedapps] ❌ Error assigning clan role:`, err);
-        return false;
+async function checkInYazanaki(client, discordId) {
+  console.log(`[acceptedapps] 🔍 STEP 1: Checking if user is in Yazanaki Empire...`);
+  
+  try {
+    const yazanakiGuild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+    
+    if (!yazanakiGuild) {
+      console.error(`[acceptedapps] ❌ Could not fetch Yazanaki Empire guild`);
+      return { inGuild: false, reason: "yazanaki_guild_not_found" };
     }
+    
+    const member = await yazanakiGuild.members.fetch(discordId).catch(() => null);
+    
+    if (!member) {
+      console.error(`[acceptedapps] ❌ User ${discordId} is NOT in Yazanaki Empire`);
+      return { inGuild: false, reason: "not_in_yazanaki" };
+    }
+    
+    console.log(`[acceptedapps] ✅ User is in Yazanaki Empire: ${member.user.tag}`);
+    return { inGuild: true, member };
+    
+  } catch (err) {
+    console.error(`[acceptedapps] ❌ Error checking Yazanaki membership:`, err);
+    return { inGuild: false, reason: "error", error: err.message };
+  }
 }
 
 /**
- * ✅ Accept applicant, assign Empire ID, assign clan role, and start draft
- * @param {string} discordId - Discord user ID
- * @param {Client} client - Discord.js client (REQUIRED for role detection and assignment)
+ * ✅ STEP 2: Assign roles in Yazanaki Empire
+ * Gives: Military + Recruit (Draft) + Clan role
+ */
+async function assignYazanakiRoles(client, discordId, clanGuildId) {
+  console.log(`[acceptedapps] 🎭 STEP 2: Assigning Yazanaki Empire roles...`);
+  
+  try {
+    const clans = loadJSON(clansPath);
+    const clan = clans[clanGuildId];
+    
+    if (!clan) {
+      console.error(`[acceptedapps] ❌ Clan not found for guild ${clanGuildId}`);
+      console.error(`[acceptedapps] ❌ Use /clan add to register this clan first`);
+      return { success: false, reason: "clan_not_registered" };
+    }
+    
+    if (!clan.yazanakiRoleId) {
+      console.error(`[acceptedapps] ❌ Clan ${clan.abbr} has no yazanakiRoleId configured`);
+      console.error(`[acceptedapps] ❌ Use /clan setrole clan:${clan.abbr} type:Yazanaki to set the role`);
+      return { success: false, reason: "no_yazanaki_role_configured", clan };
+    }
+    
+    console.log(`[acceptedapps] 🏷️ Clan: ${clan.abbr} (${clan.name})`);
+    console.log(`[acceptedapps] 🏷️ Yazanaki Role ID: ${clan.yazanakiRoleId}`);
+    
+    const yazanakiGuild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+    
+    if (!yazanakiGuild) {
+      console.error(`[acceptedapps] ❌ Could not fetch Yazanaki Empire guild`);
+      return { success: false, reason: "yazanaki_guild_not_found", clan };
+    }
+    
+    const member = await yazanakiGuild.members.fetch(discordId).catch(() => null);
+    
+    if (!member) {
+      console.error(`[acceptedapps] ❌ User ${discordId} not in Yazanaki Empire`);
+      return { success: false, reason: "not_in_yazanaki", clan };
+    }
+    
+    console.log(`[acceptedapps] ✅ Found member: ${member.user.tag}`);
+    
+    // Assign roles: Military, Recruit (Draft), and Clan role
+    const rolesToAdd = [
+      { id: ROLES.MILITARY, name: "Military" },
+      { id: ROLES.RECRUIT, name: "Recruit" },
+      { id: clan.yazanakiRoleId, name: clan.abbr }
+    ];
+    
+    for (const role of rolesToAdd) {
+      if (member.roles.cache.has(role.id)) {
+        console.log(`[acceptedapps] ℹ️ Already has ${role.name} role`);
+        continue;
+      }
+      
+      try {
+        await member.roles.add(role.id);
+        console.log(`[acceptedapps] ✅ Assigned ${role.name} role`);
+      } catch (err) {
+        console.error(`[acceptedapps] ❌ Failed to assign ${role.name}:`, err.message);
+      }
+    }
+    
+    console.log(`[acceptedapps] ✅ All Yazanaki Empire roles assigned!`);
+    return { success: true, clan };
+    
+  } catch (err) {
+    console.error(`[acceptedapps] ❌ Error assigning Yazanaki roles:`, err);
+    return { success: false, reason: "error", error: err.message };
+  }
+}
+
+/**
+ * ✅ STEP 3: Assign role in clan's own discord
+ */
+async function assignClanRole(client, discordId, clanGuildId, clan) {
+  console.log(`[acceptedapps] 🎭 STEP 3: Assigning role in clan discord (${clan.abbr})...`);
+  
+  if (!clan.clanRoleId) {
+    console.warn(`[acceptedapps] ⚠️ Clan ${clan.abbr} has no clanRoleId configured`);
+    console.warn(`[acceptedapps] ⚠️ Use /clan setrole clan:${clan.abbr} type:Clan to set it`);
+    console.warn(`[acceptedapps] ⚠️ Skipping clan discord role assignment`);
+    return { success: false, reason: "no_clan_role_configured" };
+  }
+  
+  try {
+    const clanGuild = await client.guilds.fetch(clanGuildId).catch(() => null);
+    
+    if (!clanGuild) {
+      console.warn(`[acceptedapps] ⚠️ Could not fetch clan guild ${clanGuildId}`);
+      return { success: false, reason: "clan_guild_not_found" };
+    }
+    
+    console.log(`[acceptedapps] ✅ Fetched clan guild: ${clanGuild.name}`);
+    
+    const member = await clanGuild.members.fetch(discordId).catch(() => null);
+    
+    if (!member) {
+      console.warn(`[acceptedapps] ⚠️ User not in clan guild ${clanGuild.name}`);
+      console.warn(`[acceptedapps] ⚠️ They can join the clan discord later`);
+      return { success: false, reason: "not_in_clan_guild" };
+    }
+    
+    console.log(`[acceptedapps] ✅ Found member in clan guild: ${member.user.tag}`);
+    
+    if (member.roles.cache.has(clan.clanRoleId)) {
+      console.log(`[acceptedapps] ℹ️ Member already has clan role`);
+    } else {
+      await member.roles.add(clan.clanRoleId);
+      console.log(`[acceptedapps] ✅ Assigned clan role in clan discord`);
+    }
+    
+    return { success: true };
+    
+  } catch (err) {
+    console.error(`[acceptedapps] ❌ Error assigning clan role:`, err);
+    return { success: false, reason: "error", error: err.message };
+  }
+}
+
+/**
+ * ✅ MAIN ACCEPTANCE FUNCTION
+ * Order:
+ * 1. CHECK if user is in Yazanaki Empire (BLOCKS if not)
+ * 2. Assign Yazanaki Empire roles (Military + Recruit + Clan role)
+ * 3. Assign role in clan's own discord (optional)
+ * 4. Start draft
+ * 5. Assign Empire ID
+ * 6. Write to members.json
  */
 module.exports.acceptApplicant = async function (discordId, client = null) {
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[acceptedapps] 🎯 Attempting to accept applicant ${discordId}`);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log(`[acceptedapps] 🎯 Accepting applicant ${discordId}`);
 
-    const applicants = loadJSON(applicantsPath);
-    const members = loadJSON(membersPath);
-    const clans = loadJSON(clansPath);
-
-    const data = applicants[discordId];
-
-    if (!data) {
-        console.log(`[acceptedapps] ❌ Applicant ${discordId} not found in applicants.json`);
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-        return;
-    }
-
-    if (!data.accepted) {
-        console.log(`[acceptedapps] ⚠️ Applicant ${discordId} is not marked as accepted`);
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-        return;
-    }
-
-    // Correct field names coming from saveApplicant()
-    const discordUser = data.discordUser || "";
-    const minecraftUser = data.minecraftUser || "";
-    const minecraftVersion = data.minecraftVersion || "";
-
-    console.log(`[acceptedapps] 📊 Applicant data:`);
-    console.log(`  - Discord: ${discordUser}`);
-    console.log(`  - Minecraft: ${minecraftUser}`);
-    console.log(`  - Version: ${minecraftVersion}`);
-
-    // Application acceptance date is NOW
-    const closeDate = formatDate(new Date().toISOString());
-
-    // Detect clan based on guild/server ID
-    const clanName = clans[data.server]?.name || "Unknown";
-    console.log(`  - Clan: ${clanName}`);
-    console.log(`  - Guild ID: ${data.server}`);
-
-    // ✅ ASSIGN EMPIRE ID
-    console.log(`[acceptedapps] 🆔 Assigning Empire ID...`);
-    const empireIdResult = assignEmpireId(discordId, minecraftUser, data.server);
-    
-    let empireId = "";
-    
-    if (empireIdResult.success) {
-        empireId = empireIdResult.empireId;
-        
-        if (empireIdResult.isReturning) {
-            console.log(`[acceptedapps] ♻️ RETURNING MEMBER! Restored Empire ID: ${empireId}`);
-        } else {
-            console.log(`[acceptedapps] ✨ NEW MEMBER! Assigned Empire ID: ${empireId}`);
-        }
-    } else {
-        console.error(`[acceptedapps] ❌ Failed to assign Empire ID: ${empireIdResult.reason}`);
-        empireId = "ERROR";
-    }
-
-    // ✅ ASSIGN CLAN ROLE IN YAZANAKI EMPIRE
-    if (client && data.server) {
-        console.log(`[acceptedapps] 🎭 Attempting to assign clan role in Yazanaki Empire...`);
-        const roleAssigned = await assignClanRoleInYazanaki(client, discordId, data.server);
-        
-        if (roleAssigned) {
-            console.log(`[acceptedapps] ✅ Clan role assigned successfully in Yazanaki Empire!`);
-        } else {
-            console.warn(`[acceptedapps] ⚠️ Could not assign clan role in Yazanaki Empire`);
-        }
-    } else {
-        console.warn(`[acceptedapps] ⚠️ Client not provided or no server ID - skipping clan role assignment`);
-    }
-
-    // ✅ DETECT ROLES FROM ALL GUILDS (multi-guild support)
-    let detectedRoles = { rank: "n/d", status: "n/d" };
-    
-    if (!client) {
-        console.warn(`[acceptedapps] ⚠️ No client provided - roles will be 'n/d'`);
-        console.warn(`[acceptedapps] ⚠️ Please update application.js to pass client to acceptApplicant()`);
-    } else {
-        console.log(`[acceptedapps] 🎭 Detecting roles across ALL guilds for ${discordId}...`);
-        try {
-            detectedRoles = await detectRolesFromDiscord(discordId, client);
-            
-            if (detectedRoles.error) {
-                console.warn(`[acceptedapps] ⚠️ Role detection had issues: ${detectedRoles.error}`);
-            } else {
-                console.log(`[acceptedapps] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
-                
-                // Log which guilds were checked
-                if (detectedRoles.guilds) {
-                    const checkedGuilds = Object.entries(detectedRoles.guilds)
-                        .filter(([, data]) => !data.error)
-                        .map(([id, data]) => data.guild)
-                        .join(", ");
-                    
-                    if (checkedGuilds) {
-                        console.log(`[acceptedapps] 🌐 Checked guilds: ${checkedGuilds}`);
-                    }
-                }
-            }
-        } catch (err) {
-            console.error(`[acceptedapps] ❌ Error detecting roles:`, err);
-        }
-    }
-
-    // Create the final entry with detected roles AND Empire ID
-    const entry = {
-        discordId,
-        discordUser,
-        minecraftUser,
-        minecraftVersion,
-        JoinedClan: clanName,
-        JoinDate: closeDate,
-        YazanakiRank: detectedRoles.rank,
-        EmpireID: empireId,
-        Status: detectedRoles.status
-    };
-
-    console.log(`[acceptedapps] 📝 Creating entry for ${discordId}:`, entry);
-
-    // Write into members.json
-    members[discordId] = entry;
-    saveJSON(membersPath, members);
-
-    console.log(`[acceptedapps] ✅ SUCCESS: Added ${discordId} to members.json`);
-    console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);
-
-    // ✅ START DRAFT IF RANK IS "DRAFT"
-    if (detectedRoles.rank === "Draft") {
-        console.log(`[acceptedapps] 🎖️ Member has Draft rank - starting draft system...`);
-        const draftStarted = startDraft(discordId);
-        
-        if (draftStarted) {
-            console.log(`[acceptedapps] ✅ Draft started successfully for ${discordId}`);
-        } else {
-            console.error(`[acceptedapps] ❌ Failed to start draft for ${discordId}`);
-        }
-    } else {
-        console.log(`[acceptedapps] ℹ️ Member rank is ${detectedRoles.rank} - no draft needed`);
-    }
-
+  if (!client) {
+    console.error(`[acceptedapps] ❌ Client not provided`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    return { success: false, reason: "no_client" };
+  }
+
+  const applicants = loadJSON(applicantsPath);
+  const members = loadJSON(membersPath);
+  const data = applicants[discordId];
+
+  if (!data) {
+    console.log(`[acceptedapps] ❌ Applicant not found`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    return { success: false, reason: "applicant_not_found" };
+  }
+
+  if (!data.accepted) {
+    console.log(`[acceptedapps] ⚠️ Applicant not marked as accepted`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    return { success: false, reason: "not_accepted" };
+  }
+
+  const discordUser = data.discordUser || "";
+  const minecraftUser = data.minecraftUser || "";
+  const minecraftVersion = data.minecraftVersion || "";
+  const clanGuildId = data.server;
+
+  console.log(`[acceptedapps] 📊 Applicant: ${discordUser}`);
+  console.log(`[acceptedapps] 🎮 Minecraft: ${minecraftUser}`);
+  console.log(`[acceptedapps] 🏷️ Clan Guild: ${clanGuildId}`);
+
+  // ============================================================
+  // STEP 1: CHECK IF IN YAZANAKI EMPIRE (BLOCKING)
+  // ============================================================
+  const yazanakiCheck = await checkInYazanaki(client, discordId);
+  
+  if (!yazanakiCheck.inGuild) {
+    console.error(`[acceptedapps] ❌ CRITICAL: User is NOT in Yazanaki Empire!`);
+    console.error(`[acceptedapps] ❌ Acceptance BLOCKED`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    return { success: false, reason: "not_in_yazanaki" };
+  }
+
+  // ============================================================
+  // STEP 2: ASSIGN YAZANAKI EMPIRE ROLES
+  // ============================================================
+  const yazanakiRoles = await assignYazanakiRoles(client, discordId, clanGuildId);
+  
+  if (!yazanakiRoles.success) {
+    console.error(`[acceptedapps] ❌ Failed to assign Yazanaki roles: ${yazanakiRoles.reason}`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    return { success: false, reason: yazanakiRoles.reason };
+  }
+
+  const clan = yazanakiRoles.clan;
+
+  // ============================================================
+  // STEP 3: ASSIGN CLAN DISCORD ROLE (optional)
+  // ============================================================
+  await assignClanRole(client, discordId, clanGuildId, clan);
+
+  // ============================================================
+  // STEP 4: START DRAFT
+  // ============================================================
+  console.log(`[acceptedapps] 🎖️ STEP 4: Starting draft...`);
+  
+  const closeDate = formatDate(new Date().toISOString());
+  
+  members[discordId] = {
+    discordId,
+    discordUser,
+    minecraftUser,
+    minecraftVersion,
+    JoinedClan: clan.name,
+    JoinDate: closeDate,
+    YazanakiRank: "Recruit",
+    EmpireID: "",
+    Status: "Military"
+  };
+  
+  saveJSON(membersPath, members);
+  
+  const draftStarted = startDraft(discordId);
+  
+  if (draftStarted) {
+    console.log(`[acceptedapps] ✅ Draft started`);
+  } else {
+    console.error(`[acceptedapps] ❌ Failed to start draft`);
+  }
+
+  // ============================================================
+  // STEP 5: ASSIGN EMPIRE ID
+  // ============================================================
+  console.log(`[acceptedapps] 🆔 STEP 5: Assigning Empire ID...`);
+  const empireIdResult = assignEmpireId(discordId, minecraftUser, clanGuildId);
+  
+  let empireId = "PENDING";
+  
+  if (empireIdResult.success) {
+    empireId = empireIdResult.empireId;
+    
+    if (empireIdResult.isReturning) {
+      console.log(`[acceptedapps] ♻️ RETURNING: ${empireId}`);
+    } else {
+      console.log(`[acceptedapps] ✨ NEW: ${empireId}`);
+    }
+  } else {
+    console.error(`[acceptedapps] ❌ Empire ID failed: ${empireIdResult.reason}`);
+  }
+
+  // ============================================================
+  // STEP 6: FINAL UPDATE
+  // ============================================================
+  members[discordId].EmpireID = empireId;
+  saveJSON(membersPath, members);
+
+  console.log(`[acceptedapps] ✅ SUCCESS!`);
+  console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);
+  console.log(`[acceptedapps] 🏷️ Clan: ${clan.abbr}`);
+  console.log(`[acceptedapps] 🎭 Roles: Military, Recruit, ${clan.abbr}`);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+  
+  return { success: true, empireId, clan };
 };

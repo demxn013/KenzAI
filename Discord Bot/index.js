@@ -114,24 +114,27 @@ async function deployCommands(force = false) {
     console.log(`\n🔄 Deploying ${commands.length} commands in ${DEPLOYMENT_MODE.toUpperCase()} mode...`);
     
     if (DEPLOYMENT_MODE === 'all-guilds') {
-      // ✅ FETCH ALL GUILDS FIRST (fixes incomplete cache)
-      console.log('📡 Fetching all guilds...');
+      // ✅ GET FRESH GUILD LIST
+      console.log('📡 Fetching latest guild list from Discord...');
       
-      const guildPromises = client.guilds.cache.map(guild => 
-        client.guilds.fetch(guild.id).catch(() => null)
-      );
-      
-      await Promise.all(guildPromises);
-      
-      const guilds = client.guilds.cache;
-      console.log(`📍 Target: ${guilds.size} guild(s)`);
+      const fetchedGuilds = await client.guilds.fetch();
+      console.log(`📍 Target: ${fetchedGuilds.size} guild(s)`);
       console.log(`⚡ Updates: INSTANT\n`);
+      
+      if (fetchedGuilds.size === 0) {
+        console.error('❌ Bot is not in any guilds!');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        return;
+      }
       
       let successCount = 0;
       let failCount = 0;
       
-      for (const [guildId, guild] of guilds) {
+      for (const [guildId, partialGuild] of fetchedGuilds) {
         try {
+          // Fetch full guild data
+          const guild = await client.guilds.fetch(guildId);
+          
           await rest.put(
             Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
             { body: commands },
@@ -141,7 +144,7 @@ async function deployCommands(force = false) {
           successCount++;
           
         } catch (error) {
-          console.error(`   ❌ ${guild.name} (${guildId}): ${error.message}`);
+          console.error(`   ❌ ${partialGuild.name || guildId}: ${error.message}`);
           failCount++;
         }
       }
@@ -197,27 +200,23 @@ async function clearDuplicateCommands() {
     
     // Clear guild commands from all guilds
     if (DEPLOYMENT_MODE === 'all-guilds') {
-      // ✅ FETCH ALL GUILDS FIRST
-      console.log('📡 Fetching all guilds...');
+      // ✅ FETCH FRESH GUILD LIST
+      console.log('📡 Fetching all guilds from Discord...');
       
-      const guildPromises = client.guilds.cache.map(guild => 
-        client.guilds.fetch(guild.id).catch(() => null)
-      );
+      const fetchedGuilds = await client.guilds.fetch();
+      console.log(`📍 Clearing commands from ${fetchedGuilds.size} guild(s)...\n`);
       
-      await Promise.all(guildPromises);
-      
-      const guilds = client.guilds.cache;
-      console.log(`📍 Clearing commands from ${guilds.size} guild(s)...\n`);
-      
-      for (const [guildId, guild] of guilds) {
+      for (const [guildId, partialGuild] of fetchedGuilds) {
         try {
+          const guild = await client.guilds.fetch(guildId);
+          
           await rest.put(
             Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
             { body: [] }
           );
           console.log(`   ✅ Cleared: ${guild.name}`);
         } catch (error) {
-          console.error(`   ❌ Failed: ${guild.name} - ${error.message}`);
+          console.error(`   ❌ Failed: ${partialGuild.name || guildId} - ${error.message}`);
         }
       }
       
@@ -235,17 +234,38 @@ async function clearDuplicateCommands() {
 client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   
+  // ✅ FORCE FETCH ALL GUILDS FIRST
+  console.log('\n📡 Scanning all guilds bot is in...');
+  
+  try {
+    // Fetch fresh guild list from Discord API
+    const fetchedGuilds = await client.guilds.fetch();
+    console.log(`✅ Found ${fetchedGuilds.size} guild(s):\n`);
+    
+    // List all guilds
+    for (const [id, guild] of fetchedGuilds) {
+      const fullGuild = await client.guilds.fetch(id);
+      console.log(`   - ${fullGuild.name} (${id})`);
+    }
+    console.log('');
+    
+  } catch (error) {
+    console.error('❌ Failed to fetch guilds:', error.message);
+  }
+  
+  // Wait a bit more to ensure everything is cached
+  console.log('⏳ Waiting 3 seconds for cache to stabilize...\n');
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  
   // ✅ AUTO-CLEAR MODE - ONLY CLEARS, DOES NOT DEPLOY
   if (AUTO_CLEAR_COMMANDS) {
-    console.log('\n⚠️⚠️⚠️ AUTO-CLEAR MODE ENABLED ⚠️⚠️⚠️');
+    console.log('⚠️⚠️⚠️ AUTO-CLEAR MODE ENABLED ⚠️⚠️⚠️');
     console.log('This will DELETE ALL COMMANDS\n');
     await clearDuplicateCommands();
     console.log('\n✅ COMMANDS CLEARED!');
     console.log('⚠️ Set AUTO_CLEAR_COMMANDS = false and restart to deploy commands\n');
   } else {
     // ✅ NORMAL MODE - DEPLOYS COMMANDS
-    console.log('\n📡 Waiting 2 seconds for guild cache to load...\n');
-    await new Promise(resolve => setTimeout(resolve, 2000));
     await deployCommands();
   }
   

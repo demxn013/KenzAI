@@ -156,6 +156,17 @@ process.on('unhandledRejection', error => {
 // ============================================================
 // LOGIN
 // ============================================================
+console.log('🔐 Attempting to login...');
+console.log('📁 Current directory:', __dirname);
+console.log('🔑 Token loaded:', process.env.TOKEN ? `Yes (${process.env.TOKEN.length} chars)` : 'NO - TOKEN NOT FOUND');
+console.log('🆔 Client ID loaded:', process.env.CLIENT_ID ? 'Yes' : 'No');
+
+if (!process.env.TOKEN) {
+  console.error('❌ TOKEN not found in environment variables!');
+  console.error('Make sure .env file exists in:', __dirname);
+  process.exit(1);
+}
+
 client.login(process.env.TOKEN).catch(error => {
   console.error('❌ Failed to login:', error);
   process.exit(1);

@@ -1,8 +1,8 @@
-// index.js or bot.js
-// ✅ Example main bot file with SIMPLIFIED draft system integration
+// index.js
+// ✅ Auto-deploys commands on startup
 
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -27,36 +27,69 @@ const client = new Client({
 client.commands = new Collection();
 
 // ============================================================
-// LOAD COMMANDS
+// ✅ AUTO-DEPLOY COMMANDS FUNCTION
 // ============================================================
-const commandFolders = fs.readdirSync('./modules');
+async function deployCommands() {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🔄 AUTO-DEPLOYING COMMANDS TO DISCORD...');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
+  const commands = [];
+  const commandFolders = fs.readdirSync('./modules');
 
-for (const folder of commandFolders) {
-  const folderPath = path.join('./modules', folder);
-  
-  if (!fs.statSync(folderPath).isDirectory()) continue;
-  
-  const commandFiles = fs.readdirSync(folderPath).filter(file => 
-    file.endsWith('.js') && 
-    (file.endsWith('-command.js') || file === 'ping.js' || file === 'member.js' || file === 'application.js' || file === 'clan.js' || file === 'link.js' || file === 'roles.js')
-  );
-  
-  for (const file of commandFiles) {
-    const filePath = path.join(folderPath, file);
-    const command = require(`./${filePath}`);
+  for (const folder of commandFolders) {
+    const folderPath = path.join('./modules', folder);
     
-    if ('data' in command && 'execute' in command) {
-      client.commands.set(command.data.name, command);
-      console.log(`✅ Loaded command: ${command.data.name}`);
+    if (!fs.statSync(folderPath).isDirectory()) continue;
+    
+    const commandFiles = fs.readdirSync(folderPath).filter(file => 
+      file.endsWith('.js') && 
+      (file.endsWith('-command.js') || file === 'ping.js' || file === 'member.js' || file === 'application.js' || file === 'clan.js' || file === 'link.js' || file === 'roles.js')
+    );
+    
+    for (const file of commandFiles) {
+      const filePath = path.join(folderPath, file);
+      const command = require(`./${filePath}`);
+      
+      if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
+        commands.push(command.data.toJSON());
+        console.log(`✅ Loaded command: ${command.data.name}`);
+      }
     }
+  }
+
+  // Deploy to Discord
+  try {
+    const rest = new REST().setToken(process.env.TOKEN);
+    
+    console.log(`\n🔄 Pushing ${commands.length} commands to Discord...`);
+    
+    const data = await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands },
+    );
+
+    console.log(`✅ Successfully deployed ${data.length} commands!`);
+    console.log('\n📋 Registered commands:');
+    data.forEach(cmd => {
+      console.log(`   - /${cmd.name}`);
+    });
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
+  } catch (error) {
+    console.error('❌ Failed to deploy commands:', error);
   }
 }
 
 // ============================================================
 // READY EVENT
 // ============================================================
-client.on('ready', () => {
+client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  
+  // ✅ AUTO-DEPLOY COMMANDS ON STARTUP
+  await deployCommands();
   
   // ============================================================
   // ✅ START DRAFT SCHEDULER
@@ -164,6 +197,12 @@ console.log('🆔 Client ID loaded:', process.env.CLIENT_ID ? 'Yes' : 'No');
 if (!process.env.TOKEN) {
   console.error('❌ TOKEN not found in environment variables!');
   console.error('Make sure .env file exists in:', __dirname);
+  process.exit(1);
+}
+
+if (!process.env.CLIENT_ID) {
+  console.error('❌ CLIENT_ID not found in environment variables!');
+  console.error('Add CLIENT_ID to your .env file');
   process.exit(1);
 }
 

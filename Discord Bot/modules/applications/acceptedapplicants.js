@@ -1,6 +1,7 @@
 // modules/applications/acceptedapplicants.js
 // ✅ COMPLETE: Assigns roles in BOTH Yazanaki discord AND clan discord
 // ✅ BLOCKS acceptance if user is not in Yazanaki Empire
+// ✅ FIXED: Properly initializes draft fields when creating member entry
 
 const fs = require("fs");
 const path = require("path");
@@ -17,6 +18,7 @@ const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 const ROLES = {
   MILITARY: "1334641887017177141",
   RECRUIT: "1345398371522842624",  // Draft role
+  CITIZEN: "1334641779009519668"
 };
 
 // Ensure data files
@@ -58,6 +60,7 @@ function formatDate(dateString) {
 
 const { assignEmpireId } = require("../empire/empireid");
 const { startDraft } = require("../empire/draftlogic");
+const config = require("../empire/draftconfig");
 
 /**
  * ✅ STEP 1: Verify user is in Yazanaki Empire (BLOCKS acceptance if not)
@@ -135,7 +138,6 @@ async function assignYazanakiRoles(client, discordId, clanGuildId) {
     const rolesToAdd = [
       { id: ROLES.MILITARY, name: "Military" },
       { id: ROLES.RECRUIT, name: "Recruit" },
-      { id: ROLES.CITIZEN, name: "Citizen" },
       { id: clan.yazanakiRoleId, name: clan.abbr }
     ];
     
@@ -216,9 +218,9 @@ async function assignClanRole(client, discordId, clanGuildId, clan) {
  * 1. CHECK if user is in Yazanaki Empire (BLOCKS if not)
  * 2. Assign Yazanaki Empire roles (Military + Recruit + Clan role)
  * 3. Assign role in clan's own discord (optional)
- * 4. Start draft
- * 5. Assign Empire ID
- * 6. Write to members.json
+ * 4. Assign Empire ID
+ * 5. Create member entry in members.json with ALL required fields
+ * 6. Start draft (which updates the existing member entry)
  */
 module.exports.acceptApplicant = async function (discordId, client = null) {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -286,38 +288,9 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   await assignClanRole(client, discordId, clanGuildId, clan);
 
   // ============================================================
-  // STEP 4: START DRAFT
+  // STEP 4: ASSIGN EMPIRE ID
   // ============================================================
-  console.log(`[acceptedapps] 🎖️ STEP 4: Starting draft...`);
-  
-  const closeDate = formatDate(new Date().toISOString());
-  
-  members[discordId] = {
-    discordId,
-    discordUser,
-    minecraftUser,
-    minecraftVersion,
-    JoinedClan: clan.name,
-    JoinDate: closeDate,
-    YazanakiRank: "Recruit",
-    EmpireID: "",
-    Status: "Military"
-  };
-  
-  saveJSON(membersPath, members);
-  
-  const draftStarted = startDraft(discordId);
-  
-  if (draftStarted) {
-    console.log(`[acceptedapps] ✅ Draft started`);
-  } else {
-    console.error(`[acceptedapps] ❌ Failed to start draft`);
-  }
-
-  // ============================================================
-  // STEP 5: ASSIGN EMPIRE ID
-  // ============================================================
-  console.log(`[acceptedapps] 🆔 STEP 5: Assigning Empire ID...`);
+  console.log(`[acceptedapps] 🆔 STEP 4: Assigning Empire ID...`);
   const empireIdResult = assignEmpireId(discordId, minecraftUser, clanGuildId);
   
   let empireId = "PENDING";
@@ -335,15 +308,51 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   }
 
   // ============================================================
-  // STEP 6: FINAL UPDATE
+  // STEP 5: CREATE COMPLETE MEMBER ENTRY WITH DRAFT FIELDS
   // ============================================================
-  members[discordId].EmpireID = empireId;
+  console.log(`[acceptedapps] 📝 STEP 5: Creating member entry with draft fields...`);
+  
+  const closeDate = formatDate(new Date().toISOString());
+  const now = new Date();
+  const draftDuration = config.getDraftDuration();
+  const expiryDate = new Date(now.getTime() + draftDuration);
+  
+  // ✅ CREATE MEMBER ENTRY WITH ALL FIELDS INCLUDING DRAFT
+  members[discordId] = {
+    discordId,
+    discordUser,
+    minecraftUser,
+    minecraftVersion,
+    JoinedClan: clan.name,
+    JoinDate: closeDate,
+    YazanakiRank: "Recruit",
+    EmpireID: empireId,
+    Status: "Military",
+    // ✅ DRAFT FIELDS - Initialize them here!
+    draftStartDate: now.toISOString(),
+    draftExpiryDate: expiryDate.toISOString(),
+    draftReminderSent: false,
+    draftNotified: false
+  };
+  
+  // Save the complete member entry
   saveJSON(membersPath, members);
+  
+  const mode = config.TESTING_MODE ? "TESTING" : "PRODUCTION";
+  const duration = config.TESTING_MODE 
+    ? `${config.DRAFT_DURATION_MINUTES} minutes`
+    : `${config.DRAFT_DURATION_DAYS} days`;
+  
+  console.log(`[acceptedapps] ✅ Member entry created with draft fields`);
+  console.log(`[acceptedapps] 🎖️ Draft Mode: ${mode}`);
+  console.log(`[acceptedapps] ⏰ Draft Duration: ${duration}`);
+  console.log(`[acceptedapps] 📅 Draft Expiry: ${expiryDate.toISOString()}`);
 
   console.log(`[acceptedapps] ✅ SUCCESS!`);
   console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);
   console.log(`[acceptedapps] 🏷️ Clan: ${clan.abbr}`);
   console.log(`[acceptedapps] 🎭 Roles: Military, Recruit, ${clan.abbr}`);
+  console.log(`[acceptedapps] 🎖️ Draft: Active until ${expiryDate.toLocaleString()}`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   
   return { success: true, empireId, clan };

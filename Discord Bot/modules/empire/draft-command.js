@@ -173,7 +173,7 @@ module.exports = {
         const remaining = draft.daysRemaining;
 
         embed.addFields({
-          name: `${user} - ${empireId}`,
+          value: `**${user} - ${empireId}**`,
           value: `**Clan:** ${clan}\n**Time Left:** ${remaining} ${timeframe}\n**Reminder:** ${draft.draftReminderSent ? "✅" : "❌"} | **Notified:** ${draft.draftNotified ? "✅" : "❌"}`,
           inline: false
         });

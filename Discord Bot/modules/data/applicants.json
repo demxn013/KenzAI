@@ -5,13 +5,43 @@
     "minecraftUser": "DEMXN13",
     "minecraftUserKey": "demxn13",
     "minecraftVersion": "Java",
-    "timezone": "GMT+2",
+    "timezone": "GMT+1",
     "previousGroups": "None",
     "reason": "Emperor",
-    "openedAt": "2025-12-10T03:49:59.909Z",
-    "server": "1292396778595024957",
+    "openedAt": "2026-01-25T05:21:09.475Z",
+    "server": "1345294534598459392",
+    "accepted": true,
+    "closeReason": "Accepted",
+    "closedAt": "2026-01-25T05:21:52.728Z"
+  },
+  "706709967301902419": {
+    "discordId": "706709967301902419",
+    "discordUser": "themag1c1on",
+    "minecraftUser": "TheeMag1c10n",
+    "minecraftUserKey": "theemag1c10n",
+    "minecraftVersion": "Java",
+    "timezone": "HST",
+    "previousGroups": "None",
+    "reason": "I yearn for the mines.",
+    "openedAt": "2026-01-25T05:23:50.654Z",
+    "server": "1345294534598459392",
     "accepted": true,
     "closeReason": null,
-    "closedAt": "2025-12-10T03:49:59.908Z"
+    "closedAt": "2026-01-25T05:23:50.654Z"
+  },
+  "827312869292769300": {
+    "discordId": "827312869292769300",
+    "discordUser": "demxn13",
+    "minecraftUser": "nooo3773",
+    "minecraftUserKey": "nooo3773",
+    "minecraftVersion": "Java",
+    "timezone": "AEST+10",
+    "previousGroups": "N/A",
+    "reason": "Dem",
+    "openedAt": "2026-01-25T06:06:03.642Z",
+    "server": "1292396868600598579",
+    "accepted": true,
+    "closeReason": "Accepted",
+    "closedAt": "2026-01-25T06:07:27.090Z"
   }
 }

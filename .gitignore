@@ -22,11 +22,12 @@ Assistant/memory/local_owner/yazanaki.db
 Assistant/models/vosk/
 Discord Bot/modules.zip
 Discord Bot/.env
-Discord Bot/modules/data
 Discord Bot/modules/data/applicants.json
 Discord Bot/modules/data/cache.json
 Discord Bot/modules/data/clans.json
+Discord Bot/modules/data/empireids.backup.json
 Discord Bot/modules/data/empireids.json
 Discord Bot/modules/data/linking.json
+Discord Bot/modules/data/members.backup.json
 Discord Bot/modules/data/members.json
 Discord Bot/modules/data/roles.json

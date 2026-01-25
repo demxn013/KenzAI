@@ -1,188 +1,148 @@
-// modules/applications/application.js
-// ✅ COMPLETE: Application ticket system with accept/reject functionality
-
 const {
   SlashCommandBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
+  ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   PermissionsBitField,
-  ChannelType
+  MessageFlags
 } = require("discord.js");
 
-const { saveApplicant, getApplicant } = require("./applicants");
-const { acceptApplicant } = require("./acceptedapplicants");
-const cache = require("../data/cache");
 const transcript = require("../tickets/transcript");
+const cache = require("../data/cache");
+const { saveApplicant, getApplicant } = require("./applicants");
+const autolink = require("../linking/autolink");
+const { acceptApplicant } = require("./acceptedapplicants.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("application")
-    .setDescription("Manage application system")
-    .addSubcommand(sub =>
-      sub
-        .setName("setup")
-        .setDescription("Setup application panel in current channel")
-    ),
+    .setDescription("Post the application starter embed for the Yazanaki Empire."),
 
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
+    const guild = interaction.guild;
 
-    // ============================================================
-    // SETUP APPLICATION PANEL
-    // ============================================================
-    if (sub === "setup") {
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        return interaction.reply({
-          content: "❌ You need Administrator permission to use this command.",
-          ephemeral: true
-        });
-      }
+    const appEmbed = new EmbedBuilder()
+      .setTitle("Start your Application!")
+      .setDescription(
+        `Join **${guild.name}** of the Yazanaki Empire by clicking the button below to open an application ticket!`
+      )
+      .setColor("#000000");
 
-      const embed = new EmbedBuilder()
-        .setTitle("📋 Yazanaki Empire Application")
-        .setDescription(
-          "Click the button below to start your application to join the **Yazanaki Empire**.\n\n" +
-          "You will be asked to provide:\n" +
-          "• Your Minecraft username\n" +
-          "• Your Minecraft version (Java/Bedrock)\n" +
-          "• Your timezone\n" +
-          "• Previous groups/clans\n" +
-          "• Why you want to join\n\n" +
-          "A private ticket channel will be created for your application."
-        )
-        .setColor(0x000000)
-        .setFooter({ text: "Yazanaki Empire • Application System" });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("start_application")
+        .setLabel("Apply")
+        .setStyle(ButtonStyle.Primary)
+    );
 
-      const button = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("start_application")
-          .setLabel("📝 Start Application")
-          .setStyle(ButtonStyle.Primary)
-      );
-
-      await interaction.reply({
-        content: "✅ Application panel created!",
-        ephemeral: true
-      });
-
-      await interaction.channel.send({
-        embeds: [embed],
-        components: [button]
-      });
-    }
+    // ✅ FIXED: Removed ephemeral flag to make it publicly visible
+    await interaction.reply({
+      embeds: [appEmbed],
+      components: [row]
+    });
   },
 
-  // ============================================================
-  // BUTTON HANDLER
-  // ============================================================
   async buttonHandler(interaction) {
-    const customId = interaction.customId;
+    const guild = interaction.guild;
 
-    // -------------------------------------------------------------------------
-    // START APPLICATION
-    // -------------------------------------------------------------------------
-    if (customId === "start_application") {
-      // Check if user already has an open ticket
-      const allCache = cache.getAll();
-      const existingTicket = Object.entries(allCache).find(
-        ([channelId, data]) =>
-          data.type === "application" &&
-          data.openerId === interaction.user.id &&
-          channelId !== "__counters"
+    // 🟢 Open Application Ticket (Modal)
+    if (interaction.customId === "start_application") {
+      const category = guild.channels.cache.find(
+        (c) =>
+          c.type === ChannelType.GuildCategory &&
+          c.name.toLowerCase().includes("applications")
       );
 
-      if (existingTicket) {
+      if (!category) {
         return interaction.reply({
-          content: `❌ You already have an open application: <#${existingTicket[0]}>`,
-          ephemeral: true
+          content:
+            "❌ No category for applications found. Create one with 'applications' in its name.",
+          flags: MessageFlags.Ephemeral
         });
       }
 
-      // Create modal
+      const existing = guild.channels.cache.find(
+        (ch) =>
+          ch.parentId === category.id &&
+          ch.name.startsWith(
+            interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")
+          )
+      );
+
+      if (existing) {
+        return interaction.reply({
+          content: `❌ You already have an open application: ${existing}`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
       const modal = new ModalBuilder()
         .setCustomId(`application_modal_${interaction.user.id}`)
-        .setTitle("Yazanaki Empire Application");
+        .setTitle("Empire Application")
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("minecraft_name")
+              .setLabel("Minecraft Username")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("minecraft_version")
+              .setLabel("Minecraft Version (Bedrock/Java)")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("timezone")
+              .setLabel("Your Timezone (e.g., GMT+1)")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("previous_groups")
+              .setLabel("Previous Groups")
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("reason")
+              .setLabel("Why do you want to join?")
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
 
-      const mcNameInput = new TextInputBuilder()
-        .setCustomId("minecraft_name")
-        .setLabel("Minecraft Username")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setPlaceholder("e.g., Steve");
-
-      const mcVersionInput = new TextInputBuilder()
-        .setCustomId("minecraft_version")
-        .setLabel("Minecraft Version (Java or Bedrock)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setPlaceholder("Java or Bedrock");
-
-      const timezoneInput = new TextInputBuilder()
-        .setCustomId("timezone")
-        .setLabel("Timezone (e.g., GMT+2, EST)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setPlaceholder("e.g., GMT+2");
-
-      const previousGroupsInput = new TextInputBuilder()
-        .setCustomId("previous_groups")
-        .setLabel("Previous Groups/Clans")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-        .setPlaceholder("List any previous groups or clans you've been in (or 'None')");
-
-      const reasonInput = new TextInputBuilder()
-        .setCustomId("reason")
-        .setLabel("Why do you want to join?")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true)
-        .setPlaceholder("Tell us why you want to join the Yazanaki Empire...");
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(mcNameInput),
-        new ActionRowBuilder().addComponents(mcVersionInput),
-        new ActionRowBuilder().addComponents(timezoneInput),
-        new ActionRowBuilder().addComponents(previousGroupsInput),
-        new ActionRowBuilder().addComponents(reasonInput)
-      );
-
-      await interaction.showModal(modal);
+      return interaction.showModal(modal);
     }
 
-    // -------------------------------------------------------------------------
-    // CLOSE TICKET
-    // -------------------------------------------------------------------------
-    if (customId === "close_ticket") {
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-        return interaction.reply({
-          content: "❌ You lack the required permission.",
-          ephemeral: true
-        });
-      }
-
+    // 🔒 Close Ticket modal
+    if (interaction.customId === "close_ticket") {
       const modal = new ModalBuilder()
         .setCustomId(`close_reason_modal_${interaction.channel.id}`)
-        .setTitle("Close Ticket");
-
-      const reasonInput = new TextInputBuilder()
-        .setCustomId("close_reason")
-        .setLabel("Reason for closing")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true)
-        .setPlaceholder("Why are you closing this ticket?");
-
-      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
-      await interaction.showModal(modal);
+        .setTitle("Close Ticket")
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("close_reason")
+              .setLabel("Reason for closing this ticket")
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+      return interaction.showModal(modal);
     }
 
-    // -------------------------------------------------------------------------
-    // ACCEPT / REJECT APPLICATION
-    // -------------------------------------------------------------------------
+    // Accept / Reject
     if (
       interaction.customId.startsWith("accept_application_") ||
       interaction.customId.startsWith("reject_application_")
@@ -233,116 +193,96 @@ module.exports = {
       );
 
       if (isAccepted) {
-        // ✅ DEFER REPLY FIRST (acceptance takes time)
-        await interaction.deferReply({ ephemeral: true });
-        
-        // ✅ PASS CLIENT FOR ROLE DETECTION AND GET RESULT
-        const result = await acceptApplicant(discordId, interaction.client);
-        
-        // ✅ CHECK IF ACCEPTANCE FAILED
-        if (!result || !result.success) {
-          const reason = result?.reason || "unknown";
-          
-          if (reason === "not_in_yazanaki") {
-            return interaction.editReply({
-              content: 
-                `❌ **Cannot accept <@${discordId}>**\n\n` +
-                `**Reason:** User is not in the Yazanaki Empire discord.\n\n` +
-                `**Solution:** User must join the Yazanaki Empire discord first before being accepted.\n` +
-                `Provide them with the Yazanaki Empire invite link.`,
-              ephemeral: true
-            });
-          } else if (reason === "clan_not_registered") {
-            return interaction.editReply({
-              content: 
-                `❌ **Cannot accept <@${discordId}>**\n\n` +
-                `**Reason:** This clan is not registered in the system.\n\n` +
-                `**Solution:** Use \`/clan add\` to register this clan first.`,
-              ephemeral: true
-            });
-          } else if (reason === "no_yazanaki_role_configured") {
-            return interaction.editReply({
-              content: 
-                `❌ **Cannot accept <@${discordId}>**\n\n` +
-                `**Reason:** This clan has no Yazanaki Empire role configured.\n\n` +
-                `**Solution:** Use \`/clan setrole\` to set the Yazanaki role for this clan.`,
-              ephemeral: true
-            });
-          } else {
-            return interaction.editReply({
-              content: 
-                `❌ **Failed to accept <@${discordId}>**\n\n` +
-                `**Reason:** ${reason}\n\n` +
-                `Check console logs for details.`,
-              ephemeral: true
-            });
-          }
-        }
-        
-        // ✅ SUCCESS
-        return interaction.editReply({
-          content: 
-            `✅ **<@${discordId}> has been accepted!**\n\n` +
-            `**Empire ID:** \`${result.empireId}\`\n` +
-            `**Clan:** ${result.clan.abbr} (${result.clan.name})\n` +
-            `**Roles Assigned:** Military, Recruit, ${result.clan.abbr}\n` +
-            `**Draft:** Started (3 months)`,
-          ephemeral: true
-        });
-      } else {
-        // REJECTED
-        return interaction.reply({
-          content: `❌ <@${discordId}> marked as **Rejected**.`,
-          ephemeral: true
-        });
+        // ✅ PASS CLIENT FOR ROLE DETECTION
+        await acceptApplicant(discordId, interaction.client);
       }
+
+      return interaction.reply({
+        content: isAccepted
+          ? `✅ <@${discordId}> marked as **Accepted**.`
+          : `❌ <@${discordId}> marked as **Rejected**.`,
+        ephemeral: true
+      });
     }
   },
 
-  // ============================================================
-  // MODAL HANDLER
-  // ============================================================
   async modalHandler(interaction) {
-    const customId = interaction.customId;
+    const guild = interaction.guild;
 
-    // -------------------------------------------------------------------------
-    // APPLICATION MODAL SUBMISSION
-    // -------------------------------------------------------------------------
-    if (customId.startsWith("application_modal_")) {
-      await interaction.deferReply({ ephemeral: true });
+    if (interaction.customId.startsWith("application_modal_")) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const minecraftName = interaction.fields.getTextInputValue("minecraft_name");
-      const minecraftVersion = interaction.fields.getTextInputValue("minecraft_version");
-      const timezone = interaction.fields.getTextInputValue("timezone");
-      const previousGroups = interaction.fields.getTextInputValue("previous_groups") || "None";
+      const mcName = interaction.fields.getTextInputValue("minecraft_name");
+      const mcVersion = interaction.fields.getTextInputValue("minecraft_version");
+      const tZone = interaction.fields.getTextInputValue("timezone");
+      const prevGroups = interaction.fields.getTextInputValue("previous_groups");
       const reason = interaction.fields.getTextInputValue("reason");
 
-      const guild = interaction.guild;
-      const ticketNumber = cache.getNextNumber("application");
-      const channelName = `application-${ticketNumber}`;
+      const category = guild.channels.cache.find((c) =>
+        c.name.toLowerCase().includes("applications")
+      );
 
-      // Create ticket channel
-      const ticketChannel = await guild.channels.create({
+      if (!category) {
+        return interaction.editReply({
+          content: "❌ Applications category not found.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const ticketNumber = cache.getNextNumber("application");
+      const channelName = `${interaction.user.username
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")}-${ticketNumber}`;
+
+      const channel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
+        parent: category.id,
         permissionOverwrites: [
-          {
-            id: guild.id,
-            deny: [PermissionsBitField.Flags.ViewChannel]
-          },
+          { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
           {
             id: interaction.user.id,
             allow: [
               PermissionsBitField.Flags.ViewChannel,
               PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.ReadMessageHistory
+              PermissionsBitField.Flags.AttachFiles,
+              PermissionsBitField.Flags.EmbedLinks
+            ]
+          },
+          {
+            id: guild.members.me.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.ManageChannels,
+              PermissionsBitField.Flags.ManageMessages
             ]
           }
         ]
       });
 
-      // Store in cache
-      cache.set(ticketChannel.id, {
+      // Save applicant with unified fields
+      saveApplicant(interaction.user.id, {
+        discordId: interaction.user.id,
+        discordUser: interaction.user.tag,
+        minecraftUser: mcName,
+        ticketChannel: channel.id,
+        ticketNumber,
+        minecraftVersion: mcVersion,
+        timezone: tZone,
+        previousGroups: prevGroups,
+        reason,
+        server: guild.id,
+        accepted: false,
+        closeReason: null,
+        closedAt: null
+      });
+
+      setTimeout(() => {
+        autolink.processApplicant(interaction.user.id);
+      }, 2500);
+
+      cache.set(channel.id, {
         type: "application",
         openerId: interaction.user.id,
         openerTag: interaction.user.tag,
@@ -350,35 +290,35 @@ module.exports = {
         openedAt: new Date().toISOString()
       });
 
-      // Save applicant data
-      saveApplicant(interaction.user.id, {
-        discordUser: interaction.user.tag,
-        minecraftUser: minecraftName,
-        minecraftVersion: minecraftVersion,
-        timezone: timezone,
-        previousGroups: previousGroups,
-        reason: reason,
-        openedAt: new Date().toISOString(),
-        server: guild.id,
-        ticketChannel: ticketChannel.id,
-        ticketNumber: ticketNumber
-      });
-
-      // Create application embed
-      const embed = new EmbedBuilder()
-        .setTitle(`📋 Application #${ticketNumber}`)
-        .setDescription(`Application from ${interaction.user}`)
+      const infoEmbed = new EmbedBuilder()
+        .setTitle("New Application")
         .addFields(
-          { name: "🎮 Minecraft Username", value: `\`${minecraftName}\``, inline: false },
-          { name: "📱 Minecraft Version", value: `\`${minecraftVersion}\``, inline: true },
-          { name: "🌍 Timezone", value: `\`${timezone}\``, inline: true },
-          { name: "👥 Previous Groups", value: previousGroups, inline: false },
-          { name: "📝 Reason", value: reason, inline: false }
+          { name: "Applicant", value: `<@${interaction.user.id}>` },
+          { name: "Minecraft Username", value: mcName },
+          { name: "Minecraft Version", value: mcVersion },
+          { name: "Timezone", value: tZone },
+          { name: "Previous Groups", value: prevGroups },
+          { name: "Reason", value: reason },
+          { name: "Opened At", value: `<t:${Math.floor(Date.now() / 1000)}:F>` }
         )
-        .setColor(0x000000)
-        .setFooter({ text: `Opened: ${new Date().toLocaleString("en-GB")}` });
+        .setColor("#000000");
 
-      const buttons = new ActionRowBuilder().addComponents(
+      const termsEmbed = new EmbedBuilder()
+        .setTitle("Pre-Application")
+        .setDescription(
+          "**__Constitution & Values__**\n" +
+            "[Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
+            "**__Terms__**\n" +
+            "By applying, you vow to uphold all Yazanakian values.\n\n" +
+            "**Rules**\n- Don't ping staff unnecessarily\n- No spam\n- Be respectful"
+        )
+        .setColor("#000000");
+
+      const controlRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("close_ticket")
+          .setLabel("🔒 Close Ticket")
+          .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`accept_application_${interaction.user.id}`)
           .setLabel("✅ Accept")
@@ -386,39 +326,62 @@ module.exports = {
         new ButtonBuilder()
           .setCustomId(`reject_application_${interaction.user.id}`)
           .setLabel("❌ Reject")
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId("close_ticket")
-          .setLabel("🔒 Close")
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Danger)
       );
 
-      await ticketChannel.send({
-        content: `${interaction.user} - Your application has been submitted!`,
-        embeds: [embed],
-        components: [buttons]
+      await channel.send({
+        embeds: [infoEmbed, termsEmbed],
+        components: [controlRow]
       });
 
-      return interaction.editReply({
-        content: `✅ Your application has been created: ${ticketChannel}`,
-        ephemeral: true
+      await interaction.editReply({
+        content: `✅ Your application has been created: ${channel}`,
+        flags: MessageFlags.Ephemeral
       });
     }
 
-    // -------------------------------------------------------------------------
-    // CLOSE REASON MODAL
-    // -------------------------------------------------------------------------
-    if (customId.startsWith("close_reason_modal_")) {
+    // Close reason modal
+    if (interaction.customId.startsWith("close_reason_modal_")) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
       const reason = interaction.fields.getTextInputValue("close_reason");
-      const channel = interaction.channel;
+      const channelId = interaction.customId.split("close_reason_modal_")[1];
+      const channel = interaction.guild.channels.cache.get(channelId);
 
-      await interaction.reply({
-        content: `🔒 Closing ticket with reason: "${reason}"...`,
-        ephemeral: true
-      });
+      if (!channel) {
+        return interaction.editReply({
+          content: "❌ Channel not found.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
 
-      // Generate transcript
+      const ticketData = cache.get(channelId);
+      if (ticketData) {
+        const applicantData = getApplicant(ticketData.openerId);
+        if (applicantData) {
+          const mcUser = applicantData.minecraftUser || applicantData.minecraftName || "";
+          saveApplicant(
+            ticketData.openerId,
+            {
+              ...applicantData,
+              discordId: ticketData.openerId,
+              discordUser: interaction.user.tag,
+              minecraftUser: mcUser
+            },
+            interaction.guild.id,
+            reason,
+            applicantData.accepted ?? false,
+            new Date().toISOString()
+          );
+        }
+      }
+
       await transcript.generate(interaction, channel, reason);
+
+      return interaction.editReply({
+        content: "✅ Ticket closed and transcript saved.",
+        flags: MessageFlags.Ephemeral
+      });
     }
   }
 };

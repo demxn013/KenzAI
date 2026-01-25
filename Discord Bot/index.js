@@ -30,7 +30,7 @@ client.commands = new Collection();
 // ============================================================
 // ✅ AUTO-CLEAR MODE (Set to true ONCE to clear duplicates)
 // ============================================================
-const AUTO_CLEAR_COMMANDS = true; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+const AUTO_CLEAR_COMMANDS = false; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
 
 // ============================================================
 // COMMAND DEPLOYMENT MODE
@@ -114,7 +114,15 @@ async function deployCommands(force = false) {
     console.log(`\n🔄 Deploying ${commands.length} commands in ${DEPLOYMENT_MODE.toUpperCase()} mode...`);
     
     if (DEPLOYMENT_MODE === 'all-guilds') {
-      // ✅ DEPLOY TO ALL GUILDS (instant updates)
+      // ✅ FETCH ALL GUILDS FIRST (fixes incomplete cache)
+      console.log('📡 Fetching all guilds...');
+      
+      const guildPromises = client.guilds.cache.map(guild => 
+        client.guilds.fetch(guild.id).catch(() => null)
+      );
+      
+      await Promise.all(guildPromises);
+      
       const guilds = client.guilds.cache;
       console.log(`📍 Target: ${guilds.size} guild(s)`);
       console.log(`⚡ Updates: INSTANT\n`);
@@ -189,6 +197,15 @@ async function clearDuplicateCommands() {
     
     // Clear guild commands from all guilds
     if (DEPLOYMENT_MODE === 'all-guilds') {
+      // ✅ FETCH ALL GUILDS FIRST
+      console.log('📡 Fetching all guilds...');
+      
+      const guildPromises = client.guilds.cache.map(guild => 
+        client.guilds.fetch(guild.id).catch(() => null)
+      );
+      
+      await Promise.all(guildPromises);
+      
       const guilds = client.guilds.cache;
       console.log(`📍 Clearing commands from ${guilds.size} guild(s)...\n`);
       
@@ -207,14 +224,6 @@ async function clearDuplicateCommands() {
       console.log('\n✅ All guild commands cleared!\n');
     }
     
-    console.log('✅ All commands cleared! Redeploying in 3 seconds...\n');
-    
-    // Wait for Discord to process
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Force redeploy
-    await deployCommands(true);
-    
   } catch (error) {
     console.error('❌ Error clearing commands:', error);
   }
@@ -226,13 +235,17 @@ async function clearDuplicateCommands() {
 client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   
-  // ✅ AUTO-CLEAR MODE - CLEARS ALL COMMANDS AUTOMATICALLY
+  // ✅ AUTO-CLEAR MODE - ONLY CLEARS, DOES NOT DEPLOY
   if (AUTO_CLEAR_COMMANDS) {
     console.log('\n⚠️⚠️⚠️ AUTO-CLEAR MODE ENABLED ⚠️⚠️⚠️');
-    console.log('This will DELETE ALL COMMANDS and redeploy fresh\n');
+    console.log('This will DELETE ALL COMMANDS\n');
     await clearDuplicateCommands();
-    console.log('\n✅ DONE! Now set AUTO_CLEAR_COMMANDS = false and restart\n');
+    console.log('\n✅ COMMANDS CLEARED!');
+    console.log('⚠️ Set AUTO_CLEAR_COMMANDS = false and restart to deploy commands\n');
   } else {
+    // ✅ NORMAL MODE - DEPLOYS COMMANDS
+    console.log('\n📡 Waiting 2 seconds for guild cache to load...\n');
+    await new Promise(resolve => setTimeout(resolve, 2000));
     await deployCommands();
   }
   

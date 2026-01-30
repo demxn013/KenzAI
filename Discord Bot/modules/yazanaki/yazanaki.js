@@ -71,8 +71,8 @@ module.exports = {
       // ============================================================
       // STEP 4: PREPARE EMBLEM AND FLAG
       // ============================================================
-      const emblemPath = path.join(__dirname, "../images/YZNKI.png");
-      const flagPath = path.join(__dirname, "../images/YAZANAKI.png");
+      const emblemPath = path.join(__dirname, "../images/clanflags/YZNKI.png");
+      const flagPath = path.join(__dirname, "../images/clanflags/YAZANAKI.png");
 
       console.log(`[/yazanaki] 🖼️ Checking for emblem at: ${emblemPath}`);
       console.log(`[/yazanaki] 🏳️ Checking for flag at: ${flagPath}`);

@@ -2,6 +2,7 @@
 // ✅ COMPLETE: Assigns roles in BOTH Yazanaki discord AND clan discord
 // ✅ BLOCKS acceptance if user is not in Yazanaki Empire
 // ✅ FIXED: Properly initializes draft fields when creating member entry
+// ✅ NEW: Additional check to prevent duplicate acceptance processing
 
 const fs = require("fs");
 const path = require("path");
@@ -215,6 +216,7 @@ async function assignClanRole(client, discordId, clanGuildId, clan) {
 /**
  * ✅ MAIN ACCEPTANCE FUNCTION
  * Order:
+ * 0. CHECK if already a member (prevent duplicates)
  * 1. CHECK if user is in Yazanaki Empire (BLOCKS if not)
  * 2. Assign Yazanaki Empire roles (Military + Recruit + Clan role)
  * 3. Assign role in clan's own discord (optional)
@@ -246,6 +248,29 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     console.log(`[acceptedapps] ⚠️ Applicant not marked as accepted`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     return { success: false, reason: "not_accepted" };
+  }
+
+  // ============================================================
+  // ✅ NEW: CHECK IF ALREADY A MEMBER (PREVENT DUPLICATE PROCESSING)
+  // ============================================================
+  if (members[discordId]) {
+    const existingMember = members[discordId];
+    console.log(`[acceptedapps] ⚠️ User is already a member!`);
+    console.log(`[acceptedapps] 📅 Original join date: ${existingMember.JoinDate}`);
+    console.log(`[acceptedapps] 🆔 Empire ID: ${existingMember.EmpireID}`);
+    console.log(`[acceptedapps] 🏷️ Clan: ${existingMember.JoinedClan}`);
+    console.log(`[acceptedapps] ❌ BLOCKING duplicate acceptance`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    
+    return { 
+      success: false, 
+      reason: "already_member",
+      existingData: {
+        joinDate: existingMember.JoinDate,
+        empireId: existingMember.EmpireID,
+        clan: existingMember.JoinedClan
+      }
+    };
   }
 
   const discordUser = data.discordUser || "";
@@ -353,7 +378,8 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   console.log(`[acceptedapps] 🏷️ Clan: ${clan.abbr}`);
   console.log(`[acceptedapps] 🎭 Roles: Military, Recruit, ${clan.abbr}`);
   console.log(`[acceptedapps] 🎖️ Draft: Active until ${expiryDate.toLocaleString()}`);
+  console.log(`[acceptedapps] 📅 Join Date: ${closeDate} (LOCKED)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   
-  return { success: true, empireId, clan };
+  return { success: true, empireId, clan, joinDate: closeDate };
 };

@@ -40,7 +40,6 @@ module.exports = {
         .setStyle(ButtonStyle.Primary)
     );
 
-    // ✅ FIXED: Removed ephemeral flag to make it publicly visible
     await interaction.reply({
       embeds: [appEmbed],
       components: [row]
@@ -142,7 +141,9 @@ module.exports = {
       return interaction.showModal(modal);
     }
 
-    // Accept / Reject
+    // ============================================================
+    // ✅ ACCEPT / REJECT WITH DUPLICATE PREVENTION
+    // ============================================================
     if (
       interaction.customId.startsWith("accept_application_") ||
       interaction.customId.startsWith("reject_application_")
@@ -159,14 +160,55 @@ module.exports = {
       const isAccepted = interaction.customId.startsWith("accept_application_");
       const discordId = interaction.customId.split("_").pop();
 
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[application] 🎯 ${isAccepted ? 'Accept' : 'Reject'} button clicked`);
+      console.log(`[application] 👤 Target: ${discordId}`);
+      console.log(`[application] 👮 Moderator: ${interaction.user.tag}`);
+
       const applicantData = getApplicant(discordId);
       if (!applicantData) {
+        console.log(`[application] ❌ Applicant not found`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.reply({
           content: "⚠️ Applicant not found.",
           ephemeral: true
         });
       }
 
+      // ============================================================
+      // ✅ CHECK IF ALREADY PROCESSED
+      // ============================================================
+      if (applicantData.closedAt) {
+        console.log(`[application] ⚠️ Application already processed`);
+        console.log(`[application] 📅 Original close date: ${applicantData.closedAt}`);
+        console.log(`[application] 📊 Status: ${applicantData.accepted ? 'Accepted' : 'Rejected'}`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+        // Disable the buttons on the original message
+        try {
+          await interaction.message.edit({ components: [] });
+          console.log(`[application] 🔒 Buttons disabled on message`);
+        } catch (err) {
+          console.warn(`[application] ⚠️ Could not disable buttons:`, err.message);
+        }
+
+        const statusText = applicantData.accepted ? "✅ Accepted" : "❌ Rejected";
+        const closeDate = new Date(applicantData.closedAt).toLocaleString('en-GB');
+
+        return interaction.reply({
+          content: 
+            `⚠️ **This application has already been processed!**\n\n` +
+            `**Status:** ${statusText}\n` +
+            `**Processed on:** ${closeDate}\n\n` +
+            `The buttons have been disabled to prevent duplicate processing.`,
+          ephemeral: true
+        });
+      }
+
+      // ============================================================
+      // ✅ PROCESS THE APPLICATION (FIRST TIME ONLY)
+      // ============================================================
+      
       // Normalize values from applicantData
       const savedMCUser = applicantData.minecraftUser || applicantData.minecraftName || "";
       const savedMCVersion = applicantData.minecraftVersion || applicantData.minecraftVersion || "";
@@ -189,18 +231,45 @@ module.exports = {
         applicantData.server ?? interaction.guild.id,
         applicantData.closeReason ?? null,
         isAccepted,
-        new Date().toISOString()
+        new Date().toISOString() // ✅ This is the FIRST and ONLY close date
       );
 
-      if (isAccepted) {
-        // ✅ PASS CLIENT FOR ROLE DETECTION
-        await acceptApplicant(discordId, interaction.client);
+      console.log(`[application] 📝 Application marked as ${isAccepted ? 'accepted' : 'rejected'}`);
+      console.log(`[application] 📅 Close date: ${new Date().toISOString()}`);
+
+      // ============================================================
+      // ✅ DISABLE BUTTONS IMMEDIATELY
+      // ============================================================
+      try {
+        await interaction.message.edit({ components: [] });
+        console.log(`[application] 🔒 Buttons disabled successfully`);
+      } catch (err) {
+        console.warn(`[application] ⚠️ Could not disable buttons:`, err.message);
       }
+
+      // ============================================================
+      // ✅ ACCEPT APPLICANT (if accepted)
+      // ============================================================
+      if (isAccepted) {
+        console.log(`[application] 🎯 Running acceptance process...`);
+        
+        const acceptResult = await acceptApplicant(discordId, interaction.client);
+        
+        if (acceptResult.success) {
+          console.log(`[application] ✅ Acceptance successful`);
+          console.log(`[application] 🆔 Empire ID: ${acceptResult.empireId}`);
+          console.log(`[application] 🏷️ Clan: ${acceptResult.clan?.abbr}`);
+        } else {
+          console.error(`[application] ❌ Acceptance failed: ${acceptResult.reason}`);
+        }
+      }
+
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
       return interaction.reply({
         content: isAccepted
-          ? `✅ <@${discordId}> marked as **Accepted**.`
-          : `❌ <@${discordId}> marked as **Rejected**.`,
+          ? `✅ <@${discordId}> has been **Accepted**. The buttons have been disabled to prevent duplicate processing.`
+          : `❌ <@${discordId}> has been **Rejected**. The buttons have been disabled.`,
         ephemeral: true
       });
     }
@@ -261,7 +330,7 @@ module.exports = {
         ]
       });
 
-      // Save applicant with unified fields
+      // Save applicant with unified fields (not yet accepted/closed)
       saveApplicant(interaction.user.id, {
         discordId: interaction.user.id,
         discordUser: interaction.user.tag,
@@ -275,7 +344,7 @@ module.exports = {
         server: guild.id,
         accepted: false,
         closeReason: null,
-        closedAt: null
+        closedAt: null // ✅ Not closed yet
       });
 
       setTimeout(() => {

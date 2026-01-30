@@ -17,6 +17,7 @@ const cache = require("../data/cache");
 const { saveApplicant, getApplicant } = require("./applicants");
 const autolink = require("../linking/autolink");
 const { acceptApplicant } = require("./acceptedapplicants.js");
+const { checkApplicationEligibility } = require("../membertracking/memberkickban"); // ✅ NEW
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -51,6 +52,29 @@ module.exports = {
 
     // 🟢 Open Application Ticket (Modal)
     if (interaction.customId === "start_application") {
+      // ============================================================
+      // ✅ NEW: CHECK KICK/BAN STATUS BEFORE ALLOWING APPLICATION
+      // ============================================================
+      const eligibility = checkApplicationEligibility(interaction.user.id);
+      
+      if (!eligibility.eligible) {
+        console.log(`[application] ⛔ Application blocked for ${interaction.user.tag}`);
+        console.log(`[application] 📋 Status: ${eligibility.status}`);
+        console.log(`[application] 📋 Reason: ${eligibility.reason}`);
+        
+        // User is banned or on kick cooldown
+        return interaction.reply({
+          content: eligibility.message,
+          ephemeral: true
+        });
+      }
+      
+      console.log(`[application] ✅ ${interaction.user.tag} is eligible to apply`);
+      
+      // ============================================================
+      // CONTINUE WITH NORMAL APPLICATION FLOW
+      // ============================================================
+      
       const category = guild.channels.cache.find(
         (c) =>
           c.type === ChannelType.GuildCategory &&

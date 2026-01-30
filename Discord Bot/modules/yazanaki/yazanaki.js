@@ -3,7 +3,7 @@
 
 const { SlashCommandBuilder, AttachmentBuilder } = require("discord.js");
 const { createYazanakiEmbed } = require("./yazanakiembed");
-const { getEmpireStats, getEmpireLeaders } = require("./yazanakilogic");
+const { getEmpireStatsAndLeaders } = require("./yazanakilogic");
 const path = require("path");
 const fs = require("fs");
 
@@ -26,50 +26,27 @@ module.exports = {
 
     try {
       // ============================================================
-      // STEP 1: GET EMPIRE STATISTICS (now async and includes all guilds)
+      // ✅ STEP 1: GET EMPIRE STATISTICS AND LEADERS IN ONE CALL
       // ============================================================
-      console.log(`[/yazanaki] 📊 Fetching empire statistics from all guilds...`);
+      console.log(`[/yazanaki] 📊 Fetching empire data...`);
       
-      const empireStats = await getEmpireStats(interaction.client);
+      const empireData = await getEmpireStatsAndLeaders(interaction.client);
       
-      console.log(`[/yazanaki] ✅ Stats: ${empireStats.totalUniquePeople} unique, ${empireStats.totalResidents} residents`);
+      console.log(`[/yazanaki] ✅ Stats: ${empireData.totalUniquePeople} unique, ${empireData.totalResidents} residents`);
+      console.log(`[/yazanaki] ✅ Emperor: ${empireData.emperor}`);
+      console.log(`[/yazanaki] ✅ Empress: ${empireData.empress}`);
 
       // ============================================================
-      // STEP 2: GET EMPEROR AND EMPRESS (using role IDs)
+      // STEP 2: PREPARE EMPIRE DATA FOR EMBED
       // ============================================================
-      console.log(`[/yazanaki] 👑 Fetching empire leaders...`);
-      
-      let emperorMention = "``n/d``";
-      let empressMention = "``n/d``";
-      
-      try {
-        const yazanakiGuild = await interaction.client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
-        
-        if (yazanakiGuild) {
-          const leaders = await getEmpireLeaders(yazanakiGuild);
-          emperorMention = leaders.emperor;
-          empressMention = leaders.empress;
-          
-          console.log(`[/yazanaki] ✅ Emperor: ${emperorMention}`);
-          console.log(`[/yazanaki] ✅ Empress: ${empressMention}`);
-        } else {
-          console.warn(`[/yazanaki] ⚠️ Could not fetch Yazanaki Empire guild`);
-        }
-      } catch (err) {
-        console.error(`[/yazanaki] ❌ Error fetching leaders:`, err.message);
-      }
-
-      // ============================================================
-      // STEP 3: PREPARE EMPIRE DATA
-      // ============================================================
-      const empireData = {
-        totalUniquePeople: empireStats.totalUniquePeople,
-        totalResidents: empireStats.totalResidents,
+      const empireEmbedData = {
+        totalUniquePeople: empireData.totalUniquePeople,
+        totalResidents: empireData.totalResidents,
         inviteLink: `[Join Yazanaki Empire](${EMPIRE_INVITE_LINK})`
       };
 
       // ============================================================
-      // STEP 4: PREPARE EMBLEM AND FLAG
+      // STEP 3: PREPARE EMBLEM AND FLAG
       // ============================================================
       const emblemPath = path.join(__dirname, "../images/clanflags/YZNKI.png");
       const flagPath = path.join(__dirname, "../images/clanflags/YAZANAKI.png");
@@ -100,21 +77,21 @@ module.exports = {
       }
 
       // ============================================================
-      // STEP 5: CREATE EMBED
+      // STEP 4: CREATE EMBED
       // ============================================================
       console.log(`[/yazanaki] 📝 Creating embed...`);
 
       const embed = createYazanakiEmbed(
-        empireData,
-        emperorMention,
-        empressMention,
+        empireEmbedData,
+        empireData.emperor,    // ✅ From combined fetch
+        empireData.empress,    // ✅ From combined fetch
         emblemUrl,
         flagFileName,
         0x000000 // Black color
       );
 
       // ============================================================
-      // STEP 6: SEND EMBED
+      // STEP 5: SEND EMBED
       // ============================================================
       console.log(`[/yazanaki] 📤 Sending embed...`);
 

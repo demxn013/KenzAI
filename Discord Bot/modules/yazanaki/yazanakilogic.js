@@ -5,6 +5,9 @@ const path = require("path");
 const membersPath = path.join(__dirname, "../data/members.json");
 const clansPath = path.join(__dirname, "../data/clans.json");
 
+// Yazanaki Empire Guild ID
+const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
+
 /**
  * Read members.json
  */
@@ -43,28 +46,99 @@ function readClans() {
 
 /**
  * Get empire-wide statistics
- * @returns {Object} Empire statistics
+ * ✅ FIXED: Now properly counts unique Discord members across all guilds
+ * @param {Client} client - Discord.js client
+ * @returns {Promise<Object>} Empire statistics
  */
-function getEmpireStats() {
+async function getEmpireStats(client) {
   console.log("[yazanakilogic] 📊 Calculating empire statistics...");
   
-  const members = readMembers();
   const clans = readClans();
   
-  // Count unique members (people in members.json)
-  const totalUniquePeople = Object.keys(members).length;
-  console.log(`[yazanakilogic] 👥 Unique members: ${totalUniquePeople}`);
+  // Set to track unique Discord user IDs across all guilds
+  const uniqueDiscordIds = new Set();
   
-  // Sum residents across all clans
+  // Track total residents from clans.json (this is the count from members.json)
   let totalResidents = 0;
   
-  for (const [guildId, clan] of Object.entries(clans)) {
-    const residents = clan.residents || 0;
-    totalResidents += residents;
-    console.log(`[yazanakilogic] 🏠 ${clan.abbr}: ${residents} residents`);
+  // ============================================================
+  // STEP 1: Fetch members from Yazanaki Empire discord
+  // ============================================================
+  try {
+    console.log(`[yazanakilogic] 📡 Fetching members from Yazanaki Empire...`);
+    
+    const yazanakiGuild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+    
+    if (yazanakiGuild) {
+      const yazanakiMembers = await yazanakiGuild.members.fetch().catch(() => null);
+      
+      if (yazanakiMembers) {
+        // Add all non-bot members to the unique set
+        yazanakiMembers.forEach(member => {
+          if (!member.user.bot) {
+            uniqueDiscordIds.add(member.id);
+          }
+        });
+        
+        console.log(`[yazanakilogic] ✅ Yazanaki Empire: ${uniqueDiscordIds.size} unique members`);
+      } else {
+        console.warn(`[yazanakilogic] ⚠️ Could not fetch Yazanaki Empire members`);
+      }
+    } else {
+      console.warn(`[yazanakilogic] ⚠️ Could not fetch Yazanaki Empire guild`);
+    }
+  } catch (err) {
+    console.error(`[yazanakilogic] ❌ Error fetching Yazanaki Empire members:`, err.message);
   }
   
-  console.log(`[yazanakilogic] 🏠 Total residents: ${totalResidents}`);
+  // ============================================================
+  // STEP 2: Fetch members from all clan discords
+  // ============================================================
+  for (const [guildId, clan] of Object.entries(clans)) {
+    try {
+      console.log(`[yazanakilogic] 📡 Fetching members from ${clan.abbr}...`);
+      
+      const clanGuild = await client.guilds.fetch(guildId).catch(() => null);
+      
+      if (!clanGuild) {
+        console.warn(`[yazanakilogic] ⚠️ Could not fetch clan guild: ${clan.abbr}`);
+        continue;
+      }
+      
+      const clanMembers = await clanGuild.members.fetch().catch(() => null);
+      
+      if (!clanMembers) {
+        console.warn(`[yazanakilogic] ⚠️ Could not fetch members from ${clan.abbr}`);
+        continue;
+      }
+      
+      // Add all non-bot members to the unique set
+      let newMembers = 0;
+      clanMembers.forEach(member => {
+        if (!member.user.bot && !uniqueDiscordIds.has(member.id)) {
+          uniqueDiscordIds.add(member.id);
+          newMembers++;
+        }
+      });
+      
+      console.log(`[yazanakilogic] ✅ ${clan.abbr}: ${clanMembers.size} total, ${newMembers} new unique`);
+      
+      // Add residents count from clans.json
+      totalResidents += (clan.residents || 0);
+      
+    } catch (err) {
+      console.error(`[yazanakilogic] ❌ Error fetching ${clan.abbr} members:`, err.message);
+    }
+  }
+  
+  // ============================================================
+  // STEP 3: Return statistics
+  // ============================================================
+  const totalUniquePeople = uniqueDiscordIds.size;
+  
+  console.log(`[yazanakilogic] 📊 Final Statistics:`);
+  console.log(`[yazanakilogic] 👥 Total Unique Discord Members: ${totalUniquePeople}`);
+  console.log(`[yazanakilogic] 🏠 Total Residents (from clans.json): ${totalResidents}`);
   
   return {
     totalUniquePeople,
@@ -143,4 +217,4 @@ module.exports = {
   getEmpireLeaders,
   readMembers,
   readClans
-};
+};5

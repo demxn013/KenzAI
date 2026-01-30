@@ -184,10 +184,30 @@ module.exports = {
         console.log(`[application] 📊 Status: ${applicantData.accepted ? 'Accepted' : 'Rejected'}`);
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        // Disable the buttons on the original message
+        // ✅ DISABLE ONLY THE ACCEPT AND REJECT BUTTONS, KEEP CLOSE BUTTON
         try {
-          await interaction.message.edit({ components: [] });
-          console.log(`[application] 🔒 Buttons disabled on message`);
+          const currentMessage = interaction.message;
+          
+          // Rebuild the buttons with Accept/Reject disabled
+          const newRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId("close_ticket")
+              .setLabel("🔒 Close Ticket")
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`accept_application_${discordId}`)
+              .setLabel("✅ Accept")
+              .setStyle(ButtonStyle.Success)
+              .setDisabled(true), // ✅ Disabled
+            new ButtonBuilder()
+              .setCustomId(`reject_application_${discordId}`)
+              .setLabel("❌ Reject")
+              .setStyle(ButtonStyle.Danger)
+              .setDisabled(true) // ✅ Disabled
+          );
+
+          await currentMessage.edit({ components: [newRow] });
+          console.log(`[application] 🔒 Accept/Reject buttons disabled`);
         } catch (err) {
           console.warn(`[application] ⚠️ Could not disable buttons:`, err.message);
         }
@@ -200,7 +220,7 @@ module.exports = {
             `⚠️ **This application has already been processed!**\n\n` +
             `**Status:** ${statusText}\n` +
             `**Processed on:** ${closeDate}\n\n` +
-            `The buttons have been disabled to prevent duplicate processing.`,
+            `The Accept/Reject buttons have been disabled.`,
           ephemeral: true
         });
       }
@@ -238,11 +258,30 @@ module.exports = {
       console.log(`[application] 📅 Close date: ${new Date().toISOString()}`);
 
       // ============================================================
-      // ✅ DISABLE BUTTONS IMMEDIATELY
+      // ✅ DISABLE ONLY ACCEPT/REJECT BUTTONS (KEEP CLOSE BUTTON)
       // ============================================================
       try {
-        await interaction.message.edit({ components: [] });
-        console.log(`[application] 🔒 Buttons disabled successfully`);
+        const currentMessage = interaction.message;
+        
+        const newRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("close_ticket")
+            .setLabel("🔒 Close Ticket")
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`accept_application_${discordId}`)
+            .setLabel("✅ Accept")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true), // ✅ Disabled
+          new ButtonBuilder()
+            .setCustomId(`reject_application_${discordId}`)
+            .setLabel("❌ Reject")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(true) // ✅ Disabled
+        );
+
+        await currentMessage.edit({ components: [newRow] });
+        console.log(`[application] 🔒 Accept/Reject buttons disabled successfully`);
       } catch (err) {
         console.warn(`[application] ⚠️ Could not disable buttons:`, err.message);
       }
@@ -268,8 +307,8 @@ module.exports = {
 
       return interaction.reply({
         content: isAccepted
-          ? `✅ <@${discordId}> has been **Accepted**. The buttons have been disabled to prevent duplicate processing.`
-          : `❌ <@${discordId}> has been **Rejected**. The buttons have been disabled.`,
+          ? `✅ <@${discordId}> has been **Accepted**. The Accept/Reject buttons have been disabled.`
+          : `❌ <@${discordId}> has been **Rejected**. The Accept/Reject buttons have been disabled.`,
         ephemeral: true
       });
     }

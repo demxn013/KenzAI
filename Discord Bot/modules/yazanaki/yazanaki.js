@@ -11,7 +11,7 @@ const fs = require("fs");
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
 // Empire invite link (you can change this)
-const EMPIRE_INVITE_LINK = "https://discord.gg/yazanaki-1220847061797179524"; // ✅ REPLACE WITH YOUR ACTUAL INVITE LINK
+const EMPIRE_INVITE_LINK = "https://discord.gg/yazanakiempire"; // ✅ REPLACE WITH YOUR ACTUAL INVITE LINK
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -26,16 +26,16 @@ module.exports = {
 
     try {
       // ============================================================
-      // STEP 1: GET EMPIRE STATISTICS
+      // STEP 1: GET EMPIRE STATISTICS (now async and includes all guilds)
       // ============================================================
-      console.log(`[/yazanaki] 📊 Fetching empire statistics...`);
+      console.log(`[/yazanaki] 📊 Fetching empire statistics from all guilds...`);
       
-      const empireStats = getEmpireStats();
+      const empireStats = await getEmpireStats(interaction.client);
       
       console.log(`[/yazanaki] ✅ Stats: ${empireStats.totalUniquePeople} unique, ${empireStats.totalResidents} residents`);
 
       // ============================================================
-      // STEP 2: GET EMPEROR AND EMPRESS
+      // STEP 2: GET EMPEROR AND EMPRESS (using role IDs)
       // ============================================================
       console.log(`[/yazanaki] 👑 Fetching empire leaders...`);
       

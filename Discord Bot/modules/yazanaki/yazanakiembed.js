@@ -41,12 +41,12 @@ function createYazanakiEmbed(
         inline: false 
       },
       { 
-        name: "🏠 Total Citizens", 
+        name: "🏠 Total Residents", 
         value: `\`${empireData.totalResidents || 0}\``, 
         inline: false 
       },
       { 
-        name: "👥 Empire Size", 
+        name: "👥 Unique Size", 
         value: `\`${empireData.totalUniquePeople || 0}\``, 
         inline: false 
       },

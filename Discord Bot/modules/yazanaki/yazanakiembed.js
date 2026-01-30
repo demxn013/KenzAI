@@ -28,32 +28,32 @@ function createYazanakiEmbed(
       { 
         name: "👑 Emperor", 
         value: emperorMention || "``n/d``", 
-        inline: true 
+        inline: false 
       },
       { 
         name: "👑 Empress", 
         value: empressMention || "``n/d``", 
-        inline: true 
+        inline: false 
       },
       { 
         name: "‎", 
         value: "‎", 
-        inline: true 
-      },
-      { 
-        name: "👥 Unique Members", 
-        value: `\`${empireData.totalUniquePeople || 0}\``, 
-        inline: true 
+        inline: false 
       },
       { 
         name: "🏠 Total Residents", 
         value: `\`${empireData.totalResidents || 0}\``, 
-        inline: true 
+        inline: false 
+      },
+      { 
+        name: "👥 Unique Members", 
+        value: `\`${empireData.totalUniquePeople || 0}\``, 
+        inline: false 
       },
       { 
         name: "‎", 
         value: "‎", 
-        inline: true 
+        inline: false 
       },
       { 
         name: "🔗 Join the Empire", 

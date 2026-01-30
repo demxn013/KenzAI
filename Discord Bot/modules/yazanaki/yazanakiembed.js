@@ -26,6 +26,11 @@ function createYazanakiEmbed(
     .setColor(color)
     .addFields(
       { 
+        name: "‎", 
+        value: "‎", 
+        inline: false 
+      },
+      { 
         name: "👑 Emperor", 
         value: emperorMention || "``n/d``", 
         inline: false 
@@ -33,11 +38,6 @@ function createYazanakiEmbed(
       { 
         name: "👑 Empress", 
         value: empressMention || "``n/d``", 
-        inline: false 
-      },
-      { 
-        name: "‎", 
-        value: "‎", 
         inline: false 
       },
       { 

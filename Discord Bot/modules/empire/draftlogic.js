@@ -1,5 +1,6 @@
 // modules/empire/draftlogic.js
 // ✅ Core draft management logic + button handling
+// ✅ NEW: Decrements clan resident count when members leave
 
 const fs = require("fs");
 const path = require("path");
@@ -10,10 +11,14 @@ const {
   createFarewellEmbed
 } = require("./draftembed");
 
+// ✅ Import clan resident management
+const { decrementClanResidents } = require("../clantracking/clanlogic");
+
 const dataDir = path.join(__dirname, "..", "data");
 const membersPath = path.join(dataDir, "members.json");
 const archivedPath = path.join(dataDir, "archived_members.json");
 const empireIdsPath = path.join(dataDir, "empireids.json");
+const clansPath = path.join(dataDir, "clans.json");
 
 // ============================================================
 // DATA ACCESS
@@ -94,6 +99,28 @@ function writeEmpireIds(data) {
   } catch (err) {
     console.error("[draftlogic] ❌ Error writing empireids.json:", err);
     return false;
+  }
+}
+
+/**
+ * ✅ Helper function to get clan guild ID from clan name
+ */
+function getClanGuildId(clanName) {
+  try {
+    if (!fs.existsSync(clansPath)) return null;
+    
+    const raw = fs.readFileSync(clansPath, "utf8");
+    const clans = JSON.parse(raw);
+    
+    // Find clan by name or abbreviation
+    const guildId = Object.keys(clans).find(id =>
+      clans[id].name === clanName || clans[id].abbr === clanName
+    );
+    
+    return guildId || null;
+  } catch (err) {
+    console.error("[draftlogic] ❌ Error reading clans.json:", err);
+    return null;
   }
 }
 
@@ -307,6 +334,7 @@ async function completeDraft(discordId, outcome, client) {
 /**
  * Archive member when they leave Yazanaki Empire
  * Removes all empire-related roles and moves to archived_members.json
+ * ✅ NEW: Decrements clan resident count
  */
 async function archiveMember(discordId, reason, client) {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -336,6 +364,23 @@ async function archiveMember(discordId, reason, client) {
       empireIds.ids[empireId].archivedAt = new Date().toISOString();
       writeEmpireIds(empireIds);
       console.log(`[draftlogic] 🆔 Deactivated Empire ID: ${empireId}`);
+    }
+    
+    // ✅ NEW: 2.5. Decrement clan resident count
+    const clanName = member.JoinedClan;
+    if (clanName) {
+      const clanGuildId = getClanGuildId(clanName);
+      
+      if (clanGuildId) {
+        const decremented = decrementClanResidents(clanGuildId);
+        if (decremented) {
+          console.log(`[draftlogic] 📊 Decremented resident count for clan: ${clanName}`);
+        } else {
+          console.warn(`[draftlogic] ⚠️ Failed to decrement resident count for clan: ${clanName}`);
+        }
+      } else {
+        console.warn(`[draftlogic] ⚠️ Could not find clan guild ID for: ${clanName}`);
+      }
     }
     
     // 3. Move to archived_members.json
@@ -423,7 +468,6 @@ async function removeAllYazanakiRoles(discordId, client) {
     }
     
     // Remove clan role (if member has one)
-    const clansPath = path.join(__dirname, "..", "data", "clans.json");
     try {
       const clansRaw = fs.readFileSync(clansPath, "utf8");
       const clans = JSON.parse(clansRaw);

@@ -1,5 +1,6 @@
 // modules/clantracking/clan.js
 // ✅ COMPLETE FIX: Includes type option in setrole command
+// ✅ NEW: Shows actual resident count from clans.json
 
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
 const clanlogic = require("./clanlogic");
@@ -57,10 +58,15 @@ module.exports = {
       sub
         .setName("list")
         .setDescription("List all registered clans")
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName("sync-residents")
+        .setDescription("Sync resident counts from members.json (ONE-TIME USE)")
     ),
 
   async execute(interaction) {
-    const isAdminCommand = ['add', 'setrole', 'remove'].includes(interaction.options.getSubcommand());
+    const isAdminCommand = ['add', 'setrole', 'remove', 'sync-residents'].includes(interaction.options.getSubcommand());
     
     if (isAdminCommand && !interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
       return interaction.reply({
@@ -96,7 +102,8 @@ module.exports = {
         name,
         joinedEmpire: new Date().toISOString().split("T")[0],
         yazanakiRoleId: yazanakiRole ? yazanakiRole.id : null,
-        clanRoleId: clanRole ? clanRole.id : null
+        clanRoleId: clanRole ? clanRole.id : null,
+        residents: 0 // ✅ Initialize with 0 residents
       };
 
       try {
@@ -137,6 +144,8 @@ module.exports = {
             response += `⚠️ Clan Role: NOT SET (Optional)\n`;
             response += `   Use: \`/clan setrole clan:${abbr} type:Clan role:@RoleName\`\n`;
           }
+          
+          response += `\n📊 Residents: 0 (use /clan sync-residents to populate from existing members)`;
           
           return interaction.editReply({ content: response });
         } else {
@@ -264,7 +273,10 @@ module.exports = {
 
       const owner = await guild.fetchOwner().catch(() => null);
       const leader = owner ? `<@${owner.id}>` : "`n/d`";
-      const residents = "`n/d`";
+      
+      // ✅ NEW: Get actual resident count from clans.json
+      const residentCount = clan.residents || 0;
+      const residents = `\`${residentCount}\``;
 
       const jd = clan.joinedEmpire?.split("-");
       const joinedDateText = jd?.length === 3 ? `\`${jd[2]}/${jd[1]}/${jd[0]}\`` : "`n/d`";
@@ -351,11 +363,111 @@ module.exports = {
           const invite = c.invite || "n/d";
           const yazanakiStatus = c.yazanakiRoleId ? "✅" : "❌";
           const clanStatus = c.clanRoleId ? "✅" : "⚠️";
-          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite})`;
+          const residentCount = c.residents || 0;
+          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite}) - ${residentCount} residents`;
         }).join("\n"))
         .setFooter({ text: "✅ = Set | ❌ = Missing Yazanaki role | ⚠️ = Missing clan role" });
 
       return interaction.editReply({ embeds: [embed] });
+    }
+
+    // -------------------------------------------------------------------------
+    // ✅ NEW: SYNC RESIDENTS (ONE-TIME USE)
+    // -------------------------------------------------------------------------
+    if (sub === "sync-residents") {
+      await interaction.deferReply({ ephemeral: true });
+
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("[clan sync-residents] 🔄 Starting resident count sync...");
+
+      const membersPath = path.join(__dirname, "../data/members.json");
+      
+      if (!fs.existsSync(membersPath)) {
+        console.log("[clan sync-residents] ❌ members.json not found");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+        return interaction.editReply({
+          content: "❌ members.json not found. No members to sync.",
+          ephemeral: true
+        });
+      }
+
+      const membersRaw = fs.readFileSync(membersPath, "utf8");
+      const members = JSON.parse(membersRaw);
+
+      // Count members per clan
+      const clanCounts = {};
+
+      for (const [discordId, member] of Object.entries(members)) {
+        const clanName = member.JoinedClan;
+        
+        if (!clanName) {
+          console.log(`[clan sync-residents] ⚠️ Member ${discordId} has no clan`);
+          continue;
+        }
+
+        // Find the guild ID for this clan name
+        const guildId = Object.keys(clans).find(id => 
+          clans[id].name === clanName || clans[id].abbr === clanName
+        );
+
+        if (!guildId) {
+          console.log(`[clan sync-residents] ⚠️ Clan "${clanName}" not found in clans.json`);
+          continue;
+        }
+
+        clanCounts[guildId] = (clanCounts[guildId] || 0) + 1;
+      }
+
+      console.log(`[clan sync-residents] 📊 Found ${Object.keys(clanCounts).length} clans with members`);
+
+      // Update each clan's resident count
+      let updatedCount = 0;
+      const updates = [];
+
+      for (const [guildId, count] of Object.entries(clanCounts)) {
+        const clan = clans[guildId];
+        
+        if (!clan) continue;
+
+        const oldCount = clan.residents || 0;
+        clan.residents = count;
+        
+        console.log(`[clan sync-residents] 🔄 ${clan.abbr}: ${oldCount} → ${count}`);
+        
+        updates.push(`**${clan.abbr}**: ${oldCount} → ${count} residents`);
+        updatedCount++;
+      }
+
+      // Zero out clans with no members
+      for (const [guildId, clan] of Object.entries(clans)) {
+        if (!clanCounts[guildId]) {
+          const oldCount = clan.residents || 0;
+          clan.residents = 0;
+          
+          if (oldCount > 0) {
+            console.log(`[clan sync-residents] 🔄 ${clan.abbr}: ${oldCount} → 0`);
+            updates.push(`**${clan.abbr}**: ${oldCount} → 0 residents`);
+            updatedCount++;
+          }
+        }
+      }
+
+      clanlogic.writeClans(clans);
+
+      console.log(`[clan sync-residents] ✅ Updated ${updatedCount} clans`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+      const embed = new EmbedBuilder()
+        .setTitle("✅ Resident Count Sync Complete")
+        .setDescription(
+          `Successfully synced resident counts from members.json\n\n` +
+          `**Updated ${updatedCount} clan(s):**\n\n` +
+          updates.join("\n")
+        )
+        .setColor(0x00AA00)
+        .setFooter({ text: "Future acceptances will auto-update counts" });
+
+      return interaction.editReply({ embeds: [embed], ephemeral: true });
     }
   }
 };

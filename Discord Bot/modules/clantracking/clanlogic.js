@@ -45,6 +45,132 @@ function writeClans(data) {
   }
 }
 
+/**
+ * ✅ NEW: Increment resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {boolean} Success status
+ */
+function incrementClanResidents(guildId) {
+  console.log(`[clanlogic] 📊 Incrementing residents for clan ${guildId}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    // Initialize residents if not present
+    if (typeof clan.residents !== 'number') {
+      clan.residents = 0;
+    }
+    
+    clan.residents += 1;
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error incrementing residents:`, err);
+    return false;
+  }
+}
+
+/**
+ * ✅ NEW: Decrement resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {boolean} Success status
+ */
+function decrementClanResidents(guildId) {
+  console.log(`[clanlogic] 📊 Decrementing residents for clan ${guildId}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    // Initialize residents if not present
+    if (typeof clan.residents !== 'number') {
+      clan.residents = 0;
+    }
+    
+    // Don't go below 0
+    if (clan.residents > 0) {
+      clan.residents -= 1;
+    }
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error decrementing residents:`, err);
+    return false;
+  }
+}
+
+/**
+ * ✅ NEW: Get resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {number} Number of residents (0 if not found or not set)
+ */
+function getClanResidents(guildId) {
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      return 0;
+    }
+    
+    return clan.residents || 0;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error getting residents:`, err);
+    return 0;
+  }
+}
+
+/**
+ * ✅ NEW: Set resident count for a clan (used for initialization)
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @param {number} count - Number of residents
+ * @returns {boolean} Success status
+ */
+function setClanResidents(guildId, count) {
+  console.log(`[clanlogic] 📊 Setting residents for clan ${guildId} to ${count}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    clan.residents = Math.max(0, count); // Ensure non-negative
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents set to: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error setting residents:`, err);
+    return false;
+  }
+}
+
 // Flag file helpers
 function getFlagPath(abbr) {
   if (!abbr) return null;
@@ -142,4 +268,9 @@ module.exports = {
   deleteFlag,
   getDominantColor,
   updateBannerIfNew,
+  // ✅ NEW: Resident management functions
+  incrementClanResidents,
+  decrementClanResidents,
+  getClanResidents,
+  setClanResidents,
 };

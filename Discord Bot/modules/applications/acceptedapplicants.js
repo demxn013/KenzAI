@@ -3,6 +3,7 @@
 // ✅ BLOCKS acceptance if user is not in Yazanaki Empire
 // ✅ FIXED: Properly initializes draft fields when creating member entry
 // ✅ NEW: Additional check to prevent duplicate acceptance processing
+// ✅ NEW: Increments clan resident count on acceptance
 
 const fs = require("fs");
 const path = require("path");
@@ -21,6 +22,9 @@ const ROLES = {
   RECRUIT: "1345398371522842624",  // Draft role
   CITIZEN: "1334641779009519668"
 };
+
+// ✅ Import clan resident management
+const { incrementClanResidents } = require("../clantracking/clanlogic");
 
 // Ensure data files
 if (!fs.existsSync(dataDir)) {
@@ -223,6 +227,7 @@ async function assignClanRole(client, discordId, clanGuildId, clan) {
  * 4. Assign Empire ID
  * 5. Create member entry in members.json with ALL required fields
  * 6. Start draft (which updates the existing member entry)
+ * 7. ✅ NEW: Increment clan resident count
  */
 module.exports.acceptApplicant = async function (discordId, client = null) {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -372,6 +377,18 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   console.log(`[acceptedapps] 🎖️ Draft Mode: ${mode}`);
   console.log(`[acceptedapps] ⏰ Draft Duration: ${duration}`);
   console.log(`[acceptedapps] 📅 Draft Expiry: ${expiryDate.toISOString()}`);
+
+  // ============================================================
+  // ✅ NEW: STEP 6: INCREMENT CLAN RESIDENT COUNT
+  // ============================================================
+  console.log(`[acceptedapps] 📊 STEP 6: Incrementing clan resident count...`);
+  const residentIncremented = incrementClanResidents(clanGuildId);
+  
+  if (residentIncremented) {
+    console.log(`[acceptedapps] ✅ Clan ${clan.abbr} resident count updated`);
+  } else {
+    console.warn(`[acceptedapps] ⚠️ Failed to increment resident count for ${clan.abbr}`);
+  }
 
   console.log(`[acceptedapps] ✅ SUCCESS!`);
   console.log(`[acceptedapps] 🆔 Empire ID: ${empireId}`);

@@ -4,6 +4,7 @@ const path = require("path");
 
 const membersPath = path.join(__dirname, "../data/members.json");
 const clansPath = path.join(__dirname, "../data/clans.json");
+const rolesPath = path.join(__dirname, "../data/roles.json");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -40,6 +41,24 @@ function readClans() {
     return raw.trim() ? JSON.parse(raw) : {};
   } catch (err) {
     console.error("[yazanakilogic] ❌ Error reading clans.json:", err);
+    return {};
+  }
+}
+
+/**
+ * Read roles.json
+ */
+function readRoles() {
+  try {
+    if (!fs.existsSync(rolesPath)) {
+      console.warn("[yazanakilogic] ⚠️ roles.json not found");
+      return {};
+    }
+    
+    const raw = fs.readFileSync(rolesPath, "utf8");
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error("[yazanakilogic] ❌ Error reading roles.json:", err);
     return {};
   }
 }
@@ -147,61 +166,80 @@ async function getEmpireStats(client) {
 }
 
 /**
- * Get emperor and empress mentions
+ * Get emperor and empress mentions using role IDs from roles.json
+ * ✅ FIXED: Now uses role IDs from roles.json instead of searching by name
  * @param {Guild} guild - Yazanaki Empire Discord guild
- * @returns {Object} { emperor: string, empress: string }
+ * @returns {Promise<Object>} { emperor: string, empress: string }
  */
 async function getEmpireLeaders(guild) {
   console.log("[yazanakilogic] 👑 Finding empire leaders...");
   
   try {
-    // Fetch all roles
-    const roles = await guild.roles.fetch();
+    // Load roles.json to get Emperor and Empress role IDs
+    const rolesConfig = readRoles();
     
-    // Find Emperor and Empress roles (case-insensitive)
-    const emperorRole = roles.find(role => 
-      role.name.toLowerCase() === "emperor"
-    );
+    if (!rolesConfig.guilds || !rolesConfig.guilds[YAZANAKI_EMPIRE_GUILD_ID]) {
+      console.warn("[yazanakilogic] ⚠️ Yazanaki Empire not found in roles.json");
+      return { emperor: "``n/d``", empress: "``n/d``" };
+    }
     
-    const empressRole = roles.find(role => 
-      role.name.toLowerCase() === "empress"
-    );
+    const yazanakiRoles = rolesConfig.guilds[YAZANAKI_EMPIRE_GUILD_ID].rankRoles;
     
     let emperorMention = "``n/d``";
     let empressMention = "``n/d``";
     
+    // Find Emperor role ID from roles.json
+    let emperorRoleId = null;
+    let empressRoleId = null;
+    
+    for (const [roleId, roleData] of Object.entries(yazanakiRoles)) {
+      if (roleData.name.toLowerCase() === "emperor") {
+        emperorRoleId = roleId;
+        console.log(`[yazanakilogic] 👑 Found Emperor role ID: ${roleId}`);
+      }
+      if (roleData.name.toLowerCase() === "empress") {
+        empressRoleId = roleId;
+        console.log(`[yazanakilogic] 👑 Found Empress role ID: ${roleId}`);
+      }
+    }
+    
+    // Fetch all members from the guild
+    const members = await guild.members.fetch();
+    
     // Get members with Emperor role
-    if (emperorRole) {
-      const members = await guild.members.fetch();
+    if (emperorRoleId) {
       const emperors = members.filter(member => 
-        member.roles.cache.has(emperorRole.id)
+        member.roles.cache.has(emperorRoleId)
       );
       
       if (emperors.size > 0) {
         // Get all emperor mentions
         const emperorMentions = emperors.map(member => `<@${member.id}>`);
         emperorMention = emperorMentions.join(", ");
-        console.log(`[yazanakilogic] 👑 Found ${emperors.size} Emperor(s)`);
+        console.log(`[yazanakilogic] ✅ Found ${emperors.size} Emperor(s): ${emperors.map(m => m.user.tag).join(", ")}`);
+      } else {
+        console.warn("[yazanakilogic] ⚠️ No members with Emperor role");
       }
     } else {
-      console.warn("[yazanakilogic] ⚠️ Emperor role not found");
+      console.warn("[yazanakilogic] ⚠️ Emperor role ID not found in roles.json");
     }
     
     // Get members with Empress role
-    if (empressRole) {
-      const members = await guild.members.fetch();
+    if (empressRoleId) {
       const empresses = members.filter(member => 
-        member.roles.cache.has(empressRole.id)
+        member.roles.cache.has(empressRoleId)
       );
       
       if (empresses.size > 0) {
         // Get all empress mentions
         const empressMentions = empresses.map(member => `<@${member.id}>`);
         empressMention = empressMentions.join(", ");
-        console.log(`[yazanakilogic] 👑 Found ${empresses.size} Empress(es)`);
+        console.log(`[yazanakilogic] ✅ Found ${empresses.size} Empress(es): ${empresses.map(m => m.user.tag).join(", ")}`);
+      } else {
+        console.warn("[yazanakilogic] ⚠️ No members with Empress role");
       }
     } else {
-      console.warn("[yazanakilogic] ⚠️ Empress role not found");
+      console.warn("[yazanakilogic] ⚠️ Empress role ID not found in roles.json");
     }
     
     return { emperor: emperorMention, empress: empressMention };
@@ -217,4 +255,4 @@ module.exports = {
   getEmpireLeaders,
   readMembers,
   readClans
-};5
+};

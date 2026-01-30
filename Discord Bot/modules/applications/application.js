@@ -369,11 +369,15 @@ module.exports = {
         ]
       });
 
-      // Save applicant with unified fields (not yet accepted/closed)
+      // ✅ FIXED: Save applicant IMMEDIATELY with minecraftUser field
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[application] 💾 Saving applicant data for ${interaction.user.tag}`);
+      console.log(`[application] 🎮 Minecraft: ${mcName}`);
+      
       saveApplicant(interaction.user.id, {
         discordId: interaction.user.id,
         discordUser: interaction.user.tag,
-        minecraftUser: mcName,
+        minecraftUser: mcName, // ✅ FIXED: Using minecraftUser instead of minecraftName
         ticketChannel: channel.id,
         ticketNumber,
         minecraftVersion: mcVersion,
@@ -383,12 +387,26 @@ module.exports = {
         server: guild.id,
         accepted: false,
         closeReason: null,
-        closedAt: null // ✅ Not closed yet
+        closedAt: null
       });
+      
+      console.log(`[application] ✅ Applicant data saved`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-      setTimeout(() => {
-        autolink.processApplicant(interaction.user.id);
-      }, 2500);
+      // ✅ FIXED: Run autolink AFTER saving, with async/await
+      console.log(`[application] 🔗 Starting autolink process...`);
+      
+      // Run autolink asynchronously (don't wait for it to complete the modal response)
+      autolink.processApplicant(interaction.user.id, 1000).then(result => {
+        if (result.success) {
+          console.log(`[application] ✅ Autolink successful: ${result.minecraftUser}`);
+        } else {
+          console.warn(`[application] ⚠️ Autolink failed: ${result.reason}`);
+          console.warn(`[application] ℹ️ User will need to use /link command manually`);
+        }
+      }).catch(err => {
+        console.error(`[application] ❌ Autolink error:`, err);
+      });
 
       cache.set(channel.id, {
         type: "application",

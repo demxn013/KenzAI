@@ -1,3 +1,6 @@
+// modules/data/cache.js
+// ✅ UPDATED: Added court_request ticket counter
+
 const fs = require("fs");
 const path = require("path");
 
@@ -36,7 +39,11 @@ module.exports = {
 
   getNextNumber(type) {
     const cache = readCache();
-    if (!cache.__counters) cache.__counters = { application: 0, normal: 0 };
+    if (!cache.__counters) cache.__counters = { 
+      application: 0, 
+      normal: 0,
+      court_request: 0  // ✅ NEW: Court request counter
+    };
 
     cache.__counters[type] = (cache.__counters[type] || 0) + 1;
     writeCache(cache);

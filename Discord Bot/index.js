@@ -1,5 +1,6 @@
 // index.js
 // ✅ FIXED: Smart command deployment - only deploys when needed
+// ✅ UPDATED: Added court request interaction handlers
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
@@ -30,12 +31,12 @@ client.commands = new Collection();
 // ============================================================
 // ✅ AUTO-CLEAR MODE (Set to true ONCE to clear duplicates)
 // ============================================================
-const AUTO_CLEAR_COMMANDS = true; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+const AUTO_CLEAR_COMMANDS = false; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
 
 // ============================================================
 // ✅ FORCE DEPLOY COMMANDS (Set to true ONCE to force deploy commands)
 // ============================================================
-const FORCE_DEPLOY = true; 
+const FORCE_DEPLOY = false; 
 
 // ============================================================
 // COMMAND DEPLOYMENT MODE
@@ -301,6 +302,18 @@ client.on('interactionCreate', async (interaction) => {
       return handleDraftChoice(interaction);
     }
     
+    // ✅ COURT REQUEST BUTTONS
+    if (interaction.customId === 'start_court_request' ||
+        interaction.customId === 'close_court_request' ||
+        interaction.customId.startsWith('escalate_court_request_') ||
+        interaction.customId.startsWith('dismiss_court_request_')) {
+      
+      const courtrequestCommand = client.commands.get('courtrequest');
+      if (courtrequestCommand && courtrequestCommand.buttonHandler) {
+        return courtrequestCommand.buttonHandler(interaction);
+      }
+    }
+    
     // Application system buttons
     if (interaction.customId === 'start_application' ||
         interaction.customId === 'close_ticket' ||
@@ -318,6 +331,16 @@ client.on('interactionCreate', async (interaction) => {
   // MODAL SUBMISSIONS
   // ============================================================
   if (interaction.isModalSubmit()) {
+    
+    // ✅ COURT REQUEST MODALS
+    if (interaction.customId.startsWith('court_request_modal_') ||
+        interaction.customId.startsWith('close_court_request_modal_')) {
+      
+      const courtrequestCommand = client.commands.get('courtrequest');
+      if (courtrequestCommand && courtrequestCommand.modalHandler) {
+        return courtrequestCommand.modalHandler(interaction);
+      }
+    }
     
     // Application modals
     if (interaction.customId.startsWith('application_modal_') ||

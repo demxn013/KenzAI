@@ -53,7 +53,8 @@ const {
         .setDescription(
           `**Yazanaki Imperial Judiciary**\n\n` +
           `If you believe a member of the Yazanaki Empire has violated imperial law or committed a crime, ` +
-          `you may file a formal court request.\n\n` +
+          `you may file a formal court request.\n` +
+          `You may also file a court request if you wish to appeal an active verdict.\n` +
           `**Before Filing:**\n` +
           `• Ensure you have evidence of the alleged crime\n` +
           `• Be prepared to provide detailed testimony\n` +

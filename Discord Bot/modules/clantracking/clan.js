@@ -4,6 +4,8 @@
 
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
 const clanlogic = require("./clanlogic");
+const draftConfig = require("../empire/draftconfig");
+const { loadRolesConfig } = require("../roles/roledetector");
 const { createClanEmbed } = require("./clanembed");
 const { addGuildRoles, removeGuildRoles } = require("../roles/roledetector");
 const path = require("path");
@@ -27,20 +29,14 @@ module.exports = {
     )
     .addSubcommand(sub =>
       sub
-        .setName("setrole")
-        .setDescription("Set roles for a clan")
-        .addStringOption(opt => opt.setName("clan").setDescription("Clan name or abbreviation").setRequired(true))
-        .addStringOption(opt => 
-          opt
-            .setName("type")
-            .setDescription("Which role to set")
-            .setRequired(true)
-            .addChoices(
-              { name: "Yazanaki Role", value: "yazanaki" },
-              { name: "Clan Role", value: "clan" }
-            )
-        )
-        .addRoleOption(opt => opt.setName("role").setDescription("The role to set").setRequired(true))
+        .setName("edit")
+        .setDescription("Edit an existing clan (roles, name, flag, etc.)")
+        .addStringOption(opt => opt.setName("clan").setDescription("Existing clan name or abbreviation").setRequired(true))
+        .addStringOption(opt => opt.setName("abbreviation").setDescription("New clan abbreviation (e.g., SNU, ONA)").setRequired(false))
+        .addStringOption(opt => opt.setName("name").setDescription("New full clan name").setRequired(false))
+        .addRoleOption(opt => opt.setName("yazanakirole").setDescription("New role in YAZANAKI discord for this clan").setRequired(false))
+        .addRoleOption(opt => opt.setName("clanrole").setDescription("New role in THIS CLAN's discord for members").setRequired(false))
+        .addAttachmentOption(opt => opt.setName("flag").setDescription("New clan flag PNG (replaces existing)"))
     )
     .addSubcommand(sub =>
       sub
@@ -66,13 +62,47 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const isAdminCommand = ['add', 'setrole', 'remove', 'sync-residents'].includes(interaction.options.getSubcommand());
+    const isAdminCommand = ['add', 'edit', 'remove', 'sync-residents'].includes(interaction.options.getSubcommand());
     
-    if (isAdminCommand && !interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-      return interaction.reply({
-        content: "❌ You need the **Kick Members** permission to use this command.",
-        ephemeral: true
-      });
+    if (isAdminCommand) {
+      try {
+        const yazanakiGuild = await interaction.client.guilds.fetch(draftConfig.YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+        const yazanakiMember = yazanakiGuild
+          ? await yazanakiGuild.members.fetch(interaction.user.id).catch(() => null)
+          : null;
+
+        // Load Royalty role ID from roles.json (statusRoles in Yazanaki Empire)
+        const rolesConfig = loadRolesConfig();
+        const yazanakiConfig = rolesConfig?.guilds?.[draftConfig.YAZANAKI_EMPIRE_GUILD_ID];
+        let royaltyRoleId = null;
+
+        if (yazanakiConfig && yazanakiConfig.statusRoles) {
+          const royaltyEntry = Object.entries(yazanakiConfig.statusRoles).find(
+            ([, roleData]) => roleData?.name === "Royalty"
+          );
+          if (royaltyEntry) {
+            royaltyRoleId = royaltyEntry[0];
+          }
+        }
+
+        // Fallback to known Royalty role ID if not found in config
+        if (!royaltyRoleId) {
+          royaltyRoleId = "1334642034472128654";
+        }
+
+        if (!yazanakiGuild || !yazanakiMember || !royaltyRoleId || !yazanakiMember.roles.cache.has(royaltyRoleId)) {
+          return interaction.reply({
+            content: "❌ You must have the **Royalty** role in the Yazanaki Empire discord to create, edit, or remove clans.",
+            ephemeral: true
+          });
+        }
+      } catch (err) {
+        console.error("[clan] Error checking Royalty role in Yazanaki Empire:", err);
+        return interaction.reply({
+          content: "❌ Failed to verify your permissions in the Yazanaki Empire discord. Please try again later.",
+          ephemeral: true
+        });
+      }
     }
 
     const sub = interaction.options.getSubcommand();
@@ -162,14 +192,17 @@ module.exports = {
     }
 
     // -------------------------------------------------------------------------
-    // SET ROLE
+    // EDIT CLAN (ROLES, NAME, FLAG, ETC.)
     // -------------------------------------------------------------------------
-    if (sub === "setrole") {
+    if (sub === "edit") {
       await interaction.deferReply();
 
       const clanInput = interaction.options.getString("clan");
-      const roleType = interaction.options.getString("type");
-      const role = interaction.options.getRole("role");
+      const newAbbr = interaction.options.getString("abbreviation");
+      const newName = interaction.options.getString("name");
+      const newYazanakiRole = interaction.options.getRole("yazanakirole");
+      const newClanRole = interaction.options.getRole("clanrole");
+      const newFlag = interaction.options.getAttachment("flag");
 
       const guildId = Object.keys(clans).find(id =>
         clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
@@ -184,28 +217,68 @@ module.exports = {
       }
 
       const clan = clans[guildId];
-      
-      if (roleType === "yazanaki") {
-        clan.yazanakiRoleId = role.id;
-        clanlogic.writeClans(clans);
-        
+      const changes = [];
+
+      // Name / abbreviation updates
+      const oldAbbr = clan.abbr;
+      if (newAbbr && newAbbr.toUpperCase() !== clan.abbr.toUpperCase()) {
+        clan.abbr = newAbbr.toUpperCase();
+        changes.push(`✏️ Abbreviation: \`${oldAbbr}\` → \`${clan.abbr}\``);
+
+        // If a flag exists for the old abbreviation, move it to the new one
+        try {
+          const oldFlagPath = clanlogic.getFlagPath(oldAbbr);
+          if (fs.existsSync(oldFlagPath)) {
+            const newFlagPath = clanlogic.getFlagPath(clan.abbr);
+            fs.renameSync(oldFlagPath, newFlagPath);
+          }
+        } catch (err) {
+          console.warn("[clan edit] Failed to move existing flag file:", err);
+        }
+      }
+
+      if (newName && newName !== clan.name) {
+        const oldName = clan.name;
+        clan.name = newName;
+        changes.push(`✏️ Name: \`${oldName}\` → \`${clan.name}\``);
+      }
+
+      // Role updates
+      if (newYazanakiRole) {
+        clan.yazanakiRoleId = newYazanakiRole.id;
+        changes.push(`🎭 Yazanaki Role set to: ${newYazanakiRole}`);
+      }
+
+      if (newClanRole) {
+        clan.clanRoleId = newClanRole.id;
+        changes.push(`🎭 Clan Role set to: ${newClanRole}`);
+      }
+
+      // Flag update
+      if (newFlag) {
+        try {
+          await clanlogic.saveFlagFromAttachment(clan.abbr, newFlag);
+          changes.push("🚩 Clan flag updated.");
+        } catch (err) {
+          console.error("[clan edit] Failed to save new flag:", err);
+          changes.push("⚠️ Failed to update clan flag (only PNG is allowed).");
+        }
+      }
+
+      if (!changes.length) {
         return interaction.editReply({
-          content: 
-            `✅ **${clan.abbr}: ${clan.name}**\n\n` +
-            `🎭 Yazanaki Empire role set to: ${role}\n\n` +
-            `Members accepted to this clan will get this role in Yazanaki Empire discord.`
-        });
-      } else if (roleType === "clan") {
-        clan.clanRoleId = role.id;
-        clanlogic.writeClans(clans);
-        
-        return interaction.editReply({
-          content: 
-            `✅ **${clan.abbr}: ${clan.name}**\n\n` +
-            `🎭 Clan member role set to: ${role}\n\n` +
-            `Members accepted to this clan will get this role in the clan's discord.`
+          content: "ℹ️ No changes were provided. Specify at least one field to edit.",
+          ephemeral: true
         });
       }
+
+      clanlogic.writeClans(clans);
+
+      return interaction.editReply({
+        content:
+          `✅ **Clan Updated: ${clan.abbr} - ${clan.name}**\n\n` +
+          changes.join("\n")
+      });
     }
 
     // -------------------------------------------------------------------------

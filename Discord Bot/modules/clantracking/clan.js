@@ -25,6 +25,16 @@ module.exports = {
         .addStringOption(opt => opt.setName("name").setDescription("Full clan name").setRequired(true))
         .addRoleOption(opt => opt.setName("yazanakirole").setDescription("Role in YAZANAKI discord for this clan").setRequired(false))
         .addRoleOption(opt => opt.setName("clanrole").setDescription("Role in THIS CLAN's discord for members").setRequired(false))
+        .addStringOption(opt =>
+          opt
+            .setName("applicationmode")
+            .setDescription("Application mode for this clan")
+            .addChoices(
+              { name: "Manual (staff handle everything)", value: "manual" },
+              { name: "Timed (7 days of guidelines)", value: "timed" }
+            )
+            .setRequired(false)
+        )
         .addAttachmentOption(opt => opt.setName("flag").setDescription("Optional clan flag PNG"))
     )
     .addSubcommand(sub =>
@@ -36,6 +46,16 @@ module.exports = {
         .addStringOption(opt => opt.setName("name").setDescription("New full clan name").setRequired(false))
         .addRoleOption(opt => opt.setName("yazanakirole").setDescription("New role in YAZANAKI discord for this clan").setRequired(false))
         .addRoleOption(opt => opt.setName("clanrole").setDescription("New role in THIS CLAN's discord for members").setRequired(false))
+        .addStringOption(opt =>
+          opt
+            .setName("applicationmode")
+            .setDescription("New application mode for this clan")
+            .addChoices(
+              { name: "Manual (staff handle everything)", value: "manual" },
+              { name: "Timed (7 days of guidelines)", value: "timed" }
+            )
+            .setRequired(false)
+        )
         .addAttachmentOption(opt => opt.setName("flag").setDescription("New clan flag PNG (replaces existing)"))
     )
     .addSubcommand(sub =>
@@ -119,6 +139,9 @@ module.exports = {
       const name = interaction.options.getString("name");
       const yazanakiRole = interaction.options.getRole("yazanakirole");
       const clanRole = interaction.options.getRole("clanrole");
+      const applicationModeOption = interaction.options.getString("applicationmode");
+
+      const applicationMode = applicationModeOption === "timed" ? "timed" : "manual";
 
       if (clans[guildId]) {
         return interaction.editReply({
@@ -133,7 +156,8 @@ module.exports = {
         joinedEmpire: new Date().toISOString().split("T")[0],
         yazanakiRoleId: yazanakiRole ? yazanakiRole.id : null,
         clanRoleId: clanRole ? clanRole.id : null,
-        residents: 0 // ✅ Initialize with 0 residents
+        residents: 0, // ✅ Initialize with 0 residents
+        applicationMode // ✅ Per-clan application mode
       };
 
       try {
@@ -174,7 +198,10 @@ module.exports = {
             response += `⚠️ Clan Role: NOT SET (Optional)\n`;
             response += `   Use: \`/clan setrole clan:${abbr} type:Clan role:@RoleName\`\n`;
           }
-          
+
+          const modeLabel = applicationMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          response += `\n📝 Application Mode: **${modeLabel}**\n`;
+
           response += `\n📊 Residents: 0 (use /clan sync-residents to populate from existing members)`;
           
           return interaction.editReply({ content: response });
@@ -203,6 +230,7 @@ module.exports = {
       const newYazanakiRole = interaction.options.getRole("yazanakirole");
       const newClanRole = interaction.options.getRole("clanrole");
       const newFlag = interaction.options.getAttachment("flag");
+      const newApplicationMode = interaction.options.getString("applicationmode");
 
       const guildId = Object.keys(clans).find(id =>
         clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
@@ -252,6 +280,17 @@ module.exports = {
       if (newClanRole) {
         clan.clanRoleId = newClanRole.id;
         changes.push(`🎭 Clan Role set to: ${newClanRole}`);
+      }
+
+      // Application mode update
+      if (newApplicationMode) {
+        const oldMode = clan.applicationMode || "manual";
+        if (newApplicationMode !== oldMode) {
+          clan.applicationMode = newApplicationMode;
+          const oldLabel = oldMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          const newLabel = newApplicationMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          changes.push(`📝 Application Mode: \`${oldLabel}\` → \`${newLabel}\``);
+        }
       }
 
       // Flag update
@@ -355,6 +394,8 @@ module.exports = {
       const joinedDateText = jd?.length === 3 ? `\`${jd[2]}/${jd[1]}/${jd[0]}\`` : "`n/d`";
 
       const size = `\`${guild.memberCount}\``;
+      const appMode = clan.applicationMode || "manual";
+      const appModeLabel = appMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
 
       let invite = clan.invite || "#";
       try {
@@ -410,7 +451,8 @@ module.exports = {
         inviteTxt,
         iconURL,
         useBannerPath || flagExists ? flagFileName : null,
-        embedColor
+        embedColor,
+        appModeLabel
       );
 
       if (useBannerPath || flagExists) {
@@ -437,7 +479,8 @@ module.exports = {
           const yazanakiStatus = c.yazanakiRoleId ? "✅" : "❌";
           const clanStatus = c.clanRoleId ? "✅" : "⚠️";
           const residentCount = c.residents || 0;
-          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite}) - ${residentCount} residents`;
+          const mode = c.applicationMode === "timed" ? "Timed" : "Manual";
+          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite}) - ${residentCount} residents - Mode: ${mode}`;
         }).join("\n"))
         .setFooter({ text: "✅ = Set | ❌ = Missing Yazanaki role | ⚠️ = Missing clan role" });
 

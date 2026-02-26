@@ -48,8 +48,8 @@ module.exports = {
         .addStringOption(option =>
           option
             .setName("reason")
-            .setDescription("Reason for kicking")
-            .setRequired(true)
+            .setDescription("Reason for kicking (optional)")
+            .setRequired(false)
         )
     )
     .addSubcommand(sub =>
@@ -65,8 +65,8 @@ module.exports = {
         .addStringOption(option =>
           option
             .setName("reason")
-            .setDescription("Reason for banning")
-            .setRequired(true)
+            .setDescription("Reason for banning (optional)")
+            .setRequired(false)
         )
     ),
 
@@ -88,7 +88,7 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
 
       const targetUser = interaction.options.getUser("user");
-      const reason = interaction.options.getString("reason");
+      const reason = interaction.options.getString("reason") || "No reason provided.";
 
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[/member kick] 🚨 Kick initiated by ${interaction.user.tag}`);
@@ -152,7 +152,7 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
 
       const targetUser = interaction.options.getUser("user");
-      const reason = interaction.options.getString("reason");
+      const reason = interaction.options.getString("reason") || "No reason provided.";
 
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[/member ban] 🔨 Ban initiated by ${interaction.user.tag}`);
@@ -177,12 +177,20 @@ module.exports = {
         });
       }
 
+      const empireLine = result.empireId
+        ? `**Empire ID:** \`${result.empireId}\` *(deactivated)*\n`
+        : `**Empire ID:** \`n/d\` *(user was not an active empire member)*\n`;
+
+      const clanLine = result.clan
+        ? `**Former Clan:** ${result.clan}\n`
+        : `**Former Clan:** n/d (not in any Yazanaki clan)\n`;
+
       const embed = new EmbedBuilder()
         .setTitle("🔨 Member Banned")
         .setDescription(
           `${targetUser} has been **permanently banned** from the Yazanaki Empire.\n\n` +
-          `**Empire ID:** \`${result.empireId}\` *(deactivated)*\n` +
-          `**Former Clan:** ${result.clan}\n` +
+          empireLine +
+          clanLine +
           `**Reason:** ${reason}\n\n` +
           `⛔ **This user is permanently banned from all Yazanaki clans.**\n\n` +
           `All empire roles have been removed.`

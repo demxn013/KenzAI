@@ -273,67 +273,86 @@ async function banMember(discordId, reason, client) {
   
   const members = readJSON(membersPath);
   const member = members[discordId];
-  
-  if (!member) {
-    console.error(`[memberkickban] ❌ Member ${discordId} not found`);
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    return { success: false, reason: "member_not_found" };
+  const isExistingMember = !!member;
+
+  if (!isExistingMember) {
+    console.warn(`[memberkickban] ⚠️ Member ${discordId} not found in members.json - banning as NON-MEMBER`);
   }
-  
+
   try {
-    // 1. Remove all Yazanaki Empire roles
+    // 1. Remove all Yazanaki Empire roles (if they are in the guild)
     const rolesRemoved = await removeAllYazanakiRoles(discordId, client);
     console.log(`[memberkickban] 🎭 Roles removed: ${rolesRemoved}`);
     
-    // 2. Decrement clan resident count
-    const clanName = member.JoinedClan;
-    if (clanName) {
-      const clanGuildId = getClanGuildId(clanName);
-      
-      if (clanGuildId) {
-        const decremented = decrementClanResidents(clanGuildId);
-        if (decremented) {
-          console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+    // 2. Decrement clan resident count (only if they were an existing member)
+    let clanName = null;
+    if (isExistingMember) {
+      clanName = member.JoinedClan;
+      if (clanName) {
+        const clanGuildId = getClanGuildId(clanName);
+        
+        if (clanGuildId) {
+          const decremented = decrementClanResidents(clanGuildId);
+          if (decremented) {
+            console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+          }
         }
       }
     }
     
-    // 3. Deactivate Empire ID
-    const empireIds = readJSON(empireIdsPath);
-    const empireId = member.EmpireID;
-    
-    if (empireId && empireIds.ids && empireIds.ids[empireId]) {
-      empireIds.ids[empireId].active = false;
-      empireIds.ids[empireId].bannedAt = new Date().toISOString();
-      writeJSON(empireIdsPath, empireIds);
-      console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
+    // 3. Deactivate Empire ID (only if they had one)
+    let empireId = null;
+    if (isExistingMember) {
+      const empireIds = readJSON(empireIdsPath);
+      empireId = member.EmpireID;
+      
+      if (empireId && empireIds.ids && empireIds.ids[empireId]) {
+        empireIds.ids[empireId].active = false;
+        empireIds.ids[empireId].bannedAt = new Date().toISOString();
+        writeJSON(empireIdsPath, empireIds);
+        console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
+      }
     }
     
-    // 4. Move to banned_members.json
+    // 4. Move to banned_members.json (works for both members and non-members)
     const bannedMembers = readJSON(bannedMembersPath);
     const bannedAt = new Date();
-    
+
+    // Try to get a display tag for non-members if not stored
+    let discordUserDisplay = member?.discordUser || null;
+    if (!discordUserDisplay) {
+      try {
+        const user = await client.users.fetch(discordId);
+        discordUserDisplay = user.tag;
+      } catch (err) {
+        console.warn(`[memberkickban] ⚠️ Could not fetch Discord user for ${discordId}:`, err.message);
+      }
+    }
+
     bannedMembers[discordId] = {
       discordId,
-      empireId: member.EmpireID,
-      discordUser: member.discordUser,
-      minecraftUser: member.minecraftUser,
+      empireId: empireId || null,
+      discordUser: discordUserDisplay,
+      minecraftUser: member?.minecraftUser || null,
       bannedAt: bannedAt.toISOString(),
       banReason: reason,
-      originalClan: member.JoinedClan,
-      originalData: { ...member }
+      originalClan: clanName,
+      originalData: isExistingMember ? { ...member } : null,
+      neverJoinedYazanaki: !isExistingMember
     };
     
     writeJSON(bannedMembersPath, bannedMembers);
     console.log(`[memberkickban] 📦 Moved to banned_members.json`);
     console.log(`[memberkickban] ⛔ PERMANENT BAN - Cannot reapply`);
+
+    // 5. Remove from members.json (only if they were an existing member)
+    if (isExistingMember) {
+      delete members[discordId];
+      writeJSON(membersPath, members);
+      console.log(`[memberkickban] 🗑️ Removed from members.json`);
+    }
     
-    // 5. Remove from members.json
-    delete members[discordId];
-    writeJSON(membersPath, members);
-    console.log(`[memberkickban] 🗑️ Removed from members.json`);
-    
-    console.log(`[memberkickban] ✅ Successfully banned member ${discordId}`);
+    console.log(`[memberkickban] ✅ Successfully banned member ${discordId} (${isExistingMember ? 'existing member' : 'non-member'})`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
     return { 

@@ -48,7 +48,7 @@ const DEPLOYMENT_MODE = 'all-guilds'; // ✅ DEPLOY TO ALL GUILDS
 // ============================================================
 // ✅ SMART COMMAND DEPLOYMENT (prevents duplicates)
 // ============================================================
-async function deployCommands(force = false) {
+async function deployCommands(force = false, targetGuildId = null) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🔄 LOADING COMMANDS...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -129,7 +129,7 @@ async function deployCommands(force = false) {
       console.log('📡 Fetching latest guild list from Discord...');
       
       const fetchedGuilds = await client.guilds.fetch();
-      console.log(`📍 Target: ${fetchedGuilds.size} guild(s)`);
+      console.log(`📍 Target: ${targetGuildId ? 1 : fetchedGuilds.size} guild(s)`);
       console.log(`⚡ Updates: INSTANT\n`);
       
       if (fetchedGuilds.size === 0) {
@@ -142,6 +142,9 @@ async function deployCommands(force = false) {
       let failCount = 0;
       
       for (const [guildId, partialGuild] of fetchedGuilds) {
+        // If we're only deploying to a specific new guild, skip others
+        if (targetGuildId && guildId !== targetGuildId) continue;
+
         try {
           // Fetch full guild data
           const guild = await client.guilds.fetch(guildId);
@@ -383,6 +386,20 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply(errorMessage);
       }
     }
+  }
+});
+
+// ============================================================
+// NEW GUILD HANDLER - AUTO DEPLOY COMMANDS ON JOIN
+// ============================================================
+client.on('guildCreate', async (guild) => {
+  console.log(`➕ Joined new guild: ${guild.name} (${guild.id})`);
+  try {
+    // Force deployment only for this new guild, even if commands hash is unchanged
+    await deployCommands(true, guild.id);
+    console.log(`✅ Commands deployed to new guild: ${guild.name} (${guild.id})`);
+  } catch (error) {
+    console.error(`❌ Failed to deploy commands for new guild ${guild.name} (${guild.id}):`, error);
   }
 });
 

@@ -361,7 +361,8 @@ module.exports = {
         });
       }
 
-      const ticketNumber = cache.getNextNumber("application");
+      // Ticket numbers are now per clan/guild instead of global
+      const ticketNumber = cache.getNextNumber("application", guild.id);
       const channelName = `${interaction.user.username
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")}-${ticketNumber}`;
@@ -458,9 +459,11 @@ module.exports = {
         .setDescription(
           "**__Constitution & Values__**\n" +
             "[Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
+            "**__Join the Yazanaki Empire Discord__**\n" +
+            "[Click here to join](https://discord.gg/yazanaki-1220847061797179524)\n\n" +
             "**__Terms__**\n" +
             "By applying, you vow to uphold all Yazanakian values.\n\n" +
-            "**Rules**\n- Don't ping staff unnecessarily\n- No spam\n- Be respectful"
+            "**__Rules__**\n- Don't ping staff unnecessarily\n- No spam\n- Be respectful"
         )
         .setColor("#000000");
 

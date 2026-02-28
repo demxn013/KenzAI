@@ -210,8 +210,8 @@ async function handleClanDonutSMP(interaction, guildId) {
     const match = pt.match(/(\d+)\s*min/i) || pt.match(/(\d+)/);
     if (match) playtimeMinutes.total += parseInt(match[1], 10);
   }
-  summed.playtime = `${playtimeMinutes.total} min`;
-  console.log(`[/server buttons] 📊 Summed stats: kills=${summed.kills}, deaths=${summed.deaths}, money=${summed.money}, playtime=${summed.playtime}, shards=${summed.shards}`);
+  summed.playtime = playtimeMinutes.total;
+  console.log(`[/server buttons] 📊 Summed stats: kills=${summed.kills}, deaths=${summed.deaths}, money=${summed.money}, playtime=${playtimeMinutes.total} min, shards=${summed.shards}`);
   console.log("[/server buttons] 🌐 Fetching DonutSMP kills leaderboard (page 1)...");
   const lbRes = await getLeaderboard("kills", 1);
   const highlights = [];

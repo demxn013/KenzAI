@@ -12,6 +12,47 @@ function num(s) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Format a number as money: max 2 decimal places, no trailing zeros after decimal. */
+function formatMoney(value) {
+  const n = num(value);
+  if (!Number.isFinite(n)) return "0";
+  const fixed = n.toFixed(2);
+  return fixed.replace(/\.?0+$/, "") || "0";
+}
+
+/**
+ * Format total minutes into a short human-readable string (e.g. "2 wk 3 d", "5 d 12 hr", "45 min").
+ * @param {number} totalMinutes
+ * @returns {string}
+ */
+function formatPlaytime(totalMinutes) {
+  const m = Math.floor(Number(totalMinutes) || 0);
+  if (m <= 0) return "0 min";
+  const months = Math.floor(m / (30 * 24 * 60));
+  let rest = m % (30 * 24 * 60);
+  const weeks = Math.floor(rest / (7 * 24 * 60));
+  rest %= 7 * 24 * 60;
+  const days = Math.floor(rest / (24 * 60));
+  rest %= 24 * 60;
+  const hours = Math.floor(rest / 60);
+  const mins = rest % 60;
+  const parts = [];
+  if (months) parts.push(`${months} mo`);
+  if (weeks) parts.push(`${weeks} wk`);
+  if (days) parts.push(`${days} d`);
+  if (hours) parts.push(`${hours} hr`);
+  if (mins) parts.push(`${mins} min`);
+  return parts.join(" ") || "0 min";
+}
+
+/** Parse playtime from API string (e.g. "120 min" or "90") into total minutes. */
+function parsePlaytimeToMinutes(playtimeStr) {
+  if (playtimeStr == null || playtimeStr === "") return 0;
+  const s = String(playtimeStr).trim();
+  const match = s.match(/(\d+)\s*min/i) || s.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
 /**
  * Embed: list of official servers (from servers.json).
  * @param {Array<{id: string, name: string}>} servers
@@ -37,11 +78,14 @@ function createServerListEmbed(servers) {
  * @param {Array<{username: string, value: string, rank?: number}>} highlights - optional leaderboard entries for this clan
  */
 function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = []) {
+  const playtimeDisplay = typeof summed.playtime === "number"
+    ? formatPlaytime(summed.playtime)
+    : formatPlaytime(parsePlaytimeToMinutes(summed.playtime));
   const fields = [
     { name: "Kills", value: `\`${summed.kills}\``, inline: true },
     { name: "Deaths", value: `\`${summed.deaths}\``, inline: true },
-    { name: "Money", value: `\`${summed.money}\``, inline: true },
-    { name: "Playtime", value: `\`${summed.playtime}\``, inline: true },
+    { name: "Money", value: `\`${formatMoney(summed.money)}\``, inline: true },
+    { name: "Playtime", value: `\`${playtimeDisplay}\``, inline: true },
     { name: "Shards", value: `\`${summed.shards}\``, inline: true },
     { name: "Mobs killed", value: `\`${summed.mobs_killed}\``, inline: true }
   ];
@@ -67,11 +111,13 @@ function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = []) {
  */
 function createDonutSMPPlayerEmbed(mcUsername, stats, lookup = null) {
   const safe = (s) => (s != null && s !== "" ? String(s) : "0");
+  const playtimeMins = parsePlaytimeToMinutes(stats?.playtime);
+  const playtimeDisplay = formatPlaytime(playtimeMins);
   const fields = [
     { name: "Kills", value: `\`${safe(stats?.kills)}\``, inline: true },
     { name: "Deaths", value: `\`${safe(stats?.deaths)}\``, inline: true },
-    { name: "Money", value: `\`${safe(stats?.money)}\``, inline: true },
-    { name: "Playtime", value: `\`${safe(stats?.playtime)}\``, inline: true },
+    { name: "Money", value: `\`${formatMoney(stats?.money)}\``, inline: true },
+    { name: "Playtime", value: `\`${playtimeDisplay}\``, inline: true },
     { name: "Shards", value: `\`${safe(stats?.shards)}\``, inline: true },
     {
       name: "Online",
@@ -112,5 +158,8 @@ module.exports = {
   createDonutSMPPlayerEmbed,
   createDonutSMPClanSelectEmbed,
   num,
+  formatMoney,
+  formatPlaytime,
+  parsePlaytimeToMinutes,
   escapeDiscord
 };

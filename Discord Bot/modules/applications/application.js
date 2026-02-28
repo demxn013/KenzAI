@@ -313,17 +313,69 @@ module.exports = {
       // ============================================================
       // ✅ ACCEPT APPLICANT (if accepted)
       // ============================================================
+      let acceptResult = null;
       if (isAccepted) {
         console.log(`[application] 🎯 Running acceptance process...`);
-        
-        const acceptResult = await acceptApplicant(discordId, interaction.client);
-        
+        acceptResult = await acceptApplicant(discordId, interaction.client);
+
         if (acceptResult.success) {
           console.log(`[application] ✅ Acceptance successful`);
           console.log(`[application] 🆔 Empire ID: ${acceptResult.empireId}`);
           console.log(`[application] 🏷️ Clan: ${acceptResult.clan?.abbr}`);
         } else {
           console.error(`[application] ❌ Acceptance failed: ${acceptResult.reason}`);
+        }
+
+        // ============================================================
+        // ✅ NOT IN YAZANAKI: Revert application, re-enable buttons, notify accepter only
+        // ============================================================
+        if (!acceptResult.success && acceptResult.reason === "not_in_yazanaki") {
+          const currentData = getApplicant(discordId);
+          saveApplicant(
+            discordId,
+            currentData,
+            currentData?.server ?? interaction.guild.id,
+            currentData?.closeReason ?? null,
+            false,
+            null
+          );
+          try {
+            const currentMessage = interaction.message;
+            const newRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId("close_ticket")
+                .setLabel("🔒 Close Ticket")
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`accept_application_${discordId}`)
+                .setLabel("✅ Accept")
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(false),
+              new ButtonBuilder()
+                .setCustomId(`reject_application_${discordId}`)
+                .setLabel("❌ Reject")
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(false)
+            );
+            await currentMessage.edit({ components: [newRow] });
+          } catch (err) {
+            console.warn(`[application] ⚠️ Could not re-enable buttons:`, err.message);
+          }
+
+          const notInYazanakiEmbed = new EmbedBuilder()
+            .setTitle("❌ Acceptance blocked")
+            .setDescription(
+              `**<@${discordId}>** has not joined the **Yazanaki Discord** (Yazanaki Empire).\n\n` +
+              `They must join the server before they can be accepted. The application has been reverted; you can accept again after they join.`
+            )
+            .setColor(0xff6600)
+            .setTimestamp();
+
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+          return interaction.reply({
+            embeds: [notInYazanakiEmbed],
+            ephemeral: true
+          });
         }
       }
 

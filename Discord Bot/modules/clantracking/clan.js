@@ -2,7 +2,7 @@
 // ✅ COMPLETE FIX: Includes type option in setrole command
 // ✅ NEW: Shows actual resident count from clans.json
 
-const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const clanlogic = require("./clanlogic");
 const draftConfig = require("../empire/draftconfig");
 const { loadRolesConfig } = require("../roles/roledetector");
@@ -57,6 +57,7 @@ module.exports = {
             .setRequired(false)
         )
         .addAttachmentOption(opt => opt.setName("flag").setDescription("New clan flag PNG (replaces existing)"))
+        .addStringOption(opt => opt.setName("donutsmpteam").setDescription("DonutSMP in-game team name for this clan (use 'clear' to remove)").setRequired(false))
     )
     .addSubcommand(sub =>
       sub
@@ -231,6 +232,7 @@ module.exports = {
       const newClanRole = interaction.options.getRole("clanrole");
       const newFlag = interaction.options.getAttachment("flag");
       const newApplicationMode = interaction.options.getString("applicationmode");
+      const newDonutSMPTeam = interaction.options.getString("donutsmpteam");
 
       const guildId = Object.keys(clans).find(id =>
         clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
@@ -301,6 +303,18 @@ module.exports = {
         } catch (err) {
           console.error("[clan edit] Failed to save new flag:", err);
           changes.push("⚠️ Failed to update clan flag (only PNG is allowed).");
+        }
+      }
+
+      // DonutSMP team (servers option)
+      if (newDonutSMPTeam !== undefined && newDonutSMPTeam !== null) {
+        const v = newDonutSMPTeam.trim().toLowerCase();
+        if (v === "" || v === "clear") {
+          delete clan.donutsmpTeamName;
+          changes.push("🟠 DonutSMP team: cleared.");
+        } else {
+          clan.donutsmpTeamName = newDonutSMPTeam.trim();
+          changes.push(`🟠 DonutSMP team: set to \`${clan.donutsmpTeamName}\`.`);
         }
       }
 
@@ -455,12 +469,23 @@ module.exports = {
         appModeLabel
       );
 
-      if (useBannerPath || flagExists) {
-        const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
-        return interaction.editReply({ embeds: [embed], files: [attachment] });
+      const components = [];
+      if (clan.donutsmpTeamName) {
+        const serverRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`clan_server_donutsmp_${guildId}`)
+            .setLabel("DonutSMP")
+            .setStyle(ButtonStyle.Secondary)
+        );
+        components.push(serverRow);
       }
 
-      return interaction.editReply({ embeds: [embed] });
+      if (useBannerPath || flagExists) {
+        const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
+        return interaction.editReply({ embeds: [embed], files: [attachment], components });
+      }
+
+      return interaction.editReply({ embeds: [embed], components });
     }
 
     // -------------------------------------------------------------------------

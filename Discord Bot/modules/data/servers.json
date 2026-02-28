@@ -1,0 +1,9 @@
+{
+  "donutsmp": {
+    "id": "donutsmp",
+    "name": "DonutSMP",
+    "apiBaseUrl": "https://api.donutsmp.net",
+    "apiKeyEnv": "DONUTSMP_API_KEY",
+    "enabled": true
+  }
+}

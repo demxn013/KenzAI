@@ -10,7 +10,7 @@ const {
   getDominantColor,
   getProperMinecraftName,
 } = require("./memberlogic");
-const { SlashCommandBuilder, PermissionsBitField, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, PermissionsBitField, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { createMemberEmbed } = require("./memberembed");
 const { kickMember, banMember } = require("./memberkickban");
 
@@ -351,7 +351,14 @@ module.exports = {
       console.log(`[/member view] ✅ Embed created successfully`);
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-      return interaction.reply({ embeds: [embed] });
+      const serverRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`member_server_donutsmp_${properMCUsername}`)
+          .setLabel("DonutSMP")
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      return interaction.reply({ embeds: [embed], components: [serverRow] });
     }
   },
 };

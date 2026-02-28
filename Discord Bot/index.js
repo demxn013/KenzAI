@@ -343,6 +343,14 @@ client.on('interactionCreate', async (interaction) => {
         return pointsCommand.buttonHandler(interaction);
       }
     }
+
+    // Servers module (DonutSMP / clan server / member server stats)
+    if (interaction.customId.startsWith('server_') || interaction.customId.startsWith('clan_server_') || interaction.customId.startsWith('member_server_')) {
+      const serverCommand = client.commands.get('server');
+      if (serverCommand && serverCommand.buttonHandler) {
+        return serverCommand.buttonHandler(interaction);
+      }
+    }
   }
 
   // ============================================================

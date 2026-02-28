@@ -477,15 +477,20 @@ module.exports = {
         .setColor("#000000");
 
       const termsEmbed = new EmbedBuilder()
-        .setTitle("Pre-Application")
+        .setTitle("Pre-Application Process")
         .setDescription(
-          "**__Constitution & Values__**\n" +
-            "[Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
-            "**__Join the Yazanaki Empire Discord__**\n" +
-            "[Click here to join](https://discord.gg/yazanaki-1220847061797179524)\n\n" +
-            "**__Terms__**\n" +
-            "By applying, you vow to uphold all Yazanakian values.\n\n" +
-            "**__Rules__**\n- Don't ping staff unnecessarily\n- No spam\n- Be respectful"
+          "**__Please do these steps:__**\n\n" +
+            "1. **__Read theConstitution__**\n" +
+            "   [Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
+            "2. **__Join the Yazanaki Empire Discord__**\n" +
+            "   [Click here to join](https://discord.gg/yazanaki-1220847061797179524)\n\n" +
+            "3. **__Follow the Guidelines__**\n" +
+            "   **__Terms__**\n" +
+            "   By applying, you vow to uphold all Yazanakian values.\n\n" +
+            "   **__Rules__**\n" +
+            "  - Don't ping staff unnecessarily\n" +
+            "  - No spam\n" +
+            "  - Be respectful"
         )
         .setColor("#000000");
 

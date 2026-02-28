@@ -16,7 +16,7 @@
   },
   "daemon": {
     "start_with_windows": true,
-    "last_greeting_index": 4
+    "last_greeting_index": 7
   },
   "audio": {
     "startup_volume": 0.5,

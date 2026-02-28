@@ -358,6 +358,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     YazanakiRank: "Recruit",
     EmpireID: empireId,
     Status: "Military",
+    points: 0,
     // ✅ DRAFT FIELDS - Initialize them here!
     draftStartDate: now.toISOString(),
     draftExpiryDate: expiryDate.toISOString(),

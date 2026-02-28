@@ -191,11 +191,6 @@
           "priority": 3,
           "position": 3
         },
-        "1387826794559967242": {
-          "name": "ONA",
-          "priority": 14,
-          "position": 14
-        },
         "1387827079932018708": {
           "name": "RANDOM",
           "priority": 13,
@@ -230,6 +225,11 @@
           "name": "ELECTRICIAN",
           "priority": 7,
           "position": 7
+        },
+        "1387826794559967242": {
+          "name": "ONA",
+          "priority": 14,
+          "position": 14
         }
       }
     },
@@ -525,194 +525,169 @@
         }
       }
     },
-    "1292396677407313922": {
+    "1461392964336091178": {
       "name": "Oni no Fukushu",
       "statusRoles": {},
       "rankRoles": {
-        "1292396677713494072": {
-          "name": "DAIYU",
-          "priority": 37,
-          "position": 37
-        },
-        "1369001236132659320": {
-          "name": "F3",
-          "priority": 12,
-          "position": 12
-        },
-        "1364282844662333534": {
-          "name": "Dyno",
-          "priority": 33,
-          "position": 33
-        },
-        "1368999432611430592": {
-          "name": "EMPRESS",
-          "priority": 35,
-          "position": 35
-        },
-        "1369000538913374208": {
-          "name": "HORSEMEN",
-          "priority": 27,
-          "position": 27
-        },
-        "1376903811331002501": {
-          "name": "Jockie Music",
-          "priority": 3,
-          "position": 3
-        },
-        "1292396677713494070": {
-          "name": "KING/QUEEN",
-          "priority": 31,
-          "position": 31
-        },
-        "1292396677713494068": {
-          "name": "BOTS",
-          "priority": 30,
-          "position": 30
-        },
-        "1369060456924446791": {
-          "name": "B4",
-          "priority": 9,
-          "position": 9
-        },
-        "1370445338636189788": {
-          "name": "KENZAI",
-          "priority": 34,
-          "position": 34
-        },
-        "1292396677407313928": {
-          "name": "BUILDER",
-          "priority": 22,
-          "position": 22
-        },
-        "1292396677713494071": {
-          "name": "EMPEROR",
-          "priority": 36,
-          "position": 36
-        },
-        "1364014178796441630": {
-          "name": "Tickets v2",
-          "priority": 7,
-          "position": 7
-        },
-        "1292396677713494069": {
-          "name": "MAYOR",
-          "priority": 29,
-          "position": 29
-        },
-        "1364115453252734976": {
-          "name": "ONF",
+        "1461392964357066795": {
+          "name": "LORD",
           "priority": 24,
           "position": 24
         },
-        "1369001211063173230": {
-          "name": "F2",
-          "priority": 14,
-          "position": 14
+        "1461392964357066798": {
+          "name": "KING/QUEEN",
+          "priority": 27,
+          "position": 27
         },
-        "1369001129073180824": {
-          "name": "F1",
-          "priority": 16,
-          "position": 16
+        "1461392964357066800": {
+          "name": "EMPRESS",
+          "priority": 31,
+          "position": 31
         },
-        "1369060415891439776": {
-          "name": "B3",
-          "priority": 11,
-          "position": 11
-        },
-        "1369001267778687078": {
+        "1461392964336091181": {
           "name": "F4",
-          "priority": 10,
-          "position": 10
-        },
-        "1369060379434680376": {
-          "name": "B2",
-          "priority": 13,
-          "position": 13
-        },
-        "1363897566940627094": {
-          "name": "Random",
-          "priority": 8,
-          "position": 8
-        },
-        "1386450486063923273": {
-          "name": "Invite Tracker",
-          "priority": 1,
-          "position": 1
-        },
-        "1369060328977076377": {
-          "name": "B1",
-          "priority": 15,
-          "position": 15
-        },
-        "1369000974651359253": {
-          "name": "FARM SEARGENT",
-          "priority": 26,
-          "position": 26
-        },
-        "1292396677407313926": {
-          "name": "FIGHTER",
-          "priority": 20,
-          "position": 20
-        },
-        "1292396677407313923": {
-          "name": "BEDROCK",
-          "priority": 17,
-          "position": 17
-        },
-        "1368728156613247110": {
-          "name": "DonutStats",
-          "priority": 4,
-          "position": 4
-        },
-        "1385744605525577811": {
-          "name": "Server Booster",
-          "priority": 2,
-          "position": 2
-        },
-        "1292396677407313927": {
-          "name": "GRINDER",
-          "priority": 21,
-          "position": 21
-        },
-        "1292396677713494067": {
-          "name": "LORD",
-          "priority": 28,
-          "position": 28
-        },
-        "1365257049533059143": {
-          "name": "eli",
-          "priority": 32,
-          "position": 32
-        },
-        "1292396677407313930": {
-          "name": "COUNT",
-          "priority": 25,
-          "position": 25
-        },
-        "1364418845187506308": {
-          "name": "Dank Memer",
-          "priority": 5,
-          "position": 5
-        },
-        "1364416578904526882": {
-          "name": "Pokétwo",
           "priority": 6,
           "position": 6
         },
-        "1292396677407313924": {
-          "name": "JAVA",
+        "1461392964344610977": {
+          "name": "BUILDER",
           "priority": 18,
           "position": 18
         },
-        "1385715572024676422": {
-          "name": "ADVERTISER",
+        "1461392964344610974": {
+          "name": "SCOUT",
+          "priority": 15,
+          "position": 15
+        },
+        "1461392964357066801": {
+          "name": "EMPEROR",
+          "priority": 32,
+          "position": 32
+        },
+        "1461392964357066796": {
+          "name": "MAYOR",
+          "priority": 25,
+          "position": 25
+        },
+        "1461392964336091183": {
+          "name": "F3",
+          "priority": 8,
+          "position": 8
+        },
+        "1461392964344610976": {
+          "name": "GRINDER",
+          "priority": 17,
+          "position": 17
+        },
+        "1461392964336091180": {
+          "name": "B4",
+          "priority": 5,
+          "position": 5
+        },
+        "1461392964344610980": {
+          "name": "COUNT",
+          "priority": 21,
+          "position": 21
+        },
+        "1461392964336091182": {
+          "name": "B3",
+          "priority": 7,
+          "position": 7
+        },
+        "1461392964344610979": {
+          "name": "ONF",
+          "priority": 20,
+          "position": 20
+        },
+        "1461392964344610972": {
+          "name": "BEDROCK",
+          "priority": 13,
+          "position": 13
+        },
+        "1461392964344610975": {
+          "name": "FIGHTER",
+          "priority": 16,
+          "position": 16
+        },
+        "1461392964344610981": {
+          "name": "FARM SEARGENT",
+          "priority": 22,
+          "position": 22
+        },
+        "1461392964336091186": {
+          "name": "B1",
+          "priority": 11,
+          "position": 11
+        },
+        "1476557451913592885": {
+          "name": "Dyno",
+          "priority": 2,
+          "position": 2
+        },
+        "1476557104369107039": {
+          "name": "DonutStats",
+          "priority": 3,
+          "position": 3
+        },
+        "1461392964357066794": {
+          "name": "HORSEMEN",
           "priority": 23,
           "position": 23
         },
-        "1292396677407313925": {
-          "name": "SCOUT",
+        "1461392964336091184": {
+          "name": "B2",
+          "priority": 9,
+          "position": 9
+        },
+        "1476558704567652457": {
+          "name": "KENZAI",
+          "priority": 29,
+          "position": 29
+        },
+        "1461392964357066802": {
+          "name": "DAIYU",
+          "priority": 30,
+          "position": 30
+        },
+        "1461392964336091179": {
+          "name": "Random",
+          "priority": 4,
+          "position": 4
+        },
+        "1461392964336091187": {
+          "name": "F1",
+          "priority": 12,
+          "position": 12
+        },
+        "1461392964344610978": {
+          "name": "ADVERTISER",
           "priority": 19,
           "position": 19
+        },
+        "1476558640637804576": {
+          "name": "Kenzai",
+          "priority": 1,
+          "position": 1
+        },
+        "1461392964344610973": {
+          "name": "JAVA",
+          "priority": 14,
+          "position": 14
+        },
+        "1461392964357066799": {
+          "name": "eli",
+          "priority": 28,
+          "position": 28
+        },
+        "1461392964357066797": {
+          "name": "BOTS",
+          "priority": 26,
+          "position": 26
+        },
+        "1461392964336091185": {
+          "name": "F2",
+          "priority": 10,
+          "position": 10
         }
       }
     }

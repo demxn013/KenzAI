@@ -22,7 +22,8 @@ function createMemberEmbed(discordUser, memberData, embedColor = 0x339eff) {
       { name: "__Join Date__", value: `\`${escapeDiscordUnderscores(memberData.JoinDate || "n/d")}\``, inline: false },
       { name: "__Yazanaki Rank__", value: `\`${escapeDiscordUnderscores(memberData.YazanakiRank || "n/d")}\``, inline: false },
       { name: "__Empire ID__", value: `\`${escapeDiscordUnderscores(memberData.EmpireID || "n/d")}\``, inline: false },
-      { name: "__Status__", value: `\`${escapeDiscordUnderscores(memberData.Status || "n/d")}\``, inline: false }
+      { name: "__Status__", value: `\`${escapeDiscordUnderscores(memberData.Status || "n/d")}\``, inline: false },
+      { name: "__Points__", value: `\`${escapeDiscordUnderscores(String(memberData.points ?? 0))}\``, inline: false }
     )
     .setColor(embedColor)
     .setFooter({ text: `${new Date().toLocaleString("en-GB")}` });

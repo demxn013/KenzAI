@@ -31,3 +31,18 @@ Discord Bot/modules/data/linking.json
 Discord Bot/modules/data/members.backup.json
 Discord Bot/modules/data/members.json
 Discord Bot/modules/modules.zip
+Discord Bot/modules/data/archived_members.json
+Discord Bot/modules/data/banned_members.backup.json
+Discord Bot/modules/data/channels.js
+Discord Bot/modules/data/channels.json
+Discord Bot/modules/data/court_requests.json
+Discord Bot/modules/data/kicked_members.json
+Discord Bot/modules/data/roles.backup.json
+Discord Bot/modules/data/roles.json
+Discord Bot/modules/data/banned_members.json
+Discord Bot/modules/images/clanflags/YAZANAKI.png
+Discord Bot/modules/images/clanflags/YZNKI.png
+Discord Bot/modules/judiciary/data/archived_cases.json
+Discord Bot/modules/judiciary/data/audit_log.json
+Discord Bot/modules/judiciary/data/cases.json
+Assistant/config/user_preferences.json

@@ -13,6 +13,7 @@ const crypto = require('crypto');
 // ============================================================
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { handleDraftChoice } = require('./modules/empire/draftlogic');
+const { setupPointsEvents } = require('./modules/points/pointsevents');
 
 // ============================================================
 // CLIENT SETUP
@@ -23,6 +24,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -288,6 +290,11 @@ client.on('ready', async () => {
   // ============================================================
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
+
+  // ============================================================
+  // ✅ POINTS SYSTEM EVENTS (message + voice)
+  // ============================================================
+  setupPointsEvents(client);
 });
 
 // ============================================================
@@ -328,6 +335,26 @@ client.on('interactionCreate', async (interaction) => {
         return applicationCommand.buttonHandler(interaction);
       }
     }
+
+    // Points shop / redeem buttons
+    if (interaction.customId.startsWith('points_shop_') || interaction.customId.startsWith('points_redeem_')) {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.buttonHandler) {
+        return pointsCommand.buttonHandler(interaction);
+      }
+    }
+  }
+
+  // ============================================================
+  // STRING SELECT MENU (points shop reward selection)
+  // ============================================================
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === 'points_select_reward') {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.selectMenuHandler) {
+        return pointsCommand.selectMenuHandler(interaction);
+      }
+    }
   }
   
   // ============================================================
@@ -352,6 +379,16 @@ client.on('interactionCreate', async (interaction) => {
       const applicationCommand = client.commands.get('application');
       if (applicationCommand && applicationCommand.modalHandler) {
         return applicationCommand.modalHandler(interaction);
+      }
+    }
+
+    // Points modals (custom role, nickname, clan build)
+    if (interaction.customId.startsWith('points_customrole_modal_') ||
+        interaction.customId.startsWith('points_nickname_modal_') ||
+        interaction.customId.startsWith('points_clan_build_modal_')) {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.modalHandler) {
+        return pointsCommand.modalHandler(interaction);
       }
     }
   }

@@ -306,7 +306,11 @@ client.on('interactionCreate', async (interaction) => {
   // BUTTON INTERACTIONS
   // ============================================================
   if (interaction.isButton()) {
-    
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log(
+      `[/interactions] 🔘 Button: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`
+    );
+
     // ✅ DRAFT CHOICE BUTTONS
     if (interaction.customId.startsWith('draft_')) {
       return handleDraftChoice(interaction);
@@ -346,9 +350,12 @@ client.on('interactionCreate', async (interaction) => {
 
     // Servers module (DonutSMP / clan server / member server stats)
     if (interaction.customId.startsWith('server_') || interaction.customId.startsWith('clan_server_') || interaction.customId.startsWith('member_server_')) {
+      console.log(`[/interactions] 🔁 Routing to servers module for ${interaction.customId}`);
       const serverCommand = client.commands.get('server');
       if (serverCommand && serverCommand.buttonHandler) {
         return serverCommand.buttonHandler(interaction);
+      } else {
+        console.warn("[/interactions] ⚠️ Server command or buttonHandler not found for", interaction.customId);
       }
     }
   }

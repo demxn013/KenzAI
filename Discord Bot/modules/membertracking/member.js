@@ -349,8 +349,7 @@ module.exports = {
       );
 
       console.log(`[/member view] ✅ Embed created successfully`);
-      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-
+      console.log(`[/member view] 🟠 Adding DonutSMP button for MC: ${properMCUsername}`);
       const serverRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`member_server_donutsmp_${properMCUsername}`)
@@ -358,6 +357,8 @@ module.exports = {
           .setStyle(ButtonStyle.Secondary)
       );
 
+      console.log("[/member view] 📤 Sending member embed + DonutSMP button");
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       return interaction.reply({ embeds: [embed], components: [serverRow] });
     }
   },

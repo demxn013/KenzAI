@@ -57,7 +57,12 @@ module.exports = {
             .setRequired(false)
         )
         .addAttachmentOption(opt => opt.setName("flag").setDescription("New clan flag PNG (replaces existing)"))
-        .addStringOption(opt => opt.setName("donutsmpteam").setDescription("DonutSMP in-game team name for this clan (use 'clear' to remove)").setRequired(false))
+        .addStringOption(opt =>
+          opt
+            .setName("server")
+            .setDescription("Server this clan is on (e.g., donutsmp, or 'clear' to remove)")
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -225,6 +230,9 @@ module.exports = {
     if (sub === "edit") {
       await interaction.deferReply();
 
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[/clan edit] 🎯 Command invoked by: ${interaction.user.tag} (${interaction.user.id})`);
+
       const clanInput = interaction.options.getString("clan");
       const newAbbr = interaction.options.getString("abbreviation");
       const newName = interaction.options.getString("name");
@@ -232,7 +240,16 @@ module.exports = {
       const newClanRole = interaction.options.getRole("clanrole");
       const newFlag = interaction.options.getAttachment("flag");
       const newApplicationMode = interaction.options.getString("applicationmode");
-      const newDonutSMPTeam = interaction.options.getString("donutsmpteam");
+      const newServer = interaction.options.getString("server");
+
+      console.log(`[/clan edit] 📋 Target clan: ${clanInput}`);
+      if (newAbbr) console.log(`[/clan edit] ✏️ Option: abbreviation → ${newAbbr}`);
+      if (newName) console.log(`[/clan edit] ✏️ Option: name → ${newName}`);
+      if (newYazanakiRole) console.log(`[/clan edit] 🎭 Option: yazanakirole`);
+      if (newClanRole) console.log(`[/clan edit] 🎭 Option: clanrole`);
+      if (newFlag) console.log(`[/clan edit] 🚩 Option: flag (attachment)`);
+      if (newApplicationMode) console.log(`[/clan edit] 📝 Option: applicationmode → ${newApplicationMode}`);
+      if (newServer !== undefined && newServer !== null) console.log(`[/clan edit] 🟠 Option: server → ${newServer}`);
 
       const guildId = Object.keys(clans).find(id =>
         clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
@@ -240,6 +257,8 @@ module.exports = {
       );
 
       if (!guildId || !clans[guildId]) {
+        console.log(`[/clan edit] ❌ Clan not found: ${clanInput}`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({
           content: `❌ Clan **${clanInput}** not found.`,
           ephemeral: true
@@ -247,6 +266,7 @@ module.exports = {
       }
 
       const clan = clans[guildId];
+      console.log(`[/clan edit] ✅ Resolved to guild ${guildId} (${clan.abbr}: ${clan.name})`);
       const changes = [];
 
       // Name / abbreviation updates
@@ -306,19 +326,27 @@ module.exports = {
         }
       }
 
-      // DonutSMP team (servers option)
-      if (newDonutSMPTeam !== undefined && newDonutSMPTeam !== null) {
-        const v = newDonutSMPTeam.trim().toLowerCase();
+      // Servers option (currently only DonutSMP supported)
+      if (newServer !== undefined && newServer !== null) {
+        const v = newServer.trim().toLowerCase();
         if (v === "" || v === "clear") {
           delete clan.donutsmpTeamName;
-          changes.push("🟠 DonutSMP team: cleared.");
+          changes.push("🟠 Servers: cleared DonutSMP link.");
+          console.log(`[/clan edit] 🟠 Servers: cleared DonutSMP link for ${clan.abbr}`);
+        } else if (v === "donutsmp") {
+          // For DonutSMP we treat the clan abbreviation as the in-game team name by default
+          clan.donutsmpTeamName = clan.abbr;
+          changes.push(`🟠 Servers: linked to DonutSMP (team \`${clan.donutsmpTeamName}\`).`);
+          console.log(`[/clan edit] 🟠 Servers: linked ${clan.abbr} to DonutSMP (team: ${clan.donutsmpTeamName})`);
         } else {
-          clan.donutsmpTeamName = newDonutSMPTeam.trim();
-          changes.push(`🟠 DonutSMP team: set to \`${clan.donutsmpTeamName}\`.`);
+          changes.push(`⚠️ Servers: unknown server \`${v}\` (supported: \`donutsmp\`). No server link changed.`);
+          console.log(`[/clan edit] ⚠️ Servers: unknown server "${v}", no link changed`);
         }
       }
 
       if (!changes.length) {
+        console.log(`[/clan edit] ℹ️ No changes provided`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({
           content: "ℹ️ No changes were provided. Specify at least one field to edit.",
           ephemeral: true
@@ -326,6 +354,10 @@ module.exports = {
       }
 
       clanlogic.writeClans(clans);
+
+      console.log(`[/clan edit] ✅ Clan updated: ${clan.abbr} - ${clan.name}`);
+      console.log(`[/clan edit] 📝 Changes: ${changes.length} item(s)`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
       return interaction.editReply({
         content:
@@ -371,6 +403,9 @@ module.exports = {
     if (sub === "view") {
       await interaction.deferReply();
 
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[/clan view] 🎯 Command invoked by: ${interaction.user.tag} (${interaction.user.id})`);
+
       let input = interaction.options.getString("clan");
       let guildId;
 
@@ -384,10 +419,13 @@ module.exports = {
       }
 
       if (!guildId || !clans[guildId]) {
+        console.log(`[/clan view] ❌ Clan not found: ${input || "(current guild)"}`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({ content: "❌ Clan not found.", ephemeral: true });
       }
 
       const clan = clans[guildId];
+      console.log(`[/clan view] ✅ Viewing clan: ${clan.abbr} - ${clan.name} (guild ${guildId})`);
       const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
 
       if (!guild) {
@@ -471,6 +509,7 @@ module.exports = {
 
       const components = [];
       if (clan.donutsmpTeamName) {
+        console.log(`[/clan view] 🟠 Adding DonutSMP button for clan ${clan.abbr} (guild ${guildId})`);
         const serverRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId(`clan_server_donutsmp_${guildId}`)
@@ -482,9 +521,11 @@ module.exports = {
 
       if (useBannerPath || flagExists) {
         const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
+        console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (with flag, components: ${components.length})`);
         return interaction.editReply({ embeds: [embed], files: [attachment], components });
       }
 
+      console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (components: ${components.length})`);
       return interaction.editReply({ embeds: [embed], components });
     }
 

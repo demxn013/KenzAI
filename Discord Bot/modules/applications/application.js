@@ -327,6 +327,28 @@ module.exports = {
         }
       }
 
+      // ============================================================
+      // ✅ NOTIFY APPLICANT IN CHANNEL (visible to them, with real ping)
+      // ============================================================
+      const resultEmbed = new EmbedBuilder()
+        .setTitle(isAccepted ? "✅ Application Accepted" : "❌ Application Denied")
+        .setDescription(
+          isAccepted
+            ? "Congratulations! Your application to the Yazanaki Empire has been **accepted**. You have been given the appropriate roles. Welcome!"
+            : "Your application to the Yazanaki Empire has been **denied**. If you have questions, please reach out to staff."
+        )
+        .setColor(isAccepted ? 0x00ff00 : 0xff0000)
+        .setTimestamp();
+
+      try {
+        await interaction.channel.send({
+          content: `<@${discordId}>`,
+          embeds: [resultEmbed]
+        });
+      } catch (err) {
+        console.warn(`[application] ⚠️ Could not send applicant result message:`, err.message);
+      }
+
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
       return interaction.reply({
@@ -482,7 +504,9 @@ module.exports = {
           .setStyle(ButtonStyle.Danger)
       );
 
+      // Ping applicant in message content so they actually get notified (embeds don't trigger pings)
       await channel.send({
+        content: `<@${interaction.user.id}>`,
         embeds: [infoEmbed, termsEmbed],
         components: [controlRow]
       });

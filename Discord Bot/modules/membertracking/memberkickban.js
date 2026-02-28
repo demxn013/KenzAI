@@ -74,6 +74,59 @@ function getClanGuildId(clanName) {
 }
 
 /**
+ * Get the "empire enemy" role ID from roles.json (for bans).
+ * Uses empireEnemyRoleId if set, otherwise finds status role by name "empire enemy" or "Enemy".
+ */
+function getEmpireEnemyRoleId(rolesConfig) {
+  const guildConfig = rolesConfig?.guilds?.[YAZANAKI_EMPIRE_GUILD_ID];
+  if (!guildConfig) return null;
+  if (guildConfig.empireEnemyRoleId) return guildConfig.empireEnemyRoleId;
+  const statusRoles = guildConfig.statusRoles || {};
+  for (const [roleId, data] of Object.entries(statusRoles)) {
+    const name = (data?.name || "").toLowerCase();
+    if (name === "empire enemy" || name === "enemy") return roleId;
+  }
+  return null;
+}
+
+/**
+ * Add the "empire enemy" role to a member in the Yazanaki guild (used when banning).
+ */
+async function addEmpireEnemyRole(discordId, client) {
+  try {
+    let rolesConfig = {};
+    try {
+      const raw = fs.readFileSync(rolesConfigPath, "utf8");
+      rolesConfig = JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[memberkickban] ⚠️ Could not load roles.json for empire enemy role:`, err.message);
+      return false;
+    }
+    const roleId = getEmpireEnemyRoleId(rolesConfig);
+    if (!roleId) {
+      console.warn(`[memberkickban] ⚠️ No empire enemy role configured in roles.json (empireEnemyRoleId or status role "Enemy"/"empire enemy")`);
+      return false;
+    }
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member) {
+      console.warn(`[memberkickban] ⚠️ Member ${discordId} not in Yazanaki Empire - cannot add empire enemy role`);
+      return false;
+    }
+    if (member.roles.cache.has(roleId)) {
+      console.log(`[memberkickban] 🎭 User already has empire enemy role`);
+      return true;
+    }
+    await member.roles.add(roleId);
+    console.log(`[memberkickban] 🎭 Added empire enemy role to ${discordId}`);
+    return true;
+  } catch (err) {
+    console.error(`[memberkickban] ❌ Error adding empire enemy role:`, err);
+    return false;
+  }
+}
+
+/**
  * Remove all Yazanaki Empire roles from a member
  */
 async function removeAllYazanakiRoles(discordId, client) {
@@ -283,7 +336,10 @@ async function banMember(discordId, reason, client) {
     // 1. Remove all Yazanaki Empire roles (if they are in the guild)
     const rolesRemoved = await removeAllYazanakiRoles(discordId, client);
     console.log(`[memberkickban] 🎭 Roles removed: ${rolesRemoved}`);
-    
+
+    // 1b. Add "empire enemy" role in Yazanaki Discord (from roles.json)
+    await addEmpireEnemyRole(discordId, client);
+
     // 2. Decrement clan resident count (only if they were an existing member)
     let clanName = null;
     if (isExistingMember) {

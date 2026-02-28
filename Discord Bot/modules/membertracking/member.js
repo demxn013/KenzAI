@@ -193,7 +193,7 @@ module.exports = {
           clanLine +
           `**Reason:** ${reason}\n\n` +
           `⛔ **This user is permanently banned from all Yazanaki clans.**\n\n` +
-          `All empire roles have been removed.`
+          `All empire roles have been removed and the **Empire Enemy** role has been applied in the Yazanaki Discord.`
         )
         .setColor(0xFF0000)
         .setFooter({ text: `Banned by ${interaction.user.tag}` })

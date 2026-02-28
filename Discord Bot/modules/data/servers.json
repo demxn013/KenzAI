@@ -5,5 +5,19 @@
     "apiBaseUrl": "https://api.donutsmp.net",
     "apiKeyEnv": "DONUTSMP_API_KEY",
     "enabled": true
+  },
+  "statEmojis": {
+    "donutsmp": {
+      "kills": "⚔️",
+      "deaths": "💀",
+      "money": "💰",
+      "playtime": "⏱️",
+      "shards": "",
+      "mobs_killed": "🐉",
+      "broken_blocks": "🔨",
+      "placed_blocks": "🧱",
+      "online": "🟢",
+      "leaderboard": "📋"
+    }
   }
 }

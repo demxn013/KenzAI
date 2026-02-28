@@ -3,7 +3,7 @@
 
 const path = require("path");
 const fs = require("fs");
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require("discord.js");
 const clanlogic = require("../clantracking/clanlogic");
 const { readMembers } = require("../membertracking/memberlogic");
 const { getPlayerStats, getPlayerLookup, getLeaderboard } = require("./donutsmp");
@@ -16,6 +16,7 @@ const {
 } = require("./serverembed");
 
 const serversPath = path.join(__dirname, "../data/servers.json");
+const serverLogosDir = path.join(__dirname, "../images/serverlogos");
 
 function readServers() {
   try {
@@ -32,8 +33,34 @@ function readServers() {
 function getEnabledServers() {
   const all = readServers();
   return Object.entries(all)
-    .filter(([, s]) => s && s.enabled !== false)
+    .filter(([key, s]) => key !== "statEmojis" && s && typeof s === "object" && s.enabled !== false)
     .map(([id, s]) => ({ id, ...s }));
+}
+
+/** Get optional stat emoji map for a server (from servers.json statEmojis[serverId]). */
+function getStatEmojis(serverId) {
+  const all = readServers();
+  const map = all.statEmojis && all.statEmojis[serverId];
+  if (!map || typeof map !== "object") return null;
+  const out = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (v != null && String(v).trim() !== "") out[k] = String(v).trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * If the server has a logo in modules/images/serverlogos/{serverName}.png, return
+ * { path, attachmentName } for use as embed thumbnail; otherwise return null.
+ */
+function getServerLogoAttachment(serverId) {
+  const all = readServers();
+  const server = serverId && all[serverId] && typeof all[serverId] === "object" ? all[serverId] : null;
+  if (!server || !server.name) return null;
+  const fileName = `${server.name}.png`;
+  const logoPath = path.join(serverLogosDir, fileName);
+  if (!fs.existsSync(logoPath)) return null;
+  return { path: logoPath, attachmentName: fileName };
 }
 
 module.exports = {
@@ -228,9 +255,18 @@ async function handleClanDonutSMP(interaction, guildId) {
     });
   }
   console.log(`[/server buttons] 📋 Leaderboard highlights: ${highlights.length} clan member(s) in top page`);
-  const embed = createDonutSMPTeamEmbed(clan.abbr, clan.name, summed, highlights);
-  console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr}`);
-  await interaction.editReply({ embeds: [embed] });
+  const statEmojis = getStatEmojis("donutsmp");
+  const embed = createDonutSMPTeamEmbed(clan.abbr, clan.name, summed, highlights, statEmojis);
+  const logo = getServerLogoAttachment("donutsmp");
+  if (logo) {
+    embed.setThumbnail(`attachment://${logo.attachmentName}`);
+    const attachment = new AttachmentBuilder(logo.path, { name: logo.attachmentName });
+    console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr} (with server logo)`);
+    await interaction.editReply({ embeds: [embed], files: [attachment] });
+  } else {
+    console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr}`);
+    await interaction.editReply({ embeds: [embed] });
+  }
   console.log("[/server buttons] ✅ Team stats embed sent");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 }
@@ -255,7 +291,8 @@ async function handleMemberDonutSMP(interaction, mcUsername) {
   const stats = statsRes.ok ? statsRes.stats : {};
   const lookup = lookupRes.ok ? lookupRes.lookup : null;
   console.log(`[/server buttons] 📊 Stats: ${statsRes.ok ? "ok" : "missing"}, Lookup: ${lookupRes.ok ? "ok" : "missing"}`);
-  const embed = createDonutSMPPlayerEmbed(mcUsername, stats, lookup);
+  const statEmojis = getStatEmojis("donutsmp");
+  const embed = createDonutSMPPlayerEmbed(mcUsername, stats, lookup, statEmojis);
   console.log(`[/server buttons] 📤 Sending DonutSMP player stats embed for ${mcUsername}`);
   await interaction.editReply({ embeds: [embed] });
   console.log("[/server buttons] ✅ Player stats embed sent");

@@ -12,37 +12,48 @@ function num(s) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Format a number as money: max 2 decimal places, no trailing zeros after decimal. */
+/** Format a number as money: thousands separators and exactly 2 decimal places (e.g. 50,058,803.23). */
 function formatMoney(value) {
   const n = num(value);
-  if (!Number.isFinite(n)) return "0";
+  if (!Number.isFinite(n)) return "0.00";
   const fixed = n.toFixed(2);
-  return fixed.replace(/\.?0+$/, "") || "0";
+  const [intPart, decPart] = fixed.split(".");
+  const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decPart != null ? `${withCommas}.${decPart}` : withCommas;
 }
 
+const MIN_PER_HOUR = 60;
+const MIN_PER_DAY = 24 * MIN_PER_HOUR;
+const MIN_PER_WEEK = 7 * MIN_PER_DAY;
+const MIN_PER_MONTH = 4 * MIN_PER_WEEK;
+const MIN_PER_YEAR = 12 * MIN_PER_MONTH;
+
 /**
- * Format total minutes into a short human-readable string (e.g. "2 wk 3 d", "5 d 12 hr", "45 min").
+ * Format total minutes as Xy Xm Xw Xd Xh (7 days = 1 week, 4 weeks = 1 month, 12 months = 1 year).
+ * Only non-zero units are included.
  * @param {number} totalMinutes
  * @returns {string}
  */
 function formatPlaytime(totalMinutes) {
   const m = Math.floor(Number(totalMinutes) || 0);
-  if (m <= 0) return "0 min";
-  const months = Math.floor(m / (30 * 24 * 60));
-  let rest = m % (30 * 24 * 60);
-  const weeks = Math.floor(rest / (7 * 24 * 60));
-  rest %= 7 * 24 * 60;
-  const days = Math.floor(rest / (24 * 60));
-  rest %= 24 * 60;
-  const hours = Math.floor(rest / 60);
-  const mins = rest % 60;
+  if (m <= 0) return "0h";
+  let rest = m;
+  const years = Math.floor(rest / MIN_PER_YEAR);
+  rest %= MIN_PER_YEAR;
+  const months = Math.floor(rest / MIN_PER_MONTH);
+  rest %= MIN_PER_MONTH;
+  const weeks = Math.floor(rest / MIN_PER_WEEK);
+  rest %= MIN_PER_WEEK;
+  const days = Math.floor(rest / MIN_PER_DAY);
+  rest %= MIN_PER_DAY;
+  const hours = Math.floor(rest / MIN_PER_HOUR);
   const parts = [];
-  if (months) parts.push(`${months} mo`);
-  if (weeks) parts.push(`${weeks} wk`);
-  if (days) parts.push(`${days} d`);
-  if (hours) parts.push(`${hours} hr`);
-  if (mins) parts.push(`${mins} min`);
-  return parts.join(" ") || "0 min";
+  if (years) parts.push(`${years}y`);
+  if (months) parts.push(`${months}m`);
+  if (weeks) parts.push(`${weeks}w`);
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  return parts.join(" ") || "0h";
 }
 
 /** Parse playtime from API string (e.g. "120 min" or "90") into total minutes. */
@@ -70,28 +81,36 @@ function createServerListEmbed(servers) {
   return embed;
 }
 
+/** Prefix a field name with optional emoji from statEmojis[key]. */
+function fieldName(key, label, statEmojis) {
+  const emoji = statEmojis && statEmojis[key];
+  return emoji ? `${emoji} ${label}` : label;
+}
+
 /**
  * Embed: DonutSMP team stats (summed + optional leaderboard highlights).
  * @param {string} clanAbbr
  * @param {string} clanName
  * @param {object} summed - { kills, deaths, money, playtime, shards, ... }
  * @param {Array<{username: string, value: string, rank?: number}>} highlights - optional leaderboard entries for this clan
+ * @param {object} [statEmojis] - optional map of field keys to emoji strings (e.g. { shards: '<:amethyst:123>', money: '💰' })
  */
-function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = []) {
+function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = [], statEmojis = null) {
   const playtimeDisplay = typeof summed.playtime === "number"
     ? formatPlaytime(summed.playtime)
     : formatPlaytime(parsePlaytimeToMinutes(summed.playtime));
+  const e = (key, label) => fieldName(key, label, statEmojis);
   const fields = [
-    { name: "Kills", value: `\`${summed.kills}\``, inline: true },
-    { name: "Deaths", value: `\`${summed.deaths}\``, inline: true },
-    { name: "Money", value: `\`${formatMoney(summed.money)}\``, inline: true },
-    { name: "Playtime", value: `\`${playtimeDisplay}\``, inline: true },
-    { name: "Shards", value: `\`${summed.shards}\``, inline: true },
-    { name: "Mobs killed", value: `\`${summed.mobs_killed}\``, inline: true }
+    { name: e("kills", "Kills"), value: `\`${summed.kills}\``, inline: false },
+    { name: e("deaths", "Deaths"), value: `\`${summed.deaths}\``, inline: false },
+    { name: e("money", "Money"), value: `\`${formatMoney(summed.money)}\``, inline: false },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: false },
+    { name: e("shards", "Shards"), value: `\`${summed.shards}\``, inline: false },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${summed.mobs_killed}\``, inline: false }
   ];
   if (highlights.length > 0) {
     fields.push({
-      name: "Leaderboard highlights",
+      name: fieldName("leaderboard", "Leaderboard highlights", statEmojis),
       value: highlights.map((h) => `**${escapeDiscord(h.username)}** — ${h.value} (rank ${h.rank})`).join("\n"),
       inline: false
     });
@@ -108,25 +127,27 @@ function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = []) {
  * @param {string} mcUsername
  * @param {object} stats - from API (kills, deaths, playtime, money, shards, ...)
  * @param {object} lookup - from API (location, rank) for online status
+ * @param {object} [statEmojis] - optional map of field keys to emoji strings (custom or Unicode)
  */
-function createDonutSMPPlayerEmbed(mcUsername, stats, lookup = null) {
+function createDonutSMPPlayerEmbed(mcUsername, stats, lookup = null, statEmojis = null) {
   const safe = (s) => (s != null && s !== "" ? String(s) : "0");
   const playtimeMins = parsePlaytimeToMinutes(stats?.playtime);
   const playtimeDisplay = formatPlaytime(playtimeMins);
+  const e = (key, label) => fieldName(key, label, statEmojis);
   const fields = [
-    { name: "Kills", value: `\`${safe(stats?.kills)}\``, inline: true },
-    { name: "Deaths", value: `\`${safe(stats?.deaths)}\``, inline: true },
-    { name: "Money", value: `\`${formatMoney(stats?.money)}\``, inline: true },
-    { name: "Playtime", value: `\`${playtimeDisplay}\``, inline: true },
-    { name: "Shards", value: `\`${safe(stats?.shards)}\``, inline: true },
+    { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: true },
+    { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: true },
+    { name: e("money", "Money"), value: `\`${formatMoney(stats?.money)}\``, inline: true },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: true },
+    { name: e("shards", "Shards"), value: `\`${safe(stats?.shards)}\``, inline: true },
     {
-      name: "Online",
+      name: e("online", "Online"),
       value: lookup?.location ? `\`Online\` (${escapeDiscord(lookup.location)})` : "`Offline`",
       inline: true
     },
-    { name: "Broken blocks", value: `\`${safe(stats?.broken_blocks)}\``, inline: true },
-    { name: "Placed blocks", value: `\`${safe(stats?.placed_blocks)}\``, inline: true },
-    { name: "Mobs killed", value: `\`${safe(stats?.mobs_killed)}\``, inline: true }
+    { name: e("broken_blocks", "Broken blocks"), value: `\`${safe(stats?.broken_blocks)}\``, inline: true },
+    { name: e("placed_blocks", "Placed blocks"), value: `\`${safe(stats?.placed_blocks)}\``, inline: true },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${safe(stats?.mobs_killed)}\``, inline: true }
   ];
   return new EmbedBuilder()
     .setTitle(`${escapeDiscord(mcUsername)} — DonutSMP`)

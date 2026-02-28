@@ -7,6 +7,7 @@ const https = require("https");
 const Jimp = require("jimp");
 const { getMCFromDiscord, getDiscordFromMC } = require("../linking/linklogic");
 const { detectRolesFromDiscord, batchDetectRoles } = require("../roles/roledetector");
+const { getApplicant, getAllApplicants } = require("../applications/applicants");
 
 const membersPath = path.join(__dirname, "../data/members.json");
 
@@ -53,31 +54,23 @@ function writeMembers(data) {
 }
 
 /**
- * ✅ Update a member's rank and status in members.json
+ * ✅ Update a member's rank and status in members.json.
+ * Only updates EXISTING members — does NOT create new entries.
+ * New member entries are created only when an applicant is accepted (acceptedapplicants.js).
  */
 function updateMemberRoles(discordId, rank, status) {
   try {
     const members = readMembers();
-    
+
     if (!members[discordId]) {
-      console.log(`[memberlogic] 📝 Creating new member entry for ${discordId}`);
-      members[discordId] = {
-        discordId,
-        discordUser: "",
-        minecraftUser: "",
-        minecraftVersion: "",
-        JoinedClan: "",
-        JoinDate: "",
-        YazanakiRank: rank || "n/d",
-        EmpireID: "",
-        Status: status || "n/d"
-      };
-    } else {
-      console.log(`[memberlogic] 🔄 Updating roles for ${discordId}: Rank=${rank}, Status=${status}`);
-      members[discordId].YazanakiRank = rank || "n/d";
-      members[discordId].Status = status || "n/d";
+      console.log(`[memberlogic] ℹ️ Skipping role update: ${discordId} is not in members.json (applicant-only or not yet accepted)`);
+      return false;
     }
-    
+
+    console.log(`[memberlogic] 🔄 Updating roles for ${discordId}: Rank=${rank}, Status=${status}`);
+    members[discordId].YazanakiRank = rank || "n/d";
+    members[discordId].Status = status || "n/d";
+
     const success = writeMembers(members);
     if (success) {
       console.log(`[memberlogic] ✅ Roles updated for ${discordId}`);
@@ -126,20 +119,38 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 
   console.log(`[memberlogic] 🔍 Searching for MC username: ${inputMC}`);
 
-  const linkedDiscordId = getDiscordFromMC(inputMC);
-  
+  let linkedDiscordId = getDiscordFromMC(inputMC);
+  let linkedMC = null; // set from applicants fallback or from getMCFromDiscord below
+
+  // ✅ Fallback: resolve MC -> Discord from applicants.json (case-insensitive)
   if (!linkedDiscordId) {
-    console.log(`[memberlogic] ℹ️ Not linked in linking.json`);
+    const inputKey = normalizeUsername(inputMC);
+    const allApplicants = getAllApplicants();
+    for (const id of Object.keys(allApplicants || {})) {
+      const a = allApplicants[id];
+      const applicantKey = a.minecraftUserKey || (a.minecraftUser || "").toString().toLowerCase();
+      if (applicantKey && applicantKey === inputKey) {
+        linkedDiscordId = id;
+        linkedMC = a.minecraftUser || a.minecraftName;
+        console.log(`[memberlogic] ℹ️ Found link via applicants.json: ${inputMC} -> Discord ID ${linkedDiscordId}`);
+        break;
+      }
+    }
+  }
+
+  if (!linkedDiscordId) {
+    console.log(`[memberlogic] ℹ️ Not linked in linking.json or applicants.json`);
     return {
       member: null,
       exactUsername: inputMC
     };
   }
 
+  if (!linkedMC) {
+    linkedMC = getMCFromDiscord(linkedDiscordId) || inputMC;
+  }
   console.log(`[memberlogic] ✅ Found link: ${inputMC} -> Discord ID ${linkedDiscordId}`);
-  
-  const linkedMC = getMCFromDiscord(linkedDiscordId);
-  
+
   const members = readMembers();
   let empireData = null;
   
@@ -161,10 +172,11 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     try {
       detectedRoles = await detectRolesFromDiscord(linkedDiscordId, client);
       console.log(`[memberlogic] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
-      
-      // ✅ SAVE TO members.json
-      updateMemberRoles(linkedDiscordId, detectedRoles.rank, detectedRoles.status);
-      
+
+      // ✅ Only persist to members.json if they are already a member (not applicant-only)
+      if (empireData) {
+        updateMemberRoles(linkedDiscordId, detectedRoles.rank, detectedRoles.status);
+      }
     } catch (err) {
       console.error(`[memberlogic] ❌ Error detecting roles:`, err);
     }
@@ -178,7 +190,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
       };
     }
   }
-  
+
   const memberData = {
     discordId: linkedDiscordId,
     minecraftUser: linkedMC,
@@ -209,14 +221,23 @@ async function getMemberByDiscordId(discordId, client = null) {
   }
   
   console.log(`[memberlogic] 🔍 Looking up Discord ID: ${discordId}`);
-  
-  const linkedMC = getMCFromDiscord(discordId);
-  
+
+  let linkedMC = getMCFromDiscord(discordId);
+
+  // ✅ Fallback: use applicants.json so applicants/denied users can see Discord↔MC link in /member view
   if (!linkedMC) {
-    console.log(`[memberlogic] ℹ️ Not linked in linking.json`);
+    const applicant = getApplicant(discordId);
+    if (applicant && (applicant.minecraftUser || applicant.minecraftName)) {
+      linkedMC = applicant.minecraftUser || applicant.minecraftName;
+      console.log(`[memberlogic] ℹ️ Found link via applicants.json: ${discordId} -> ${linkedMC}`);
+    }
+  }
+
+  if (!linkedMC) {
+    console.log(`[memberlogic] ℹ️ Not linked in linking.json or applicants.json`);
     return null;
   }
-  
+
   console.log(`[memberlogic] ✅ Found link: ${discordId} -> ${linkedMC}`);
   
   const members = readMembers();
@@ -240,10 +261,11 @@ async function getMemberByDiscordId(discordId, client = null) {
     try {
       detectedRoles = await detectRolesFromDiscord(discordId, client);
       console.log(`[memberlogic] ✅ Roles detected - Rank: ${detectedRoles.rank}, Status: ${detectedRoles.status}`);
-      
-      // ✅ SAVE TO members.json
-      updateMemberRoles(discordId, detectedRoles.rank, detectedRoles.status);
-      
+
+      // ✅ Only persist to members.json if they are already a member (not applicant-only)
+      if (empireData) {
+        updateMemberRoles(discordId, detectedRoles.rank, detectedRoles.status);
+      }
     } catch (err) {
       console.error(`[memberlogic] ❌ Error detecting roles:`, err);
     }
@@ -257,7 +279,7 @@ async function getMemberByDiscordId(discordId, client = null) {
       };
     }
   }
-  
+
   const memberData = {
     discordId,
     minecraftUser: linkedMC,

@@ -96,7 +96,15 @@ module.exports = {
       const balance = getBalance(interaction.user.id);
       const embed = new EmbedBuilder()
         .setTitle("Points Shop")
-        .setDescription(`Your balance: **${balance}** points.\nChoose a category below.`)
+        .setDescription(
+          `Your balance: **${balance}** points.\n` +
+            "Choose a category below.\n\n" +
+            "__**Ways to earn points (in-game):**__\n" +
+            "- Recruiting a member: `10 points`\n" +
+            "- Every 1mil given to leadership: `50 points`\n" +
+            "- Killing a non Yazanaki member wearing maxed neth: `200 points`\n" +
+            "- Building a farm: `250 points`"
+        )
         .setColor(0x339eff);
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()

@@ -25,7 +25,8 @@ function formatMoney(value) {
 const MIN_PER_HOUR = 60;
 const MIN_PER_DAY = 24 * MIN_PER_HOUR;
 const MIN_PER_WEEK = 7 * MIN_PER_DAY;
-const MIN_PER_MONTH = 4 * MIN_PER_WEEK;
+// Treat a month as 30 days instead of 4 weeks
+const MIN_PER_MONTH = 30 * MIN_PER_DAY;
 const MIN_PER_YEAR = 12 * MIN_PER_MONTH;
 
 /**
@@ -56,12 +57,24 @@ function formatPlaytime(totalMinutes) {
   return parts.join(" ") || "0h";
 }
 
-/** Parse playtime from API string (e.g. "120 min" or "90") into total minutes. */
+/** Parse playtime from API string into total minutes.
+ * - If it explicitly contains "min", treat the number as minutes.
+ * - Otherwise, DonutSMP's stats API returns the raw Minecraft playtime value in TICKS (1/20s),
+ *   so convert ticks -> seconds -> minutes before formatting as y m w d h.
+ */
 function parsePlaytimeToMinutes(playtimeStr) {
   if (playtimeStr == null || playtimeStr === "") return 0;
   const s = String(playtimeStr).trim();
-  const match = s.match(/(\d+)\s*min/i) || s.match(/(\d+)/);
-  return match ? parseInt(match[1], 10) : 0;
+
+  const minMatch = s.match(/(\d+)\s*min/i);
+  if (minMatch) return parseInt(minMatch[1], 10);
+
+  const numeric = parseFloat(s.replace(/,/g, ""));
+  if (!Number.isFinite(numeric)) return 0;
+
+  // ticks -> seconds (÷20) -> minutes (÷60)
+  const minutes = Math.floor(numeric / (20 * 60));
+  return minutes >= 0 ? minutes : 0;
 }
 
 /**

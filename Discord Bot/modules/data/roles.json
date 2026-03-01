@@ -40,6 +40,11 @@
         }
       },
       "rankRoles": {
+        "1334846750707421194": {
+          "name": "Random",
+          "priority": 0,
+          "position": 11
+        },
         "1334641779009519668": {
           "name": "Citizen",
           "priority": 1,

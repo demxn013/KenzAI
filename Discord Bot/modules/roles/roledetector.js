@@ -4,6 +4,9 @@ const path = require("path");
 
 const rolesConfigPath = path.join(__dirname, "../data/roles.json");
 
+// Draft system config (for Draft role ID)
+const draftConfig = require("../empire/draftconfig");
+
 // Yazanaki Empire Guild ID (hardcoded for now)
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
@@ -179,6 +182,10 @@ async function detectRolesFromDiscord(discordId, client) {
     const userRoleIds = member.roles.cache.map(role => role.id);
     console.log(`[roledetector] User has ${userRoleIds.length} roles`);
 
+    // Special-case: track if the user currently has the Draft role
+    const DRAFT_ROLE_ID = draftConfig?.ROLES?.DRAFT || null;
+    const hasDraftRole = DRAFT_ROLE_ID ? userRoleIds.includes(DRAFT_ROLE_ID) : false;
+
     let bestRank = "n/d";
     let bestStatus = "n/d";
     let highestRankPriority = 0;
@@ -200,6 +207,13 @@ async function detectRolesFromDiscord(discordId, client) {
           }
         }
       }
+    }
+
+    // If the member is currently in Draft (has the Draft role), we want
+    // the public Status to show "Draft" instead of "Military".
+    if (hasDraftRole) {
+      bestStatus = "Draft";
+      console.log("[roledetector] 🎖️ Overriding status to Draft due to active Draft role");
     }
 
     // ============================================================

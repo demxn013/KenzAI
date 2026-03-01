@@ -87,7 +87,7 @@ module.exports = {
           value: "`/points checkin` (daily/weekly), chat in allowed channels, join voice, or receive staff grants.",
         })
         .setColor(0x339eff);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], ephemeral: false });
     }
 
     if (sub === "shop") {
@@ -112,7 +112,7 @@ module.exports = {
           .setLabel("Clan Services")
           .setStyle(ButtonStyle.Secondary)
       );
-      return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      return interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
     }
 
     if (sub === "checkin") {
@@ -152,7 +152,7 @@ module.exports = {
         .setTitle("Check-in")
         .setDescription(lines.join("\n") + (totalAdded ? `\n\nNew balance: **${balance}** pts` : ""))
         .setColor(totalAdded ? 0x00ff00 : 0xffaa00);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], ephemeral: false });
     }
 
     if (sub === "add") {

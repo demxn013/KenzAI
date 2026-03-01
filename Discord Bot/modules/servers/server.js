@@ -13,7 +13,8 @@ const {
   createTeamEmbed,
   createPlayerEmbed,
   createClanSelectEmbed,
-  num
+  num,
+  parsePlaytimeToMinutes
 } = require("./serverembed");
 
 const serversPath = path.join(__dirname, "../data/servers.json");
@@ -281,9 +282,8 @@ async function handleClanDonutSMP(interaction, guildId) {
     summed.broken_blocks += num(s.broken_blocks);
     summed.placed_blocks += num(s.placed_blocks);
     summed.shards += num(s.shards);
-    const pt = String(s.playtime || "0");
-    const match = pt.match(/(\d+)\s*min/i) || pt.match(/(\d+)/);
-    if (match) playtimeMinutes.total += parseInt(match[1], 10);
+    const ptMinutes = parsePlaytimeToMinutes(s.playtime || "0");
+    playtimeMinutes.total += ptMinutes;
   }
   summed.playtime = playtimeMinutes.total;
   console.log(`[/server buttons] 📊 Summed stats: kills=${summed.kills}, deaths=${summed.deaths}, money=${summed.money}, playtime=${playtimeMinutes.total} min, shards=${summed.shards}`);

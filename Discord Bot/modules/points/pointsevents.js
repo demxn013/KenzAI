@@ -2,7 +2,7 @@
 // Message and voice point awards (only for Yazanaki members in allowed channels)
 
 const cache = require("../data/cache");
-const { readMembers, addPoints, isMember } = require("./pointslogic");
+const { readMembers, writeMembers, addPoints, isMember } = require("./pointslogic");
 const {
   YAZANAKI_GUILD_ID,
   POINTS_MESSAGE_CHANNEL_IDS,
@@ -110,6 +110,7 @@ async function handleGuildMemberAdd(member) {
   const members = readMembers();
 
   let inviterId = null;
+  let inviterAbbrev = null;
   for (const [discordId, data] of Object.entries(members)) {
     if (!data || typeof data !== "object") continue;
     for (const [key, value] of Object.entries(data)) {
@@ -126,6 +127,7 @@ async function handleGuildMemberAdd(member) {
         }
         if (storedCode === usedCode) {
           inviterId = discordId;
+          inviterAbbrev = key.replace("PointsInviteLink", "");
           break;
         }
       }
@@ -135,6 +137,14 @@ async function handleGuildMemberAdd(member) {
 
   if (!inviterId) return;
   if (!isMember(inviterId)) return;
+
+  const memberEntry = members[inviterId];
+  if (memberEntry && inviterAbbrev) {
+    const countKey = `${inviterAbbrev}InviteCount`;
+    const currentCount = typeof memberEntry[countKey] === "number" ? memberEntry[countKey] : 0;
+    memberEntry[countKey] = currentCount + 1;
+    writeMembers(members);
+  }
 
   addPoints(inviterId, POINTS_PER_INVITE, "invite");
 }

@@ -65,6 +65,12 @@ module.exports = {
       sub
         .setName("invite")
         .setDescription("Get your personal invite link to earn points")
+        .addUserOption((opt) =>
+          opt
+            .setName("user")
+            .setDescription("View another member's invite links (admin only)")
+            .setRequired(false)
+        )
     )
     .addSubcommand((sub) =>
       sub
@@ -173,14 +179,29 @@ module.exports = {
     }
 
     if (sub === "invite") {
+      const targetUser = interaction.options.getUser("user");
+      const isSelf = !targetUser || targetUser.id === interaction.user.id;
+
       const check = ensureMember(interaction);
       if (!check.ok) return interaction.reply({ content: check.message, ephemeral: true });
 
+      if (!isSelf) {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          return interaction.reply({
+            content: "❌ Only administrators can view other members' invite links.",
+            ephemeral: true,
+          });
+        }
+      }
+
       const members = readMembers();
-      const memberEntry = members[interaction.user.id];
+      const lookupId = isSelf ? interaction.user.id : targetUser.id;
+      const memberEntry = members[lookupId];
       if (!memberEntry) {
         return interaction.reply({
-          content: "❌ You are not in members.json. Ask leadership to register you as a member first.",
+          content: isSelf
+            ? "❌ You are not in members.json. Ask leadership to register you as a member first."
+            : "❌ That user is not in members.json.",
           ephemeral: true,
         });
       }
@@ -240,7 +261,7 @@ module.exports = {
         }
       }
 
-      if (!inviteCode) {
+      if (!inviteCode && isSelf) {
         let channelId = guild.systemChannelId || guild.rulesChannelId || null;
         if (!channelId) {
           const textChannel = guild.channels.cache
@@ -274,8 +295,9 @@ module.exports = {
         }
       }
 
-      const inviteUrl = memberEntry[inviteKey] || `https://discord.gg/${inviteCode}`;
+      const inviteUrl = memberEntry[inviteKey] || (inviteCode ? `https://discord.gg/${inviteCode}` : "n/d");
 
+      let totalInvites = 0;
       const allInviteLines = Object.entries(memberEntry)
         .filter(
           ([key, value]) =>
@@ -286,17 +308,28 @@ module.exports = {
         )
         .map(([key, value]) => {
           const abbrev = key.replace("PointsInviteLink", "");
-          return `**${abbrev}**: ${value}`;
+          const countKey = `${abbrev}InviteCount`;
+          const count = typeof memberEntry[countKey] === "number" ? memberEntry[countKey] : 0;
+          totalInvites += count;
+          return `**${abbrev}**: ${value} — Invites: **${count}**`;
         });
 
+      const headerLine = isSelf
+        ? `This is your invite link. Use this to invite people to **${clanName}** and earn points.`
+        : `These are ${targetUser.tag}'s invite links. They can invite people to **${clanName}** and earn points.`;
+
       const descriptionLines = [
-        `This is your invite link. Use this to invite people to **${clanName}** and earn points.`,
+        headerLine,
         "",
         allInviteLines.length ? allInviteLines.join("\n") : inviteUrl,
       ];
 
+      if (totalInvites > 0) {
+        descriptionLines.push("", `Total recruits (all clans): **${totalInvites}**`);
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle("Your Invite Link")
+        .setTitle(isSelf ? "Your Invite Link" : `${targetUser.tag}'s Invite Links`)
         .setDescription(descriptionLines.join("\n"))
         .setColor(0x339eff);
 

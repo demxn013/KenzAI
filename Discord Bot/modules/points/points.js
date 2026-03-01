@@ -100,10 +100,10 @@ module.exports = {
           `Your balance: **${balance}** points.\n` +
             "Choose a category below.\n\n" +
             "__**Ways to earn points (in-game):**__\n" +
-            "- Recruiting a member: `10 points`\n" +
-            "- Every 1mil given to leadership: `50 points`\n" +
-            "- Killing a non Yazanaki member wearing maxed neth: `200 points`\n" +
-            "- Building a farm: `250 points`"
+            "- Recruiting a member: `5 points`\n" +
+            "- Every 1mil given to leadership: `30 points`\n" +
+            "- Killing a non Yazanaki member wearing maxed neth: `100 points`\n" +
+            "- Building a farm: `150 points`"
         )
         .setColor(0x339eff);
       const row = new ActionRowBuilder().addComponents(

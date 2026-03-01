@@ -33,6 +33,9 @@ const POINTS_PER_MESSAGE = 1;
 const VOICE_POINTS_PER_10_MIN = 2;
 const DAILY_VOICE_CAP = 50;
 
+// Invite points: per successful recruit via personal invite link
+const POINTS_PER_INVITE = 5;
+
 // Predefined color roles (Discord role IDs in Yazanaki Empire). Add your server's cosmetic role IDs.
 // Members can spend 150 pts to get one of these. Leave empty if not configured.
 const COLOR_ROLE_IDS = [];
@@ -79,6 +82,7 @@ module.exports = {
   POINTS_PER_MESSAGE,
   VOICE_POINTS_PER_10_MIN,
   DAILY_VOICE_CAP,
+   POINTS_PER_INVITE,
   getRewardById,
   getRewardsByCategory,
   isPromotionRoleId,

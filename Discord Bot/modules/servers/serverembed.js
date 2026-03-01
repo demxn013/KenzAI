@@ -84,7 +84,7 @@ function parsePlaytimeToMinutes(playtimeStr) {
 function createServerListEmbed(servers) {
   const embed = new EmbedBuilder()
     .setTitle("Servers Yazanaki is in")
-    .setColor(0x5865F2)
+    .setColor(0x000000)
     .setDescription(
       servers.length === 0
         ? "No official servers configured."

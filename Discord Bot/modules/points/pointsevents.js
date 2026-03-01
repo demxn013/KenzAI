@@ -2,7 +2,7 @@
 // Message and voice point awards (only for Yazanaki members in allowed channels)
 
 const cache = require("../data/cache");
-const { addPoints, isMember } = require("./pointslogic");
+const { readMembers, addPoints, isMember } = require("./pointslogic");
 const {
   YAZANAKI_GUILD_ID,
   POINTS_MESSAGE_CHANNEL_IDS,
@@ -10,7 +10,9 @@ const {
   POINTS_PER_MESSAGE,
   VOICE_POINTS_PER_10_MIN,
   DAILY_VOICE_CAP,
+  POINTS_PER_INVITE,
 } = require("./pointsconfig");
+const { readClans } = require("../clantracking/clanlogic");
 
 function todayKey() {
   const d = new Date();
@@ -67,9 +69,110 @@ function handleVoiceStateUpdate(oldState, newState) {
   }
 }
 
+function isInviteGuild(guildId) {
+  if (!guildId) return false;
+  if (guildId === YAZANAKI_GUILD_ID) return true;
+  try {
+    const clans = readClans();
+    return !!clans[guildId];
+  } catch {
+    return false;
+  }
+}
+
+async function handleGuildMemberAdd(member) {
+  const guild = member.guild;
+  if (!guild || !isInviteGuild(guild.id)) return;
+
+  let invites;
+  try {
+    invites = await guild.invites.fetch();
+  } catch {
+    return;
+  }
+
+  let usedInvite = null;
+
+  for (const invite of invites.values()) {
+    const key = `points_invite_uses_${guild.id}_${invite.code}`;
+    const prev = cache.get(key);
+    const prevUses = typeof prev === "number" ? prev : 0;
+    const currentUses = invite.uses || 0;
+    if (!usedInvite && currentUses > prevUses) {
+      usedInvite = invite;
+    }
+    cache.set(key, currentUses);
+  }
+
+  if (!usedInvite) return;
+
+  const usedCode = usedInvite.code;
+  const members = readMembers();
+
+  let inviterId = null;
+  for (const [discordId, data] of Object.entries(members)) {
+    if (!data || typeof data !== "object") continue;
+    for (const [key, value] of Object.entries(data)) {
+      if (
+        typeof key === "string" &&
+        key.endsWith("PointsInviteLink") &&
+        typeof value === "string" &&
+        value.trim().length > 0
+      ) {
+        let storedCode = value.trim();
+        const match = storedCode.match(/discord(?:\.gg|\.com\/invite)\/([^/]+)/i);
+        if (match && match[1]) {
+          storedCode = match[1];
+        }
+        if (storedCode === usedCode) {
+          inviterId = discordId;
+          break;
+        }
+      }
+    }
+    if (inviterId) break;
+  }
+
+  if (!inviterId) return;
+  if (!isMember(inviterId)) return;
+
+  addPoints(inviterId, POINTS_PER_INVITE, "invite");
+}
+
+async function primeInviteCache(client) {
+  const guildIds = new Set();
+  guildIds.add(YAZANAKI_GUILD_ID);
+  try {
+    const clans = readClans();
+    for (const gid of Object.keys(clans)) {
+      guildIds.add(gid);
+    }
+  } catch {
+    // ignore
+  }
+
+  for (const guildId of guildIds) {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+    try {
+      const invites = await guild.invites.fetch();
+      for (const invite of invites.values()) {
+        const key = `points_invite_uses_${guild.id}_${invite.code}`;
+        cache.set(key, invite.uses || 0);
+      }
+    } catch {
+      // ignore per-guild failures
+    }
+  }
+}
+
 function setupPointsEvents(client) {
   client.on("messageCreate", handleMessageCreate);
   client.on("voiceStateUpdate", handleVoiceStateUpdate);
+  client.on("guildMemberAdd", handleGuildMemberAdd);
+  client.once("ready", () => {
+    primeInviteCache(client).catch(() => {});
+  });
 }
 
-module.exports = { setupPointsEvents, handleMessageCreate, handleVoiceStateUpdate };
+module.exports = { setupPointsEvents, handleMessageCreate, handleVoiceStateUpdate, handleGuildMemberAdd };

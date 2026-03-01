@@ -12,8 +12,11 @@ const {
   TextInputStyle,
   PermissionsBitField,
   StringSelectMenuBuilder,
+  ChannelType,
 } = require("discord.js");
 const {
+  readMembers,
+  writeMembers,
   getBalance,
   isMember,
   addPoints,
@@ -32,6 +35,7 @@ const {
   YAZANAKI_GUILD_ID,
 } = require("./pointsconfig");
 const channels = require("../data/channels");
+const { readClans } = require("../clantracking/clanlogic");
 
 function getPointsStaffChannelId() {
   return channels.get("points.staffChannelId") || process.env.POINTS_STAFF_CHANNEL_ID || null;
@@ -56,6 +60,11 @@ module.exports = {
     )
     .addSubcommand((sub) =>
       sub.setName("checkin").setDescription("Daily or weekly check-in for points")
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("invite")
+        .setDescription("Get your personal invite link to earn points")
     )
     .addSubcommand((sub) =>
       sub
@@ -161,6 +170,137 @@ module.exports = {
         .setDescription(lines.join("\n") + (totalAdded ? `\n\nNew balance: **${balance}** pts` : ""))
         .setColor(totalAdded ? 0x00ff00 : 0xffaa00);
       return interaction.reply({ embeds: [embed], ephemeral: false });
+    }
+
+    if (sub === "invite") {
+      const check = ensureMember(interaction);
+      if (!check.ok) return interaction.reply({ content: check.message, ephemeral: true });
+
+      const members = readMembers();
+      const memberEntry = members[interaction.user.id];
+      if (!memberEntry) {
+        return interaction.reply({
+          content: "❌ You are not in members.json. Ask leadership to register you as a member first.",
+          ephemeral: true,
+        });
+      }
+
+      const empireId = memberEntry.EmpireID || "";
+      let clanAbbrev = "YZNK";
+      let clanName = memberEntry.JoinedClan || "Yazanaki Empire";
+
+      let guild = interaction.guild || null;
+      try {
+        const clans = readClans();
+        if (guild && clans[guild.id]) {
+          const clanConfig = clans[guild.id];
+          if (clanConfig.abbr) clanAbbrev = clanConfig.abbr;
+          if (clanConfig.name) clanName = clanConfig.name;
+        } else if (typeof empireId === "string") {
+          const match = empireId.match(/^([A-Z]+)-/);
+          if (match) {
+            clanAbbrev = match[1];
+          }
+        }
+      } catch {
+        if (typeof empireId === "string") {
+          const match = empireId.match(/^([A-Z]+)-/);
+          if (match) {
+            clanAbbrev = match[1];
+          }
+        }
+      }
+
+      const inviteKey = `${clanAbbrev}PointsInviteLink`;
+
+      if (!guild) {
+        guild = await interaction.client.guilds.fetch(YAZANAKI_GUILD_ID);
+      }
+
+      let inviteCode = null;
+
+      const storedInvite = memberEntry[inviteKey];
+      if (storedInvite) {
+        let code = storedInvite;
+        const urlMatch =
+          typeof storedInvite === "string"
+            ? storedInvite.match(/discord(?:\.gg|\.com\/invite)\/([^/]+)/i)
+            : null;
+        if (urlMatch && urlMatch[1]) {
+          code = urlMatch[1];
+        }
+
+        try {
+          const invite = await interaction.client.fetchInvite(code);
+          if (invite && invite.guild && invite.guild.id === guild.id) {
+            inviteCode = invite.code;
+          }
+        } catch {
+          // Existing invite is invalid or deleted; we'll create a new one below.
+        }
+      }
+
+      if (!inviteCode) {
+        let channelId = guild.systemChannelId || guild.rulesChannelId || null;
+        if (!channelId) {
+          const textChannel = guild.channels.cache
+            .filter((ch) => ch.type === ChannelType.GuildText)
+            .first();
+          channelId = textChannel ? textChannel.id : null;
+        }
+
+        if (!channelId) {
+          return interaction.reply({
+            content: "❌ Could not find a channel to create an invite in. Please contact staff.",
+            ephemeral: true,
+          });
+        }
+
+        try {
+          const invite = await guild.invites.create(channelId, {
+            maxAge: 0,
+            maxUses: 0,
+            unique: true,
+          });
+          inviteCode = invite.code;
+          memberEntry[inviteKey] = `https://discord.gg/${invite.code}`;
+          writeMembers(members);
+        } catch (err) {
+          console.error("[points] Failed to create invite link:", err);
+          return interaction.reply({
+            content: "❌ I couldn't create an invite link. Please contact staff.",
+            ephemeral: true,
+          });
+        }
+      }
+
+      const inviteUrl = memberEntry[inviteKey] || `https://discord.gg/${inviteCode}`;
+
+      const allInviteLines = Object.entries(memberEntry)
+        .filter(
+          ([key, value]) =>
+            typeof key === "string" &&
+            key.endsWith("PointsInviteLink") &&
+            typeof value === "string" &&
+            value.trim().length > 0
+        )
+        .map(([key, value]) => {
+          const abbrev = key.replace("PointsInviteLink", "");
+          return `**${abbrev}**: ${value}`;
+        });
+
+      const descriptionLines = [
+        `This is your invite link. Use this to invite people to **${clanName}** and earn points.`,
+        "",
+        allInviteLines.length ? allInviteLines.join("\n") : inviteUrl,
+      ];
+
+      const embed = new EmbedBuilder()
+        .setTitle("Your Invite Link")
+        .setDescription(descriptionLines.join("\n"))
+        .setColor(0x339eff);
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
     if (sub === "add") {

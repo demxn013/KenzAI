@@ -88,99 +88,79 @@ function fieldName(key, label, statEmojis) {
 }
 
 /**
- * Embed: DonutSMP team stats (summed + optional leaderboard highlights).
+ * Generic embed: team stats (summed + optional leaderboard highlights).
+ * @param {string} serverDisplayName - e.g. "DonutSMP"
  * @param {string} clanAbbr
  * @param {string} clanName
- * @param {object} summed - { kills, deaths, money, playtime, shards, ... }
- * @param {Array<{username: string, value: string, rank?: number}>} highlights - optional leaderboard entries for this clan
- * @param {object} [statEmojis] - optional map of field keys to emoji strings (e.g. { shards: '<:amethyst:123>', money: '💰' })
+ * @param {Array<{ name: string, value: string, inline?: boolean }>} fields - produced by server module
+ * @param {object} [options] - { highlights?, rosterSource?, embedColor?, footer? }
  */
-function createDonutSMPTeamEmbed(clanAbbr, clanName, summed, highlights = [], statEmojis = null) {
-  const playtimeDisplay = typeof summed.playtime === "number"
-    ? formatPlaytime(summed.playtime)
-    : formatPlaytime(parsePlaytimeToMinutes(summed.playtime));
-  const e = (key, label) => fieldName(key, label, statEmojis);
-  const fields = [
-    { name: e("kills", "Kills"), value: `\`${summed.kills}\``, inline: false },
-    { name: e("deaths", "Deaths"), value: `\`${summed.deaths}\``, inline: false },
-    { name: e("money", "Money"), value: `\`${formatMoney(summed.money)}\``, inline: false },
-    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: false },
-    { name: e("shards", "Shards"), value: `\`${summed.shards}\``, inline: false },
-    { name: e("mobs_killed", "Mobs killed"), value: `\`${summed.mobs_killed}\``, inline: false }
-  ];
-  if (highlights.length > 0) {
-    fields.push({
+function createTeamEmbed(serverDisplayName, clanAbbr, clanName, fields, options = {}) {
+  const { highlights = [], embedColor, footer } = options;
+  const allFields = [...fields];
+  if (highlights && highlights.length > 0) {
+    const statEmojis = options.statEmojis || null;
+    allFields.push({
       name: fieldName("leaderboard", "Leaderboard highlights", statEmojis),
       value: highlights.map((h) => `**${escapeDiscord(h.username)}** — ${h.value} (rank ${h.rank})`).join("\n"),
       inline: false
     });
   }
-  return new EmbedBuilder()
-    .setTitle(`${escapeDiscord(clanAbbr)}: ${escapeDiscord(clanName)} — DonutSMP`)
-    .setColor(0xED6B23)
-    .addFields(fields)
-    .setFooter({ text: "DonutSMP team stats (summed from clan members)" });
+  const embed = new EmbedBuilder()
+    .setTitle(`${escapeDiscord(clanAbbr)}: ${escapeDiscord(clanName)} — ${escapeDiscord(serverDisplayName)}`)
+    .addFields(allFields);
+  if (embedColor != null) embed.setColor(embedColor);
+  if (footer != null && footer !== "") embed.setFooter({ text: footer });
+  return embed;
 }
 
 /**
- * Embed: DonutSMP player stats (single player).
+ * Generic embed: player stats (single player).
+ * @param {string} serverDisplayName - e.g. "DonutSMP"
  * @param {string} mcUsername
- * @param {object} stats - from API (kills, deaths, playtime, money, shards, ...)
- * @param {object} lookup - from API (location, rank) for online status
- * @param {object} [statEmojis] - optional map of field keys to emoji strings (custom or Unicode)
+ * @param {Array<{ name: string, value: string, inline?: boolean }>} fields - produced by server module
+ * @param {object} [options] - { thumbnailUrl?, embedColor?, footer? }
  */
-function createDonutSMPPlayerEmbed(mcUsername, stats, lookup = null, statEmojis = null) {
-  const safe = (s) => (s != null && s !== "" ? String(s) : "0");
-  const playtimeMins = parsePlaytimeToMinutes(stats?.playtime);
-  const playtimeDisplay = formatPlaytime(playtimeMins);
-  const e = (key, label) => fieldName(key, label, statEmojis);
-  const fields = [
-    { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: true },
-    { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: true },
-    { name: e("money", "Money"), value: `\`${formatMoney(stats?.money)}\``, inline: true },
-    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: true },
-    { name: e("shards", "Shards"), value: `\`${safe(stats?.shards)}\``, inline: true },
-    {
-      name: e("online", "Online"),
-      value: lookup?.location ? `\`Online\` (${escapeDiscord(lookup.location)})` : "`Offline`",
-      inline: true
-    },
-    { name: e("broken_blocks", "Broken blocks"), value: `\`${safe(stats?.broken_blocks)}\``, inline: true },
-    { name: e("placed_blocks", "Placed blocks"), value: `\`${safe(stats?.placed_blocks)}\``, inline: true },
-    { name: e("mobs_killed", "Mobs killed"), value: `\`${safe(stats?.mobs_killed)}\``, inline: true }
-  ];
-  return new EmbedBuilder()
-    .setTitle(`${escapeDiscord(mcUsername)} — DonutSMP`)
-    .setColor(0xED6B23)
-    .setThumbnail(`https://mc-heads.net/avatar/${encodeURIComponent(mcUsername)}/100`)
-    .addFields(fields)
-    .setFooter({ text: "DonutSMP player stats" });
+function createPlayerEmbed(serverDisplayName, mcUsername, fields, options = {}) {
+  const { thumbnailUrl, embedColor, footer } = options;
+  const embed = new EmbedBuilder()
+    .setTitle(`${escapeDiscord(mcUsername)} — ${escapeDiscord(serverDisplayName)}`)
+    .addFields(fields);
+  if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
+  if (embedColor != null) embed.setColor(embedColor);
+  if (footer != null && footer !== "") embed.setFooter({ text: footer });
+  return embed;
 }
 
 /**
- * Embed: "Select a clan" on DonutSMP (list of clans with donutsmpTeamName).
- * @param {Array<{guildId: string, abbr: string, name: string}>} clans
+ * Generic embed: "Select a clan" for a server (list of clans linked to that server).
+ * @param {string} serverDisplayName - e.g. "DonutSMP"
+ * @param {Array<{ guildId: string, abbr: string, name: string }>} clans
+ * @param {object} [options] - { emptyMessage?, clickMessage?, footer? }
  */
-function createDonutSMPClanSelectEmbed(clans) {
-  return new EmbedBuilder()
-    .setTitle("DonutSMP — View clan / team")
-    .setColor(0xED6B23)
-    .setDescription(
-      clans.length === 0
-        ? "No clans linked to DonutSMP yet. Use `/clan edit` to set a DonutSMP team name for a clan."
-        : "Click a button to view that clan's DonutSMP team stats."
-    )
-    .setFooter({ text: "DonutSMP" });
+function createClanSelectEmbed(serverDisplayName, clans, options = {}) {
+  const { emptyMessage, clickMessage, footer, embedColor } = options;
+  const description =
+    clans.length === 0
+      ? (emptyMessage != null ? emptyMessage : "No clans linked to this server yet.")
+      : (clickMessage != null ? clickMessage : "Click a button to view that clan's team stats.");
+  const embed = new EmbedBuilder()
+    .setTitle(`${escapeDiscord(serverDisplayName)} — View clan / team`)
+    .setDescription(description);
+  if (embedColor != null) embed.setColor(embedColor);
+  if (footer != null && footer !== "") embed.setFooter({ text: footer });
+  return embed;
 }
 
 module.exports = {
   createServerListEmbed,
-  createDonutSMPTeamEmbed,
-  createDonutSMPPlayerEmbed,
-  createDonutSMPClanSelectEmbed,
+  createTeamEmbed,
+  createPlayerEmbed,
+  createClanSelectEmbed,
   num,
   formatMoney,
   formatPlaytime,
   parsePlaytimeToMinutes,
-  escapeDiscord
+  escapeDiscord,
+  fieldName
 };

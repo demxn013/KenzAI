@@ -3,15 +3,16 @@
 
 const path = require("path");
 const fs = require("fs");
+const Jimp = require("jimp");
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require("discord.js");
 const clanlogic = require("../clantracking/clanlogic");
 const { readMembers } = require("../membertracking/memberlogic");
-const { getPlayerStats, getPlayerLookup, getLeaderboard } = require("./donutsmp");
+const donutsmp = require("./donutsmp");
 const {
   createServerListEmbed,
-  createDonutSMPTeamEmbed,
-  createDonutSMPPlayerEmbed,
-  createDonutSMPClanSelectEmbed,
+  createTeamEmbed,
+  createPlayerEmbed,
+  createClanSelectEmbed,
   num
 } = require("./serverembed");
 
@@ -52,15 +53,52 @@ function getStatEmojis(serverId) {
 /**
  * If the server has a logo in modules/images/serverlogos/{serverName}.png, return
  * { path, attachmentName } for use as embed thumbnail; otherwise return null.
+ * path is always resolved to absolute for reliable file read.
  */
 function getServerLogoAttachment(serverId) {
   const all = readServers();
   const server = serverId && all[serverId] && typeof all[serverId] === "object" ? all[serverId] : null;
   if (!server || !server.name) return null;
   const fileName = `${server.name}.png`;
-  const logoPath = path.join(serverLogosDir, fileName);
-  if (!fs.existsSync(logoPath)) return null;
+  const logoPath = path.resolve(path.join(serverLogosDir, fileName));
+  if (!fs.existsSync(logoPath)) {
+    console.log(`[/server] ⚠️ Server logo not found: ${logoPath}`);
+    return null;
+  }
   return { path: logoPath, attachmentName: fileName };
+}
+
+/**
+ * Get dominant color from an image buffer (same concept as /member view avatar color).
+ * Returns 0xRRGGBB for use with embed.setColor(). Fallback 0xED6B23 on error.
+ * @param {Buffer} buffer - PNG/JPEG image buffer
+ * @returns {Promise<number>}
+ */
+async function getDominantColorFromBuffer(buffer) {
+  const fallback = 0xED6B23;
+  try {
+    const image = await Jimp.read(buffer);
+    const maxDim = 128;
+    if (image.bitmap.width > maxDim || image.bitmap.height > maxDim) {
+      image.resize(maxDim, Jimp.AUTO);
+    }
+    const colorCount = {};
+    image.scan(0, 0, image.bitmap.width, image.bitmap.height, function (x, y, idx) {
+      const r = this.bitmap.data[idx + 0];
+      const g = this.bitmap.data[idx + 1];
+      const b = this.bitmap.data[idx + 2];
+      const key = `${r},${g},${b}`;
+      colorCount[key] = (colorCount[key] || 0) + 1;
+    });
+    const entries = Object.entries(colorCount);
+    if (!entries.length) return fallback;
+    entries.sort((a, b) => b[1] - a[1]);
+    const [r, g, b] = entries[0][0].split(",").map(Number);
+    return (r << 16) + (g << 8) + b;
+  } catch (err) {
+    console.warn("[/server] ⚠️ getDominantColorFromBuffer:", err.message);
+    return fallback;
+  }
 }
 
 module.exports = {
@@ -118,7 +156,8 @@ module.exports = {
           "[/server buttons] 🏰 Clans with DonutSMP team:",
           withTeam.length ? withTeam.map(c => `${c.abbr}(${c.guildId})`).join(", ") : "none"
         );
-        const embed = createDonutSMPClanSelectEmbed(withTeam);
+        const clanSelectOpts = { ...donutsmp.getClanSelectOptions(), embedColor: donutsmp.defaultEmbedColor };
+        const embed = createClanSelectEmbed("DonutSMP", withTeam, clanSelectOpts);
         const row = new ActionRowBuilder();
         for (const { guildId, abbr } of withTeam.slice(0, 5)) {
           row.addComponents(
@@ -199,16 +238,25 @@ async function handleClanDonutSMP(interaction, guildId) {
     });
   }
   console.log(`[/server buttons] 🏰 Clan: ${clan.abbr} - ${clan.name}, DonutSMP team: ${clan.donutsmpTeamName}`);
-  const members = readMembers();
-  const clanMemberMCs = [];
-  for (const [discordId, m] of Object.entries(members)) {
-    if (!m.JoinedClan) continue;
-    if (m.JoinedClan === clan.name || m.JoinedClan === clan.abbr) {
-      const mc = m.minecraftUser || m.minecraftName;
-      if (mc) clanMemberMCs.push(mc.trim());
+
+  let clanMemberMCs = [];
+  let rosterSource = "members"; // "api" | "members"
+  const rosterRes = await donutsmp.getTeamRoster(clan.donutsmpTeamName);
+  if (rosterRes.ok && rosterRes.usernames && rosterRes.usernames.length > 0) {
+    clanMemberMCs = rosterRes.usernames.map((u) => String(u).trim()).filter(Boolean);
+    rosterSource = "api";
+    console.log(`[/server buttons] 👥 Using in-game team roster from DonutSMP API: ${clanMemberMCs.length} player(s) (${clanMemberMCs.join(", ")})`);
+  } else {
+    const members = readMembers();
+    for (const [discordId, m] of Object.entries(members)) {
+      if (!m.JoinedClan) continue;
+      if (m.JoinedClan === clan.name || m.JoinedClan === clan.abbr) {
+        const mc = m.minecraftUser || m.minecraftName;
+        if (mc) clanMemberMCs.push(mc.trim());
+      }
     }
+    console.log(`[/server buttons] 👥 Using accepted clan members: ${clanMemberMCs.length} player(s) (${clanMemberMCs.join(", ") || "none"})`);
   }
-  console.log(`[/server buttons] 👥 Clan members with MC: ${clanMemberMCs.length} (${clanMemberMCs.join(", ") || "none"})`);
 
   const summed = {
     kills: 0,
@@ -223,7 +271,7 @@ async function handleClanDonutSMP(interaction, guildId) {
   const playtimeMinutes = { total: 0 };
   console.log(`[/server buttons] 🌐 Fetching DonutSMP stats for ${clanMemberMCs.length} member(s)...`);
   for (const mc of clanMemberMCs) {
-    const res = await getPlayerStats(mc);
+    const res = await donutsmp.getPlayerStats(mc);
     if (!res.ok || !res.stats) continue;
     const s = res.stats;
     summed.kills += num(s.kills);
@@ -240,7 +288,7 @@ async function handleClanDonutSMP(interaction, guildId) {
   summed.playtime = playtimeMinutes.total;
   console.log(`[/server buttons] 📊 Summed stats: kills=${summed.kills}, deaths=${summed.deaths}, money=${summed.money}, playtime=${playtimeMinutes.total} min, shards=${summed.shards}`);
   console.log("[/server buttons] 🌐 Fetching DonutSMP kills leaderboard (page 1)...");
-  const lbRes = await getLeaderboard("kills", 1);
+  const lbRes = await donutsmp.getLeaderboard("kills", 1);
   const highlights = [];
   if (lbRes.ok && Array.isArray(lbRes.result)) {
     const mcSet = new Set(clanMemberMCs.map((u) => u.toLowerCase()));
@@ -256,13 +304,36 @@ async function handleClanDonutSMP(interaction, guildId) {
   }
   console.log(`[/server buttons] 📋 Leaderboard highlights: ${highlights.length} clan member(s) in top page`);
   const statEmojis = getStatEmojis("donutsmp");
-  const embed = createDonutSMPTeamEmbed(clan.abbr, clan.name, summed, highlights, statEmojis);
   const logo = getServerLogoAttachment("donutsmp");
+  let embedColor = donutsmp.defaultEmbedColor;
+  let logoBuffer = null;
   if (logo) {
-    embed.setThumbnail(`attachment://${logo.attachmentName}`);
-    const attachment = new AttachmentBuilder(logo.path, { name: logo.attachmentName });
-    console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr} (with server logo)`);
-    await interaction.editReply({ embeds: [embed], files: [attachment] });
+    try {
+      logoBuffer = fs.readFileSync(logo.path);
+      embedColor = await getDominantColorFromBuffer(logoBuffer);
+      console.log(`[/server buttons] 🎨 Embed color from logo: #${embedColor.toString(16).padStart(6, "0")}`);
+    } catch (err) {
+      console.error("[/server buttons] ❌ Failed to read server logo:", err.message);
+    }
+  }
+  const fields = donutsmp.getTeamEmbedFields(summed, highlights, statEmojis);
+  const embed = createTeamEmbed("DonutSMP", clan.abbr, clan.name, fields, {
+    highlights,
+    statEmojis,
+    embedColor,
+    footer: donutsmp.getTeamEmbedFooter(rosterSource)
+  });
+  const logoAttachmentName = "serverlogo.png";
+  if (logo && logoBuffer) {
+    try {
+      const attachment = new AttachmentBuilder(logoBuffer, { name: logoAttachmentName });
+      embed.setThumbnail(`attachment://${logoAttachmentName}`);
+      console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr} (with server logo: ${logo.path})`);
+      await interaction.editReply({ embeds: [embed], files: [attachment] });
+    } catch (err) {
+      console.error("[/server buttons] ❌ Failed to attach server logo:", err.message);
+      await interaction.editReply({ embeds: [embed] });
+    }
   } else {
     console.log(`[/server buttons] 📤 Sending DonutSMP team stats embed for ${clan.abbr}`);
     await interaction.editReply({ embeds: [embed] });
@@ -276,8 +347,8 @@ async function handleMemberDonutSMP(interaction, mcUsername) {
   await interaction.deferReply();
   console.log("[/server buttons] 🌐 Fetching DonutSMP stats + lookup for", mcUsername);
   const [statsRes, lookupRes] = await Promise.all([
-    getPlayerStats(mcUsername),
-    getPlayerLookup(mcUsername)
+    donutsmp.getPlayerStats(mcUsername),
+    donutsmp.getPlayerLookup(mcUsername)
   ]);
   if (!statsRes.ok && !lookupRes.ok) {
     const msg = statsRes.message || lookupRes.message || "No DonutSMP data for this player.";
@@ -292,7 +363,12 @@ async function handleMemberDonutSMP(interaction, mcUsername) {
   const lookup = lookupRes.ok ? lookupRes.lookup : null;
   console.log(`[/server buttons] 📊 Stats: ${statsRes.ok ? "ok" : "missing"}, Lookup: ${lookupRes.ok ? "ok" : "missing"}`);
   const statEmojis = getStatEmojis("donutsmp");
-  const embed = createDonutSMPPlayerEmbed(mcUsername, stats, lookup, statEmojis);
+  const fields = donutsmp.getPlayerEmbedFields(stats, lookup, statEmojis);
+  const embed = createPlayerEmbed("DonutSMP", mcUsername, fields, {
+    thumbnailUrl: `https://mc-heads.net/avatar/${encodeURIComponent(mcUsername)}/100`,
+    embedColor: donutsmp.defaultEmbedColor,
+    footer: "DonutSMP player stats"
+  });
   console.log(`[/server buttons] 📤 Sending DonutSMP player stats embed for ${mcUsername}`);
   await interaction.editReply({ embeds: [embed] });
   console.log("[/server buttons] ✅ Player stats embed sent");

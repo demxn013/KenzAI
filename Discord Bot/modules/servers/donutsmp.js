@@ -2,6 +2,13 @@
 // DonutSMP Public API client (https://api.donutsmp.net)
 
 const https = require("https");
+const {
+  formatMoney,
+  formatPlaytime,
+  parsePlaytimeToMinutes,
+  fieldName,
+  escapeDiscord
+} = require("./serverembed");
 
 const BASE = "https://api.donutsmp.net";
 
@@ -117,9 +124,125 @@ async function getLeaderboard(type, page = 1) {
   return { ok: true, result };
 }
 
+/**
+ * Try to get the in-game team roster from DonutSMP (if the API supports it).
+ * Tries /v1/team/{teamName}. Returns a list of Minecraft usernames in the team, or null if not supported/fail.
+ * @param {string} teamName - In-game team name (e.g. ONF)
+ * @returns {Promise<{ ok: boolean, usernames?: string[] }>}
+ */
+async function getTeamRoster(teamName) {
+  if (!teamName || !String(teamName).trim()) return { ok: false };
+  const encoded = encodeURIComponent(String(teamName).trim());
+  console.log(`[donutsmp] 🌐 API: getTeamRoster("${teamName}")`);
+  const res = await request(`/v1/team/${encoded}`);
+  if (!res.ok || res.status !== 200) {
+    console.log(`[donutsmp] ℹ️ getTeamRoster("${teamName}"): not available (${res.status})`);
+    return { ok: false };
+  }
+  const body = res.body;
+  let list = body?.result ?? body?.players ?? body?.members ?? body;
+  if (!Array.isArray(list)) list = null;
+  if (!list || list.length === 0) {
+    console.log(`[donutsmp] ℹ️ getTeamRoster("${teamName}"): empty or invalid response`);
+    return { ok: false };
+  }
+  const usernames = list.map((entry) => (typeof entry === "string" ? entry : entry?.username ?? entry?.name)).filter(Boolean);
+  if (usernames.length === 0) {
+    console.log(`[donutsmp] ℹ️ getTeamRoster("${teamName}"): no usernames in response`);
+    return { ok: false };
+  }
+  console.log(`[donutsmp] ✅ getTeamRoster("${teamName}"): ${usernames.length} player(s)`);
+  return { ok: true, usernames };
+}
+
+/** Default embed color for DonutSMP (0xED6B23). */
+const defaultEmbedColor = 0xED6B23;
+
+/**
+ * Build embed fields for team (clan) stats. Used with createTeamEmbed from serverembed.
+ * @param {object} summed - { kills, deaths, money, playtime, shards, mobs_killed, ... }
+ * @param {Array<{ username: string, value: string, rank?: number }>} [highlights] - leaderboard highlights (highlights field is added by createTeamEmbed)
+ * @param {object} [statEmojis] - optional map of field keys to emoji strings
+ * @returns {Array<{ name: string, value: string, inline: boolean }>}
+ */
+function getTeamEmbedFields(summed, highlights = [], statEmojis = null) {
+  const e = (key, label) => fieldName(key, label, statEmojis);
+  const playtimeDisplay =
+    typeof summed.playtime === "number"
+      ? formatPlaytime(summed.playtime)
+      : formatPlaytime(parsePlaytimeToMinutes(summed.playtime));
+  return [
+    { name: e("kills", "Kills"), value: `\`${summed.kills ?? 0}\``, inline: false },
+    { name: e("deaths", "Deaths"), value: `\`${summed.deaths ?? 0}\``, inline: false },
+    { name: e("money", "Money"), value: `\`${formatMoney(summed.money)}\``, inline: false },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: false },
+    { name: e("shards", "Shards"), value: `\`${summed.shards ?? 0}\``, inline: false },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${summed.mobs_killed ?? 0}\``, inline: false }
+  ];
+}
+
+/**
+ * Build embed fields for single player stats. Used with createPlayerEmbed from serverembed.
+ * @param {object} stats - from API (kills, deaths, playtime, money, shards, ...)
+ * @param {object} [lookup] - from API (location, rank) for online status
+ * @param {object} [statEmojis] - optional map of field keys to emoji strings
+ * @returns {Array<{ name: string, value: string, inline: boolean }>}
+ */
+function getPlayerEmbedFields(stats, lookup = null, statEmojis = null) {
+  const safe = (s) => (s != null && s !== "" ? String(s) : "0");
+  const playtimeMins = parsePlaytimeToMinutes(stats?.playtime);
+  const playtimeDisplay = formatPlaytime(playtimeMins);
+  const e = (key, label) => fieldName(key, label, statEmojis);
+  return [
+    { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: true },
+    { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: true },
+    { name: e("money", "Money"), value: `\`${formatMoney(stats?.money)}\``, inline: true },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: true },
+    { name: e("shards", "Shards"), value: `\`${safe(stats?.shards)}\``, inline: true },
+    {
+      name: e("online", "Online"),
+      value: lookup?.location ? `\`Online\` (${escapeDiscord(lookup.location)})` : "`Offline`",
+      inline: true
+    },
+    { name: e("broken_blocks", "Broken blocks"), value: `\`${safe(stats?.broken_blocks)}\``, inline: true },
+    { name: e("placed_blocks", "Placed blocks"), value: `\`${safe(stats?.placed_blocks)}\``, inline: true },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${safe(stats?.mobs_killed)}\``, inline: true }
+  ];
+}
+
+/**
+ * Footer text for team embed based on roster source.
+ * @param {string} rosterSource - "api" | "members"
+ * @returns {string}
+ */
+function getTeamEmbedFooter(rosterSource) {
+  return rosterSource === "api"
+    ? "DonutSMP team stats (in-game team roster from API)"
+    : "DonutSMP team stats (summed from accepted clan members)";
+}
+
+/**
+ * Options for clan select embed (createClanSelectEmbed).
+ * @returns {{ emptyMessage: string, clickMessage: string, footer: string }}
+ */
+function getClanSelectOptions() {
+  return {
+    emptyMessage:
+      "No clans linked to DonutSMP yet. Use `/clan edit` to set a DonutSMP team name for a clan.",
+    clickMessage: "Click a button to view that clan's DonutSMP team stats.",
+    footer: "DonutSMP"
+  };
+}
+
 module.exports = {
   getPlayerStats,
   getPlayerLookup,
   getLeaderboard,
-  getApiKey
+  getTeamRoster,
+  getApiKey,
+  defaultEmbedColor,
+  getTeamEmbedFields,
+  getPlayerEmbedFields,
+  getTeamEmbedFooter,
+  getClanSelectOptions
 };

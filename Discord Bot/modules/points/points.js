@@ -92,7 +92,7 @@ module.exports = {
 
     if (sub === "balance") {
       const check = ensureMember(interaction);
-      if (!check.ok) return interaction.reply({ content: check.message, ephemeral: true });
+      if (!check.ok) return interaction.reply({ content: check.message, ephemeral: false });
       const balance = getBalance(interaction.user.id);
       const embed = new EmbedBuilder()
         .setTitle("Points Balance")
@@ -183,7 +183,7 @@ module.exports = {
       const isSelf = !targetUser || targetUser.id === interaction.user.id;
 
       const check = ensureMember(interaction);
-      if (!check.ok) return interaction.reply({ content: check.message, ephemeral: true });
+      if (!check.ok) return interaction.reply({ content: check.message, ephemeral: false });
 
       if (!isSelf) {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {

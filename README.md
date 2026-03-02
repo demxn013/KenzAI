@@ -64,7 +64,7 @@ Shows Yazanaki Empire summary information (leadership + population stats).
 ### `/points invite`
 - Get your personal clan discord invite links.
   - Display your amount of people invited per clan.
-  - Earn 5 points per invite.
+  - Earn `5 points` per invite.
 
 ---
 

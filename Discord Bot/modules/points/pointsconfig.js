@@ -82,7 +82,7 @@ module.exports = {
   POINTS_PER_MESSAGE,
   VOICE_POINTS_PER_10_MIN,
   DAILY_VOICE_CAP,
-   POINTS_PER_INVITE,
+  POINTS_PER_INVITE,
   getRewardById,
   getRewardsByCategory,
   isPromotionRoleId,

@@ -27,33 +27,44 @@ Shows Yazanaki Empire summary information (leadership + population stats).
 ## 🧑 Member Management
 
 ### `/member view`
-View a member profile by Discord user or Minecraft username.
+- View a member profile by Discord user or Minecraft username.
+- Works for non Yazanaki members
 
 ---
 
 ## 🏰 Clan Commands
 
 ### `/clan view`
-View one clan.
+- View a Yazanki Clan by abbreviation or full name, or use the command without name/abbreviation in the specific clan discord.
+- Use this command to see Minecraft-specific stats for the clans.
 
 ### `/clan list`
-List all clans.
+- Lists all clans with invite link and member count.
 
 ---
 
 ## 💎 Points Economy
 
 ### `/points balance`
-See your current points.
+- View your points balance.
 
 ### `/points shop`
-Open the rewards shop menu.
+- Open the points shop menu.
+- Shows which tasks earn you how many points.
+  - Recruiting a member: `5 Points`
+  - Every 5mil given to leadership: `30 Points`
+  - Killing a non Yazanaki player wearing max neth armor: `100 Points`
+  - Building a money making farm: `150 Points`
 
 ### `/points checkin`
-Claim periodic check-in rewards.
+- Claim daily and weekly points.
+- Claim 2 points per day.
+- Claim 10 points per week.
 
 ### `/points invite`
-Get your invite link and earn points from valid invites.
+- Get your personal clan discord invite links.
+  - Display your amount of people invited per clan.
+  - Earn 5 points per invite.
 
 ---
 

@@ -37,17 +37,25 @@ module.exports = {
     return readCache();
   },
 
-  getNextNumber(type) {
+  getNextNumber(type, scopeId = null) {
     const cache = readCache();
-    if (!cache.__counters) cache.__counters = { 
-      application: 0, 
-      normal: 0,
-      court_request: 0  // ✅ NEW: Court request counter
-    };
 
-    cache.__counters[type] = (cache.__counters[type] || 0) + 1;
+    // Ensure counters object exists (keep existing data if present)
+    if (!cache.__counters) {
+      cache.__counters = {
+        application: 0,
+        normal: 0,
+        court_request: 0 // ✅ Court request counter (global fallback)
+      };
+    }
+
+    // If a scopeId is provided (e.g., per-clan/guild), create a scoped key
+    // This keeps existing global counters untouched and adds new per-scope ones.
+    const key = scopeId ? `${type}:${scopeId}` : type;
+
+    cache.__counters[key] = (cache.__counters[key] || 0) + 1;
     writeCache(cache);
 
-    return cache.__counters[type];
+    return cache.__counters[key];
   }
 };

@@ -23,6 +23,9 @@ const ROLES = {
   CITIZEN: "1334641779009519668"
 };
 
+// "Random" role in Yazanaki Empire (used for unassigned / provisional members)
+const YAZANAKI_RANDOM_ROLE_ID = "1334846750707421194";
+
 // ✅ Import clan resident management
 const { incrementClanResidents } = require("../clantracking/clanlogic");
 
@@ -138,6 +141,42 @@ async function assignYazanakiRoles(client, discordId, clanGuildId) {
     }
     
     console.log(`[acceptedapps] ✅ Found member: ${member.user.tag}`);
+
+    // ------------------------------------------------------------
+    // Remove any "Random" role from Yazanaki Empire for this user
+    // ------------------------------------------------------------
+    try {
+      // Prefer explicit ID, but also fall back to name-based in case of changes
+      const randomRolesToRemove = [];
+
+      if (YAZANAKI_RANDOM_ROLE_ID) {
+        const randomById = yazanakiGuild.roles.cache.get(YAZANAKI_RANDOM_ROLE_ID);
+        if (randomById && member.roles.cache.has(randomById.id)) {
+          randomRolesToRemove.push(randomById);
+        }
+      }
+
+      // Also catch any role literally named "Random" (case-insensitive)
+      yazanakiGuild.roles.cache.forEach((role) => {
+        if (!role || !role.name) return;
+        if (role.name.toLowerCase() === "random" && member.roles.cache.has(role.id)) {
+          if (!randomRolesToRemove.find((r) => r.id === role.id)) {
+            randomRolesToRemove.push(role);
+          }
+        }
+      });
+
+      for (const role of randomRolesToRemove) {
+        await member.roles.remove(role.id);
+        console.log(`[acceptedapps] ✅ Removed Yazanaki "Random" role (${role.id})`);
+      }
+
+      if (!randomRolesToRemove.length) {
+        console.log("[acceptedapps] ℹ️ No Yazanaki \"Random\" role to remove for this member");
+      }
+    } catch (err) {
+      console.warn("[acceptedapps] ⚠️ Failed to remove Yazanaki \"Random\" role(s):", err.message);
+    }
     
     // Assign roles: Military, Recruit (Draft), and Clan role
     const rolesToAdd = [
@@ -201,6 +240,33 @@ async function assignClanRole(client, discordId, clanGuildId, clan) {
     }
     
     console.log(`[acceptedapps] ✅ Found member in clan guild: ${member.user.tag}`);
+
+    // ------------------------------------------------------------
+    // Remove any "Random" role from the clan guild for this user
+    // (role name must be exactly 'Random' ignoring case)
+    // ------------------------------------------------------------
+    try {
+      const randomRoles = clanGuild.roles.cache.filter(
+        (role) => role && role.name && role.name.toLowerCase() === "random"
+      );
+
+      if (randomRoles.size) {
+        for (const role of randomRoles.values()) {
+          if (member.roles.cache.has(role.id)) {
+            await member.roles.remove(role.id);
+            console.log(
+              `[acceptedapps] ✅ Removed clan "Random" role (${role.id}) in guild ${clanGuild.id}`
+            );
+          }
+        }
+      } else {
+        console.log(
+          `[acceptedapps] ℹ️ No clan role named "Random" found in guild ${clanGuild.id}`
+        );
+      }
+    } catch (err) {
+      console.warn("[acceptedapps] ⚠️ Failed to remove clan \"Random\" role(s):", err.message);
+    }
     
     if (member.roles.cache.has(clan.clanRoleId)) {
       console.log(`[acceptedapps] ℹ️ Member already has clan role`);
@@ -358,6 +424,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     YazanakiRank: "Recruit",
     EmpireID: empireId,
     Status: "Military",
+    points: 0,
     // ✅ DRAFT FIELDS - Initialize them here!
     draftStartDate: now.toISOString(),
     draftExpiryDate: expiryDate.toISOString(),

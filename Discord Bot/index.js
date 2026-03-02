@@ -13,6 +13,7 @@ const crypto = require('crypto');
 // ============================================================
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { handleDraftChoice } = require('./modules/empire/draftlogic');
+const { setupPointsEvents } = require('./modules/points/pointsevents');
 
 // ============================================================
 // CLIENT SETUP
@@ -23,6 +24,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -48,7 +50,7 @@ const DEPLOYMENT_MODE = 'all-guilds'; // ✅ DEPLOY TO ALL GUILDS
 // ============================================================
 // ✅ SMART COMMAND DEPLOYMENT (prevents duplicates)
 // ============================================================
-async function deployCommands(force = false) {
+async function deployCommands(force = false, targetGuildId = null) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🔄 LOADING COMMANDS...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -129,7 +131,7 @@ async function deployCommands(force = false) {
       console.log('📡 Fetching latest guild list from Discord...');
       
       const fetchedGuilds = await client.guilds.fetch();
-      console.log(`📍 Target: ${fetchedGuilds.size} guild(s)`);
+      console.log(`📍 Target: ${targetGuildId ? 1 : fetchedGuilds.size} guild(s)`);
       console.log(`⚡ Updates: INSTANT\n`);
       
       if (fetchedGuilds.size === 0) {
@@ -142,6 +144,9 @@ async function deployCommands(force = false) {
       let failCount = 0;
       
       for (const [guildId, partialGuild] of fetchedGuilds) {
+        // If we're only deploying to a specific new guild, skip others
+        if (targetGuildId && guildId !== targetGuildId) continue;
+
         try {
           // Fetch full guild data
           const guild = await client.guilds.fetch(guildId);
@@ -285,6 +290,11 @@ client.on('ready', async () => {
   // ============================================================
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
+
+  // ============================================================
+  // ✅ POINTS SYSTEM EVENTS (message + voice)
+  // ============================================================
+  setupPointsEvents(client);
 });
 
 // ============================================================
@@ -296,7 +306,11 @@ client.on('interactionCreate', async (interaction) => {
   // BUTTON INTERACTIONS
   // ============================================================
   if (interaction.isButton()) {
-    
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log(
+      `[/interactions] 🔘 Button: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`
+    );
+
     // ✅ DRAFT CHOICE BUTTONS
     if (interaction.customId.startsWith('draft_')) {
       return handleDraftChoice(interaction);
@@ -325,6 +339,37 @@ client.on('interactionCreate', async (interaction) => {
         return applicationCommand.buttonHandler(interaction);
       }
     }
+
+    // Points shop / redeem buttons
+    if (interaction.customId.startsWith('points_shop_') || interaction.customId.startsWith('points_redeem_')) {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.buttonHandler) {
+        return pointsCommand.buttonHandler(interaction);
+      }
+    }
+
+    // Servers module (DonutSMP / clan server / member server stats)
+    if (interaction.customId.startsWith('server_') || interaction.customId.startsWith('clan_server_') || interaction.customId.startsWith('member_server_')) {
+      console.log(`[/interactions] 🔁 Routing to servers module for ${interaction.customId}`);
+      const serverCommand = client.commands.get('server');
+      if (serverCommand && serverCommand.buttonHandler) {
+        return serverCommand.buttonHandler(interaction);
+      } else {
+        console.warn("[/interactions] ⚠️ Server command or buttonHandler not found for", interaction.customId);
+      }
+    }
+  }
+
+  // ============================================================
+  // STRING SELECT MENU (points shop reward selection)
+  // ============================================================
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === 'points_select_reward') {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.selectMenuHandler) {
+        return pointsCommand.selectMenuHandler(interaction);
+      }
+    }
   }
   
   // ============================================================
@@ -349,6 +394,16 @@ client.on('interactionCreate', async (interaction) => {
       const applicationCommand = client.commands.get('application');
       if (applicationCommand && applicationCommand.modalHandler) {
         return applicationCommand.modalHandler(interaction);
+      }
+    }
+
+    // Points modals (custom role, nickname, clan build)
+    if (interaction.customId.startsWith('points_customrole_modal_') ||
+        interaction.customId.startsWith('points_nickname_modal_') ||
+        interaction.customId.startsWith('points_clan_build_modal_')) {
+      const pointsCommand = client.commands.get('points');
+      if (pointsCommand && pointsCommand.modalHandler) {
+        return pointsCommand.modalHandler(interaction);
       }
     }
   }
@@ -383,6 +438,20 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply(errorMessage);
       }
     }
+  }
+});
+
+// ============================================================
+// NEW GUILD HANDLER - AUTO DEPLOY COMMANDS ON JOIN
+// ============================================================
+client.on('guildCreate', async (guild) => {
+  console.log(`➕ Joined new guild: ${guild.name} (${guild.id})`);
+  try {
+    // Force deployment only for this new guild, even if commands hash is unchanged
+    await deployCommands(true, guild.id);
+    console.log(`✅ Commands deployed to new guild: ${guild.name} (${guild.id})`);
+  } catch (error) {
+    console.error(`❌ Failed to deploy commands for new guild ${guild.name} (${guild.id}):`, error);
   }
 });
 

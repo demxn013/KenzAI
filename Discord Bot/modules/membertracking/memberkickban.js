@@ -74,6 +74,59 @@ function getClanGuildId(clanName) {
 }
 
 /**
+ * Get the "empire enemy" role ID from roles.json (for bans).
+ * Uses empireEnemyRoleId if set, otherwise finds status role by name "empire enemy" or "Enemy".
+ */
+function getEmpireEnemyRoleId(rolesConfig) {
+  const guildConfig = rolesConfig?.guilds?.[YAZANAKI_EMPIRE_GUILD_ID];
+  if (!guildConfig) return null;
+  if (guildConfig.empireEnemyRoleId) return guildConfig.empireEnemyRoleId;
+  const statusRoles = guildConfig.statusRoles || {};
+  for (const [roleId, data] of Object.entries(statusRoles)) {
+    const name = (data?.name || "").toLowerCase();
+    if (name === "empire enemy" || name === "enemy") return roleId;
+  }
+  return null;
+}
+
+/**
+ * Add the "empire enemy" role to a member in the Yazanaki guild (used when banning).
+ */
+async function addEmpireEnemyRole(discordId, client) {
+  try {
+    let rolesConfig = {};
+    try {
+      const raw = fs.readFileSync(rolesConfigPath, "utf8");
+      rolesConfig = JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[memberkickban] ⚠️ Could not load roles.json for empire enemy role:`, err.message);
+      return false;
+    }
+    const roleId = getEmpireEnemyRoleId(rolesConfig);
+    if (!roleId) {
+      console.warn(`[memberkickban] ⚠️ No empire enemy role configured in roles.json (empireEnemyRoleId or status role "Enemy"/"empire enemy")`);
+      return false;
+    }
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member) {
+      console.warn(`[memberkickban] ⚠️ Member ${discordId} not in Yazanaki Empire - cannot add empire enemy role`);
+      return false;
+    }
+    if (member.roles.cache.has(roleId)) {
+      console.log(`[memberkickban] 🎭 User already has empire enemy role`);
+      return true;
+    }
+    await member.roles.add(roleId);
+    console.log(`[memberkickban] 🎭 Added empire enemy role to ${discordId}`);
+    return true;
+  } catch (err) {
+    console.error(`[memberkickban] ❌ Error adding empire enemy role:`, err);
+    return false;
+  }
+}
+
+/**
  * Remove all Yazanaki Empire roles from a member
  */
 async function removeAllYazanakiRoles(discordId, client) {
@@ -273,67 +326,89 @@ async function banMember(discordId, reason, client) {
   
   const members = readJSON(membersPath);
   const member = members[discordId];
-  
-  if (!member) {
-    console.error(`[memberkickban] ❌ Member ${discordId} not found`);
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    return { success: false, reason: "member_not_found" };
+  const isExistingMember = !!member;
+
+  if (!isExistingMember) {
+    console.warn(`[memberkickban] ⚠️ Member ${discordId} not found in members.json - banning as NON-MEMBER`);
   }
-  
+
   try {
-    // 1. Remove all Yazanaki Empire roles
+    // 1. Remove all Yazanaki Empire roles (if they are in the guild)
     const rolesRemoved = await removeAllYazanakiRoles(discordId, client);
     console.log(`[memberkickban] 🎭 Roles removed: ${rolesRemoved}`);
-    
-    // 2. Decrement clan resident count
-    const clanName = member.JoinedClan;
-    if (clanName) {
-      const clanGuildId = getClanGuildId(clanName);
-      
-      if (clanGuildId) {
-        const decremented = decrementClanResidents(clanGuildId);
-        if (decremented) {
-          console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+
+    // 1b. Add "empire enemy" role in Yazanaki Discord (from roles.json)
+    await addEmpireEnemyRole(discordId, client);
+
+    // 2. Decrement clan resident count (only if they were an existing member)
+    let clanName = null;
+    if (isExistingMember) {
+      clanName = member.JoinedClan;
+      if (clanName) {
+        const clanGuildId = getClanGuildId(clanName);
+        
+        if (clanGuildId) {
+          const decremented = decrementClanResidents(clanGuildId);
+          if (decremented) {
+            console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+          }
         }
       }
     }
     
-    // 3. Deactivate Empire ID
-    const empireIds = readJSON(empireIdsPath);
-    const empireId = member.EmpireID;
-    
-    if (empireId && empireIds.ids && empireIds.ids[empireId]) {
-      empireIds.ids[empireId].active = false;
-      empireIds.ids[empireId].bannedAt = new Date().toISOString();
-      writeJSON(empireIdsPath, empireIds);
-      console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
+    // 3. Deactivate Empire ID (only if they had one)
+    let empireId = null;
+    if (isExistingMember) {
+      const empireIds = readJSON(empireIdsPath);
+      empireId = member.EmpireID;
+      
+      if (empireId && empireIds.ids && empireIds.ids[empireId]) {
+        empireIds.ids[empireId].active = false;
+        empireIds.ids[empireId].bannedAt = new Date().toISOString();
+        writeJSON(empireIdsPath, empireIds);
+        console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
+      }
     }
     
-    // 4. Move to banned_members.json
+    // 4. Move to banned_members.json (works for both members and non-members)
     const bannedMembers = readJSON(bannedMembersPath);
     const bannedAt = new Date();
-    
+
+    // Try to get a display tag for non-members if not stored
+    let discordUserDisplay = member?.discordUser || null;
+    if (!discordUserDisplay) {
+      try {
+        const user = await client.users.fetch(discordId);
+        discordUserDisplay = user.tag;
+      } catch (err) {
+        console.warn(`[memberkickban] ⚠️ Could not fetch Discord user for ${discordId}:`, err.message);
+      }
+    }
+
     bannedMembers[discordId] = {
       discordId,
-      empireId: member.EmpireID,
-      discordUser: member.discordUser,
-      minecraftUser: member.minecraftUser,
+      empireId: empireId || null,
+      discordUser: discordUserDisplay,
+      minecraftUser: member?.minecraftUser || null,
       bannedAt: bannedAt.toISOString(),
       banReason: reason,
-      originalClan: member.JoinedClan,
-      originalData: { ...member }
+      originalClan: clanName,
+      originalData: isExistingMember ? { ...member } : null,
+      neverJoinedYazanaki: !isExistingMember
     };
     
     writeJSON(bannedMembersPath, bannedMembers);
     console.log(`[memberkickban] 📦 Moved to banned_members.json`);
     console.log(`[memberkickban] ⛔ PERMANENT BAN - Cannot reapply`);
+
+    // 5. Remove from members.json (only if they were an existing member)
+    if (isExistingMember) {
+      delete members[discordId];
+      writeJSON(membersPath, members);
+      console.log(`[memberkickban] 🗑️ Removed from members.json`);
+    }
     
-    // 5. Remove from members.json
-    delete members[discordId];
-    writeJSON(membersPath, members);
-    console.log(`[memberkickban] 🗑️ Removed from members.json`);
-    
-    console.log(`[memberkickban] ✅ Successfully banned member ${discordId}`);
+    console.log(`[memberkickban] ✅ Successfully banned member ${discordId} (${isExistingMember ? 'existing member' : 'non-member'})`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
     return { 

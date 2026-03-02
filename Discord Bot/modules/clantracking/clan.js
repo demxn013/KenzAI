@@ -2,8 +2,10 @@
 // ✅ COMPLETE FIX: Includes type option in setrole command
 // ✅ NEW: Shows actual resident count from clans.json
 
-const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const clanlogic = require("./clanlogic");
+const draftConfig = require("../empire/draftconfig");
+const { loadRolesConfig } = require("../roles/roledetector");
 const { createClanEmbed } = require("./clanembed");
 const { addGuildRoles, removeGuildRoles } = require("../roles/roledetector");
 const path = require("path");
@@ -23,24 +25,44 @@ module.exports = {
         .addStringOption(opt => opt.setName("name").setDescription("Full clan name").setRequired(true))
         .addRoleOption(opt => opt.setName("yazanakirole").setDescription("Role in YAZANAKI discord for this clan").setRequired(false))
         .addRoleOption(opt => opt.setName("clanrole").setDescription("Role in THIS CLAN's discord for members").setRequired(false))
+        .addStringOption(opt =>
+          opt
+            .setName("applicationmode")
+            .setDescription("Application mode for this clan")
+            .addChoices(
+              { name: "Manual (staff handle everything)", value: "manual" },
+              { name: "Timed (7 days of guidelines)", value: "timed" }
+            )
+            .setRequired(false)
+        )
         .addAttachmentOption(opt => opt.setName("flag").setDescription("Optional clan flag PNG"))
     )
     .addSubcommand(sub =>
       sub
-        .setName("setrole")
-        .setDescription("Set roles for a clan")
-        .addStringOption(opt => opt.setName("clan").setDescription("Clan name or abbreviation").setRequired(true))
-        .addStringOption(opt => 
+        .setName("edit")
+        .setDescription("Edit an existing clan (roles, name, flag, etc.)")
+        .addStringOption(opt => opt.setName("clan").setDescription("Existing clan name or abbreviation").setRequired(true))
+        .addStringOption(opt => opt.setName("abbreviation").setDescription("New clan abbreviation (e.g., SNU, ONA)").setRequired(false))
+        .addStringOption(opt => opt.setName("name").setDescription("New full clan name").setRequired(false))
+        .addRoleOption(opt => opt.setName("yazanakirole").setDescription("New role in YAZANAKI discord for this clan").setRequired(false))
+        .addRoleOption(opt => opt.setName("clanrole").setDescription("New role in THIS CLAN's discord for members").setRequired(false))
+        .addStringOption(opt =>
           opt
-            .setName("type")
-            .setDescription("Which role to set")
-            .setRequired(true)
+            .setName("applicationmode")
+            .setDescription("New application mode for this clan")
             .addChoices(
-              { name: "Yazanaki Role", value: "yazanaki" },
-              { name: "Clan Role", value: "clan" }
+              { name: "Manual (staff handle everything)", value: "manual" },
+              { name: "Timed (7 days of guidelines)", value: "timed" }
             )
+            .setRequired(false)
         )
-        .addRoleOption(opt => opt.setName("role").setDescription("The role to set").setRequired(true))
+        .addAttachmentOption(opt => opt.setName("flag").setDescription("New clan flag PNG (replaces existing)"))
+        .addStringOption(opt =>
+          opt
+            .setName("server")
+            .setDescription("Server this clan is on (e.g., donutsmp, or 'clear' to remove)")
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -66,13 +88,47 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const isAdminCommand = ['add', 'setrole', 'remove', 'sync-residents'].includes(interaction.options.getSubcommand());
+    const isAdminCommand = ['add', 'edit', 'remove', 'sync-residents'].includes(interaction.options.getSubcommand());
     
-    if (isAdminCommand && !interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-      return interaction.reply({
-        content: "❌ You need the **Kick Members** permission to use this command.",
-        ephemeral: true
-      });
+    if (isAdminCommand) {
+      try {
+        const yazanakiGuild = await interaction.client.guilds.fetch(draftConfig.YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+        const yazanakiMember = yazanakiGuild
+          ? await yazanakiGuild.members.fetch(interaction.user.id).catch(() => null)
+          : null;
+
+        // Load Royalty role ID from roles.json (statusRoles in Yazanaki Empire)
+        const rolesConfig = loadRolesConfig();
+        const yazanakiConfig = rolesConfig?.guilds?.[draftConfig.YAZANAKI_EMPIRE_GUILD_ID];
+        let royaltyRoleId = null;
+
+        if (yazanakiConfig && yazanakiConfig.statusRoles) {
+          const royaltyEntry = Object.entries(yazanakiConfig.statusRoles).find(
+            ([, roleData]) => roleData?.name === "Royalty"
+          );
+          if (royaltyEntry) {
+            royaltyRoleId = royaltyEntry[0];
+          }
+        }
+
+        // Fallback to known Royalty role ID if not found in config
+        if (!royaltyRoleId) {
+          royaltyRoleId = "1334642034472128654";
+        }
+
+        if (!yazanakiGuild || !yazanakiMember || !royaltyRoleId || !yazanakiMember.roles.cache.has(royaltyRoleId)) {
+          return interaction.reply({
+            content: "❌ You must have the **Royalty** role in the Yazanaki Empire discord to create, edit, or remove clans.",
+            ephemeral: true
+          });
+        }
+      } catch (err) {
+        console.error("[clan] Error checking Royalty role in Yazanaki Empire:", err);
+        return interaction.reply({
+          content: "❌ Failed to verify your permissions in the Yazanaki Empire discord. Please try again later.",
+          ephemeral: true
+        });
+      }
     }
 
     const sub = interaction.options.getSubcommand();
@@ -89,6 +145,9 @@ module.exports = {
       const name = interaction.options.getString("name");
       const yazanakiRole = interaction.options.getRole("yazanakirole");
       const clanRole = interaction.options.getRole("clanrole");
+      const applicationModeOption = interaction.options.getString("applicationmode");
+
+      const applicationMode = applicationModeOption === "timed" ? "timed" : "manual";
 
       if (clans[guildId]) {
         return interaction.editReply({
@@ -103,7 +162,8 @@ module.exports = {
         joinedEmpire: new Date().toISOString().split("T")[0],
         yazanakiRoleId: yazanakiRole ? yazanakiRole.id : null,
         clanRoleId: clanRole ? clanRole.id : null,
-        residents: 0 // ✅ Initialize with 0 residents
+        residents: 0, // ✅ Initialize with 0 residents
+        applicationMode // ✅ Per-clan application mode
       };
 
       try {
@@ -144,7 +204,10 @@ module.exports = {
             response += `⚠️ Clan Role: NOT SET (Optional)\n`;
             response += `   Use: \`/clan setrole clan:${abbr} type:Clan role:@RoleName\`\n`;
           }
-          
+
+          const modeLabel = applicationMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          response += `\n📝 Application Mode: **${modeLabel}**\n`;
+
           response += `\n📊 Residents: 0 (use /clan sync-residents to populate from existing members)`;
           
           return interaction.editReply({ content: response });
@@ -162,14 +225,31 @@ module.exports = {
     }
 
     // -------------------------------------------------------------------------
-    // SET ROLE
+    // EDIT CLAN (ROLES, NAME, FLAG, ETC.)
     // -------------------------------------------------------------------------
-    if (sub === "setrole") {
+    if (sub === "edit") {
       await interaction.deferReply();
 
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[/clan edit] 🎯 Command invoked by: ${interaction.user.tag} (${interaction.user.id})`);
+
       const clanInput = interaction.options.getString("clan");
-      const roleType = interaction.options.getString("type");
-      const role = interaction.options.getRole("role");
+      const newAbbr = interaction.options.getString("abbreviation");
+      const newName = interaction.options.getString("name");
+      const newYazanakiRole = interaction.options.getRole("yazanakirole");
+      const newClanRole = interaction.options.getRole("clanrole");
+      const newFlag = interaction.options.getAttachment("flag");
+      const newApplicationMode = interaction.options.getString("applicationmode");
+      const newServer = interaction.options.getString("server");
+
+      console.log(`[/clan edit] 📋 Target clan: ${clanInput}`);
+      if (newAbbr) console.log(`[/clan edit] ✏️ Option: abbreviation → ${newAbbr}`);
+      if (newName) console.log(`[/clan edit] ✏️ Option: name → ${newName}`);
+      if (newYazanakiRole) console.log(`[/clan edit] 🎭 Option: yazanakirole`);
+      if (newClanRole) console.log(`[/clan edit] 🎭 Option: clanrole`);
+      if (newFlag) console.log(`[/clan edit] 🚩 Option: flag (attachment)`);
+      if (newApplicationMode) console.log(`[/clan edit] 📝 Option: applicationmode → ${newApplicationMode}`);
+      if (newServer !== undefined && newServer !== null) console.log(`[/clan edit] 🟠 Option: server → ${newServer}`);
 
       const guildId = Object.keys(clans).find(id =>
         clans[id].abbr.toLowerCase() === clanInput.toLowerCase() ||
@@ -177,6 +257,8 @@ module.exports = {
       );
 
       if (!guildId || !clans[guildId]) {
+        console.log(`[/clan edit] ❌ Clan not found: ${clanInput}`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({
           content: `❌ Clan **${clanInput}** not found.`,
           ephemeral: true
@@ -184,28 +266,104 @@ module.exports = {
       }
 
       const clan = clans[guildId];
-      
-      if (roleType === "yazanaki") {
-        clan.yazanakiRoleId = role.id;
-        clanlogic.writeClans(clans);
-        
+      console.log(`[/clan edit] ✅ Resolved to guild ${guildId} (${clan.abbr}: ${clan.name})`);
+      const changes = [];
+
+      // Name / abbreviation updates
+      const oldAbbr = clan.abbr;
+      if (newAbbr && newAbbr.toUpperCase() !== clan.abbr.toUpperCase()) {
+        clan.abbr = newAbbr.toUpperCase();
+        changes.push(`✏️ Abbreviation: \`${oldAbbr}\` → \`${clan.abbr}\``);
+
+        // If a flag exists for the old abbreviation, move it to the new one
+        try {
+          const oldFlagPath = clanlogic.getFlagPath(oldAbbr);
+          if (fs.existsSync(oldFlagPath)) {
+            const newFlagPath = clanlogic.getFlagPath(clan.abbr);
+            fs.renameSync(oldFlagPath, newFlagPath);
+          }
+        } catch (err) {
+          console.warn("[clan edit] Failed to move existing flag file:", err);
+        }
+      }
+
+      if (newName && newName !== clan.name) {
+        const oldName = clan.name;
+        clan.name = newName;
+        changes.push(`✏️ Name: \`${oldName}\` → \`${clan.name}\``);
+      }
+
+      // Role updates
+      if (newYazanakiRole) {
+        clan.yazanakiRoleId = newYazanakiRole.id;
+        changes.push(`🎭 Yazanaki Role set to: ${newYazanakiRole}`);
+      }
+
+      if (newClanRole) {
+        clan.clanRoleId = newClanRole.id;
+        changes.push(`🎭 Clan Role set to: ${newClanRole}`);
+      }
+
+      // Application mode update
+      if (newApplicationMode) {
+        const oldMode = clan.applicationMode || "manual";
+        if (newApplicationMode !== oldMode) {
+          clan.applicationMode = newApplicationMode;
+          const oldLabel = oldMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          const newLabel = newApplicationMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
+          changes.push(`📝 Application Mode: \`${oldLabel}\` → \`${newLabel}\``);
+        }
+      }
+
+      // Flag update
+      if (newFlag) {
+        try {
+          await clanlogic.saveFlagFromAttachment(clan.abbr, newFlag);
+          changes.push("🚩 Clan flag updated.");
+        } catch (err) {
+          console.error("[clan edit] Failed to save new flag:", err);
+          changes.push("⚠️ Failed to update clan flag (only PNG is allowed).");
+        }
+      }
+
+      // Servers option (currently only DonutSMP supported)
+      if (newServer !== undefined && newServer !== null) {
+        const v = newServer.trim().toLowerCase();
+        if (v === "" || v === "clear") {
+          delete clan.donutsmpTeamName;
+          changes.push("🟠 Servers: cleared DonutSMP link.");
+          console.log(`[/clan edit] 🟠 Servers: cleared DonutSMP link for ${clan.abbr}`);
+        } else if (v === "donutsmp") {
+          // For DonutSMP we treat the clan abbreviation as the in-game team name by default
+          clan.donutsmpTeamName = clan.abbr;
+          changes.push(`🟠 Servers: linked to DonutSMP (team \`${clan.donutsmpTeamName}\`).`);
+          console.log(`[/clan edit] 🟠 Servers: linked ${clan.abbr} to DonutSMP (team: ${clan.donutsmpTeamName})`);
+        } else {
+          changes.push(`⚠️ Servers: unknown server \`${v}\` (supported: \`donutsmp\`). No server link changed.`);
+          console.log(`[/clan edit] ⚠️ Servers: unknown server "${v}", no link changed`);
+        }
+      }
+
+      if (!changes.length) {
+        console.log(`[/clan edit] ℹ️ No changes provided`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({
-          content: 
-            `✅ **${clan.abbr}: ${clan.name}**\n\n` +
-            `🎭 Yazanaki Empire role set to: ${role}\n\n` +
-            `Members accepted to this clan will get this role in Yazanaki Empire discord.`
-        });
-      } else if (roleType === "clan") {
-        clan.clanRoleId = role.id;
-        clanlogic.writeClans(clans);
-        
-        return interaction.editReply({
-          content: 
-            `✅ **${clan.abbr}: ${clan.name}**\n\n` +
-            `🎭 Clan member role set to: ${role}\n\n` +
-            `Members accepted to this clan will get this role in the clan's discord.`
+          content: "ℹ️ No changes were provided. Specify at least one field to edit.",
+          ephemeral: true
         });
       }
+
+      clanlogic.writeClans(clans);
+
+      console.log(`[/clan edit] ✅ Clan updated: ${clan.abbr} - ${clan.name}`);
+      console.log(`[/clan edit] 📝 Changes: ${changes.length} item(s)`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+      return interaction.editReply({
+        content:
+          `✅ **Clan Updated: ${clan.abbr} - ${clan.name}**\n\n` +
+          changes.join("\n")
+      });
     }
 
     // -------------------------------------------------------------------------
@@ -245,6 +403,9 @@ module.exports = {
     if (sub === "view") {
       await interaction.deferReply();
 
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[/clan view] 🎯 Command invoked by: ${interaction.user.tag} (${interaction.user.id})`);
+
       let input = interaction.options.getString("clan");
       let guildId;
 
@@ -258,10 +419,13 @@ module.exports = {
       }
 
       if (!guildId || !clans[guildId]) {
+        console.log(`[/clan view] ❌ Clan not found: ${input || "(current guild)"}`);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({ content: "❌ Clan not found.", ephemeral: true });
       }
 
       const clan = clans[guildId];
+      console.log(`[/clan view] ✅ Viewing clan: ${clan.abbr} - ${clan.name} (guild ${guildId})`);
       const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
 
       if (!guild) {
@@ -282,6 +446,8 @@ module.exports = {
       const joinedDateText = jd?.length === 3 ? `\`${jd[2]}/${jd[1]}/${jd[0]}\`` : "`n/d`";
 
       const size = `\`${guild.memberCount}\``;
+      const appMode = clan.applicationMode || "manual";
+      const appModeLabel = appMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
 
       let invite = clan.invite || "#";
       try {
@@ -337,15 +503,30 @@ module.exports = {
         inviteTxt,
         iconURL,
         useBannerPath || flagExists ? flagFileName : null,
-        embedColor
+        embedColor,
+        appModeLabel
       );
+
+      const components = [];
+      if (clan.donutsmpTeamName) {
+        console.log(`[/clan view] 🟠 Adding DonutSMP button for clan ${clan.abbr} (guild ${guildId})`);
+        const serverRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`clan_server_donutsmp_${guildId}`)
+            .setLabel("DonutSMP")
+            .setStyle(ButtonStyle.Secondary)
+        );
+        components.push(serverRow);
+      }
 
       if (useBannerPath || flagExists) {
         const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
-        return interaction.editReply({ embeds: [embed], files: [attachment] });
+        console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (with flag, components: ${components.length})`);
+        return interaction.editReply({ embeds: [embed], files: [attachment], components });
       }
 
-      return interaction.editReply({ embeds: [embed] });
+      console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (components: ${components.length})`);
+      return interaction.editReply({ embeds: [embed], components });
     }
 
     // -------------------------------------------------------------------------
@@ -364,7 +545,8 @@ module.exports = {
           const yazanakiStatus = c.yazanakiRoleId ? "✅" : "❌";
           const clanStatus = c.clanRoleId ? "✅" : "⚠️";
           const residentCount = c.residents || 0;
-          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite}) - ${residentCount} residents`;
+          const mode = c.applicationMode === "timed" ? "Timed" : "Manual";
+          return `${yazanakiStatus}${clanStatus} [${c.abbr}: ${c.name}](${invite}) - ${residentCount} residents - Mode: ${mode}`;
         }).join("\n"))
         .setFooter({ text: "✅ = Set | ❌ = Missing Yazanaki role | ⚠️ = Missing clan role" });
 

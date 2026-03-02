@@ -11,17 +11,27 @@ const { EmbedBuilder } = require("discord.js");
  * sizeText: string like "`123`"
  * invite: string or placeholder
  */
-function createClanEmbed(clan, leader, residentsText, joinedText, sizeText, invite, thumbnailUrl = null, flagAttachmentName = null, color = 0x000000) {
+function createClanEmbed(clan, leader, residentsText, joinedText, sizeText, invite, thumbnailUrl = null, flagAttachmentName = null, color = 0x000000, applicationModeLabel = null) {
+  const fields = [
+    { name: "👑 Leader", value: leader || "``n/d``", inline: false },
+    { name: "🏠 Residents", value: residentsText || "``n/d``", inline: false },
+    { name: "📅 Joined Empire", value: joinedText || "``n/d``", inline: false },
+    { name: "👥 Size", value: sizeText || "``n/d``", inline: false },
+    { name: "🔗 Invite link", value: invite || "``n/d``", inline: false }
+  ];
+
+  if (applicationModeLabel) {
+    fields.push({
+      name: "📝 Application Mode",
+      value: applicationModeLabel,
+      inline: false
+    });
+  }
+
   const embed = new EmbedBuilder()
     .setTitle(`${clan.abbr}: ${clan.name}`)
     .setColor(color)
-    .addFields(
-      { name: "👑 Leader", value: leader || "``n/d``", inline: false },
-      { name: "🏠 Residents", value: residentsText || "``n/d``", inline: false },
-      { name: "📅 Joined Empire", value: joinedText || "``n/d``", inline: false },
-      { name: "👥 Size", value: sizeText || "``n/d``", inline: false },
-      { name: "🔗 Invite link", value: invite || "``n/d``", inline: false }
-    );
+    .addFields(fields);
 
   if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
   if (flagAttachmentName) {

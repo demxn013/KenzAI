@@ -313,11 +313,11 @@ module.exports = {
       // ============================================================
       // ✅ ACCEPT APPLICANT (if accepted)
       // ============================================================
+      let acceptResult = null;
       if (isAccepted) {
         console.log(`[application] 🎯 Running acceptance process...`);
-        
-        const acceptResult = await acceptApplicant(discordId, interaction.client);
-        
+        acceptResult = await acceptApplicant(discordId, interaction.client);
+
         if (acceptResult.success) {
           console.log(`[application] ✅ Acceptance successful`);
           console.log(`[application] 🆔 Empire ID: ${acceptResult.empireId}`);
@@ -325,6 +325,80 @@ module.exports = {
         } else {
           console.error(`[application] ❌ Acceptance failed: ${acceptResult.reason}`);
         }
+
+        // ============================================================
+        // ✅ NOT IN YAZANAKI: Revert application, re-enable buttons, notify accepter only
+        // ============================================================
+        if (!acceptResult.success && acceptResult.reason === "not_in_yazanaki") {
+          const currentData = getApplicant(discordId);
+          saveApplicant(
+            discordId,
+            currentData,
+            currentData?.server ?? interaction.guild.id,
+            currentData?.closeReason ?? null,
+            false,
+            null
+          );
+          try {
+            const currentMessage = interaction.message;
+            const newRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId("close_ticket")
+                .setLabel("🔒 Close Ticket")
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`accept_application_${discordId}`)
+                .setLabel("✅ Accept")
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(false),
+              new ButtonBuilder()
+                .setCustomId(`reject_application_${discordId}`)
+                .setLabel("❌ Reject")
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(false)
+            );
+            await currentMessage.edit({ components: [newRow] });
+          } catch (err) {
+            console.warn(`[application] ⚠️ Could not re-enable buttons:`, err.message);
+          }
+
+          const notInYazanakiEmbed = new EmbedBuilder()
+            .setTitle("❌ Acceptance blocked")
+            .setDescription(
+              `**<@${discordId}>** has not joined the **Yazanaki Discord** (Yazanaki Empire).\n\n` +
+              `They must join the server before they can be accepted. The application has been reverted; you can accept again after they join.`
+            )
+            .setColor(0xff6600)
+            .setTimestamp();
+
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+          return interaction.reply({
+            embeds: [notInYazanakiEmbed],
+            ephemeral: true
+          });
+        }
+      }
+
+      // ============================================================
+      // ✅ NOTIFY APPLICANT IN CHANNEL (visible to them, with real ping)
+      // ============================================================
+      const resultEmbed = new EmbedBuilder()
+        .setTitle(isAccepted ? "✅ Application Accepted" : "❌ Application Denied")
+        .setDescription(
+          isAccepted
+            ? "Congratulations! Your application to the Yazanaki Empire has been **accepted**. You have been given the appropriate roles. Welcome!"
+            : "Your application to the Yazanaki Empire has been **denied**. If you have questions, please reach out to staff."
+        )
+        .setColor(isAccepted ? 0x00ff00 : 0xff0000)
+        .setTimestamp();
+
+      try {
+        await interaction.channel.send({
+          content: `<@${discordId}>`,
+          embeds: [resultEmbed]
+        });
+      } catch (err) {
+        console.warn(`[application] ⚠️ Could not send applicant result message:`, err.message);
       }
 
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -361,7 +435,8 @@ module.exports = {
         });
       }
 
-      const ticketNumber = cache.getNextNumber("application");
+      // Ticket numbers are now per clan/guild instead of global
+      const ticketNumber = cache.getNextNumber("application", guild.id);
       const channelName = `${interaction.user.username
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")}-${ticketNumber}`;
@@ -454,13 +529,20 @@ module.exports = {
         .setColor("#000000");
 
       const termsEmbed = new EmbedBuilder()
-        .setTitle("Pre-Application")
+        .setTitle("Pre-Application Process")
         .setDescription(
-          "**__Constitution & Values__**\n" +
-            "[Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
-            "**__Terms__**\n" +
-            "By applying, you vow to uphold all Yazanakian values.\n\n" +
-            "**Rules**\n- Don't ping staff unnecessarily\n- No spam\n- Be respectful"
+          "**__Please do these steps:__**\n\n" +
+            "1. **__Read theConstitution__**\n" +
+            "> [Yazanaki Empire Constitution](https://docs.google.com/document/d/1rDxBfjuo2fkrK_LGpmce3vEPy-ImDIDZ-FFJwhDE6mE/edit)\n\n" +
+            "2. **__Join the Yazanaki Empire Discord__**\n" +
+              "> [Click here to join](https://discord.gg/yazanaki-1220847061797179524)\n\n" +
+            "3. **__Follow the Guidelines__**\n" +
+              "  **__Terms__**\n" +
+              "  By applying, you vow to uphold all Yazanakian values.\n\n" +
+              "  **__Rules__**\n" +
+              "  - Don't ping staff unnecessarily\n" +
+              "  - No spam\n" +
+              "  - Be respectful"
         )
         .setColor("#000000");
 
@@ -479,7 +561,9 @@ module.exports = {
           .setStyle(ButtonStyle.Danger)
       );
 
+      // Ping applicant in message content so they actually get notified (embeds don't trigger pings)
       await channel.send({
+        content: `<@${interaction.user.id}>`,
         embeds: [infoEmbed, termsEmbed],
         components: [controlRow]
       });
@@ -515,7 +599,7 @@ module.exports = {
             {
               ...applicantData,
               discordId: ticketData.openerId,
-              discordUser: interaction.user.tag,
+              discordUser: applicantData.discordUser || applicantData.discordTag || null,
               minecraftUser: mcUser
             },
             interaction.guild.id,

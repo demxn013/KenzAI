@@ -70,10 +70,8 @@ Shows Yazanaki Empire summary information (leadership + population stats).
 
 ## 🎮 Server Stats
 
-### `/server`
+### ~~`/server`~~
 Shows supported game servers and buttons for server/team/player stats.
-
-> Add 
 
 **Use it for:** viewing in-game server data (for configured servers).
 

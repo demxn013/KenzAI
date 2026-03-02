@@ -1,13 +1,15 @@
 """
 KenzAI GUI Interface
 Rainmeter-style draggable and resizable GUI.
+Jarvis-inspired black line with audio bars when responding.
 """
 import sys
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable
 import math
+import threading
 
 # Setup imports
 _current_dir = Path(__file__).parent.parent
@@ -64,7 +66,7 @@ class DraggableWindow:
 class ResizableWindow:
     """Mixin for resizable windows."""
     
-    def __init__(self, window, min_size: Tuple[int, int] = (200, 200), max_size: Tuple[int, int] = (800, 800)):
+    def __init__(self, window, min_size: Tuple[int, int] = (120, 40), max_size: Tuple[int, int] = (1200, 800)):
         """
         Initialize resizable window.
         
@@ -158,13 +160,18 @@ class KenzAIGUI:
         # Get saved position and size
         position = self.gui_prefs.get('position', {'x': 1200, 'y': 100})
         size = self.gui_prefs.get('size', {'width': 400, 'height': 400})
-        appearance = self.gui_prefs.get('last_appearance', 'circle')
+        appearance = self.gui_prefs.get('last_appearance', 'line')
         opacity = self.gui_prefs.get('opacity', 0.9)
         always_on_top = self.gui_prefs.get('always_on_top', True)
         locked = self.gui_prefs.get('locked', False)
         
-        # Set geometry
-        self.root.geometry(f"{size['width']}x{size['height']}+{position['x']}+{position['y']}")
+        # Line appearance: use a thin bar size if current size is square (legacy)
+        w, h = size['width'], size['height']
+        if appearance == 'line' and w == h and w >= 300:
+            w, h = 520, 56
+            self.gui_prefs.setdefault('size', {})['width'] = w
+            self.gui_prefs.setdefault('size', {})['height'] = h
+        self.root.geometry(f"{w}x{h}+{position['x']}+{position['y']}")
         
         # Set opacity
         if is_windows():
@@ -180,6 +187,14 @@ class KenzAIGUI:
         # Store state
         self.locked = locked
         self.appearance = appearance
+        
+        # Jarvis-style: speaking/processing state for audio bar animation
+        self._speaking = False
+        self._processing = False
+        self._anim_phase = 0.0
+        self._bar_count = 11  # Number of vertical bars in line mode
+        self._entry_visible = self.gui_prefs.get('show_text_input', False)
+        self._show_entry_var = tk.BooleanVar(value=self._entry_visible)
     
     def _bind_events(self):
         """Bind window events."""
@@ -267,23 +282,86 @@ class KenzAIGUI:
     
     def _create_ui(self):
         """Create UI elements."""
-        # Create canvas for custom drawing
+        # Jarvis line: black background; circle: dark gray
+        bg = '#0a0a0a' if self.appearance == 'line' else '#1a1a1a'
         self.canvas = tk.Canvas(
             self.root,
-            bg='#1a1a1a',  # Dark background
+            bg=bg,
             highlightthickness=0,
             borderwidth=0
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Draw appearance
-        self._draw_appearance()
+        # Optional text entry to ask KenzAI (responses are spoken)
+        self._entry_frame = tk.Frame(self.root, bg=bg, height=0)
+        self._entry_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        self._entry_var = tk.StringVar()
+        self._entry = tk.Entry(
+            self._entry_frame,
+            textvariable=self._entry_var,
+            bg='#1a1a2e',
+            fg='#e0e0e0',
+            insertbackground='#00d4ff',
+            relief=tk.FLAT,
+            font=('Segoe UI', 10)
+        )
+        self._entry.pack(fill=tk.X, padx=4, pady=2)
+        self._entry.bind('<Return>', self._on_ask_submit)
+        self._entry.bind('<Escape>', lambda e: self._entry_var.set(''))
+        if not self._entry_visible:
+            self._entry_frame.pack_forget()
         
-        # Add pulse animation
+        self._draw_appearance()
         self._animate()
+        
+        # TTS for speaking responses (optional)
+        try:
+            from utils.tts_helper import TTSHelper
+            self._tts = TTSHelper(self.config, self.preferences)
+        except Exception:
+            self._tts = None
+    
+    def set_speaking(self, speaking: bool):
+        """Set speaking state for audio bar animation (Jarvis-style)."""
+        self._speaking = bool(speaking)
+    
+    def set_processing(self, processing: bool):
+        """Set processing/thinking state (subtle animation)."""
+        self._processing = bool(processing)
+    
+    def _on_ask_submit(self, event=None):
+        """User pressed Enter in text entry: ask assistant and speak response."""
+        text = (self._entry_var.get() or '').strip()
+        if not text:
+            return
+        self._entry_var.set('')
+        
+        def do_query():
+            try:
+                self.root.after(0, lambda: self.set_processing(True))
+                response = self.assistant.process_query(text)
+                
+                def on_start():
+                    self.root.after(0, lambda: self.set_processing(False))
+                    self.root.after(0, lambda: self.set_speaking(True))
+                
+                def on_end():
+                    self.root.after(0, lambda: self.set_speaking(False))
+                
+                if self._tts and self._tts.is_available():
+                    self._tts.speak(response, on_start=on_start, on_end=on_end)
+                else:
+                    self.root.after(0, lambda: self.set_processing(False))
+                    on_end()
+            except Exception as e:
+                logger.error(f"Query error: {e}", exc_info=True)
+                self.root.after(0, lambda: self.set_processing(False))
+                self.root.after(0, lambda: self.set_speaking(False))
+        
+        threading.Thread(target=do_query, daemon=True).start()
     
     def _draw_appearance(self):
-        """Draw the appearance (circle or line)."""
+        """Draw the appearance (circle or Jarvis line with audio bars)."""
         self.canvas.delete("all")
         
         width = self.root.winfo_width()
@@ -299,27 +377,80 @@ class KenzAIGUI:
                 center_y - radius,
                 center_x + radius,
                 center_y + radius,
-                outline='#4a9eff',  # Blue glow
+                outline='#4a9eff',
                 width=3,
                 fill='#2a2a2a'
             )
-        else:  # line
-            # Draw horizontal line with glow
-            line_width = width // 2
-            self.canvas.create_line(
-                center_x - line_width // 2,
-                center_y,
-                center_x + line_width // 2,
-                center_y,
-                fill='#4a9eff',
-                width=4
+        else:
+            # Jarvis-style: black bar with vertical audio segments
+            self._draw_jarvis_line(width, height, center_y)
+    
+    def _draw_jarvis_line(self, width: int, height: int, center_y: int):
+        """Draw black bar with vertical segments that animate when speaking."""
+        n = self._bar_count
+        gap = 4
+        bar_width = max(3, (width - (n + 1) * gap) // n)
+        total_width = n * bar_width + (n + 1) * gap
+        left = (width - total_width) // 2
+        
+        # Base bar color: cyan/blue glow when active, dim when idle
+        if self._speaking:
+            color = '#00d4ff'  # Bright cyan when speaking
+            glow = '#00a8cc'
+        elif self._processing:
+            color = '#4a9eff'
+            glow = '#2a6ebb'
+        else:
+            color = '#1e3a5f'  # Dim blue when idle
+            glow = '#0d1f33'
+        
+        for i in range(n):
+            x = left + gap + i * (bar_width + gap) + bar_width // 2
+            
+            # Animate height: wave effect when speaking, subtle pulse when processing, minimal when idle
+            if self._speaking:
+                # Audio-level style: wave with phase offset per bar
+                t = self._anim_phase + i * 0.4
+                level = 0.4 + 0.6 * (0.5 + 0.5 * math.sin(t))
+                h = max(4, int((height * 0.5) * level))
+            elif self._processing:
+                t = self._anim_phase + i * 0.3
+                level = 0.3 + 0.4 * (0.5 + 0.5 * math.sin(t))
+                h = max(4, int((height * 0.45) * level))
+            else:
+                # Idle: very subtle breathing
+                t = self._anim_phase + i * 0.2
+                level = 0.15 + 0.1 * math.sin(t)
+                h = max(2, int((height * 0.35) * level))
+            
+            y1 = center_y - h // 2
+            y2 = center_y + h // 2
+            
+            # Glow (wider, behind)
+            self.canvas.create_rectangle(
+                x - bar_width // 2 - 1, y1 - 1,
+                x + bar_width // 2 + 1, y2 + 1,
+                fill=glow, outline=''
             )
+            self.canvas.create_rectangle(
+                x - bar_width // 2, y1, x + bar_width // 2, y2,
+                fill=color, outline=''
+            )
+        
+        self._anim_phase += 0.12
+        if self._anim_phase > math.pi * 2:
+            self._anim_phase -= math.pi * 2
+        elif self._anim_phase < 0:
+            self._anim_phase += math.pi * 2
     
     def _animate(self):
-        """Animate the GUI (pulse effect)."""
-        # Simple pulse animation
+        """Animate the GUI (pulse or Jarvis bars)."""
+        if self.appearance == 'line':
+            self.canvas.configure(bg='#0a0a0a')
+        else:
+            self.canvas.configure(bg='#1a1a1a')
         self._draw_appearance()
-        self.root.after(100, self._animate)
+        self.root.after(80, self._animate)
     
     def _create_context_menu(self):
         """Create right-click context menu."""
@@ -338,6 +469,12 @@ class KenzAIGUI:
             variable=tk.StringVar(value=self.appearance)
         )
         self.context_menu.add_cascade(label="Appearance", menu=appearance_menu)
+        
+        self.context_menu.add_checkbutton(
+            label="Show text input",
+            command=self._toggle_text_input,
+            variable=self._show_entry_var
+        )
         
         self.context_menu.add_separator()
         
@@ -371,10 +508,23 @@ class KenzAIGUI:
         """Show context menu."""
         self.context_menu.tk_popup(event.x_root, event.y_root)
     
+    def _toggle_text_input(self):
+        """Toggle visibility of the text input bar."""
+        self._entry_visible = not self._entry_visible
+        self._show_entry_var.set(self._entry_visible)
+        self.gui_prefs['show_text_input'] = self._entry_visible
+        if self._entry_visible:
+            self._entry_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        else:
+            self._entry_frame.pack_forget()
+        self._save_preferences()
+    
     def _change_appearance(self, appearance: str):
         """Change appearance."""
         self.appearance = appearance
         self.gui_prefs['last_appearance'] = appearance
+        if self.canvas:
+            self.canvas.configure(bg='#0a0a0a' if appearance == 'line' else '#1a1a1a')
         self._draw_appearance()
         self._save_preferences()
     

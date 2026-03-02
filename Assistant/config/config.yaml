@@ -111,7 +111,7 @@ interfaces:
     
   gui:
     enabled: true
-    default_appearance: "circle"
+    default_appearance: "line"
     default_position: "top-right"
     default_size: [400, 400]
     draggable: true

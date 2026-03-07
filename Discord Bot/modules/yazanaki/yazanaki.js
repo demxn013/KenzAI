@@ -11,7 +11,7 @@ const fs = require("fs");
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
 // Empire invite link (you can change this)
-const EMPIRE_INVITE_LINK = "https://discord.gg/yazanakiempire"; // ✅ REPLACE WITH YOUR ACTUAL INVITE LINK
+const EMPIRE_INVITE_LINK = "https://discord.gg/yazanaki-1220847061797179524"; // ✅ REPLACE WITH YOUR ACTUAL INVITE LINK
 
 module.exports = {
   data: new SlashCommandBuilder()

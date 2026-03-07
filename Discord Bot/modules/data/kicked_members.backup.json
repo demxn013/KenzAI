@@ -1,0 +1,28 @@
+{
+    "1152179124266348554": {
+        "discordId": "1152179124266348554",
+        "empireId": "ONF-000027",
+        "discordUser": "clement_70531",
+        "minecraftUser": "Qlementy12",
+        "kickedAt": "2026-03-02T13:33:43.949Z",
+        "canReapplyAt": "2026-05-31T13:33:43.949Z",
+        "kickReason": "left yazanaki discord",
+        "originalClan": "Oni no Fukushu",
+        "originalData": {
+            "discordId": "1152179124266348554",
+            "discordUser": "clement_70531",
+            "minecraftUser": "Qlementy12",
+            "minecraftVersion": "Java",
+            "JoinedClan": "Oni no Fukushu",
+            "JoinDate": "02.03.2026",
+            "YazanakiRank": "Recruit",
+            "EmpireID": "ONF-000027",
+            "Status": "Draft",
+            "points": 0,
+            "draftStartDate": "2026-03-02T11:15:39.867Z",
+            "draftExpiryDate": "2026-05-31T11:15:39.867Z",
+            "draftReminderSent": false,
+            "draftNotified": false
+        }
+    }
+}

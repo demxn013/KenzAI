@@ -14,7 +14,7 @@
     "discord.js": "^14.25.1",
     "dotenv": "^16.6.1",
     "fast-average-color-node": "^3.1.0",
-    "jimp": "^0.16.1",
+    "jimp": "^1.6.0",
     "node-vibrant": "^4.0.3"
   }
 }

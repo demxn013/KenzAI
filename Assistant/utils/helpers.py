@@ -167,7 +167,7 @@ def load_user_preferences(prefs_path: Optional[str] = None) -> Dict[str, Any]:
     # Default preferences
     defaults = {
         "gui": {
-            "last_appearance": "circle",
+            "last_appearance": "line",
             "position": {"x": 1200, "y": 100},
             "size": {"width": 400, "height": 400},
             "opacity": 0.9,

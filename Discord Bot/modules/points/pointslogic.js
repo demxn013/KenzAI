@@ -122,10 +122,10 @@ function applyDailyCheckin(discordId) {
   const m = members[discordId];
   if (!m) return { success: false, reason: "not_member" };
   const current = typeof m.points === "number" ? m.points : 0;
-  m.points = current + 10;
+  m.points = current + 2;
   m.lastDailyCheckin = new Date().toISOString();
   writeMembers(members);
-  return { success: true, newBalance: m.points, pointsAdded: 10 };
+  return { success: true, newBalance: m.points, pointsAdded: 2 };
 }
 
 /** Apply weekly check-in: add 25 points and set lastWeeklyCheckin. */
@@ -134,10 +134,10 @@ function applyWeeklyCheckin(discordId) {
   const m = members[discordId];
   if (!m) return { success: false, reason: "not_member" };
   const current = typeof m.points === "number" ? m.points : 0;
-  m.points = current + 25;
+  m.points = current + 10;
   m.lastWeeklyCheckin = new Date().toISOString();
   writeMembers(members);
-  return { success: true, newBalance: m.points, pointsAdded: 25 };
+  return { success: true, newBalance: m.points, pointsAdded: 10 };
 }
 
 /** Get Minecraft username for a member (for redemption posts). */

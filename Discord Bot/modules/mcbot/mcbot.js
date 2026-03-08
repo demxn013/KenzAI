@@ -27,6 +27,8 @@ const {
   getBotStatusFromVps,
   listAllBotsOnVps,
   stopAllBotsOnVps,
+  getDeviceCodeFromVps,
+  clearDeviceCodeOnVps,
 } = require("./mcbotlogic");
 
 const { readClans } = require("../clantracking/clanlogic");
@@ -36,6 +38,10 @@ const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
 // Confirmation timeout: 3 minutes
 const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
+
+// How long to poll for a Microsoft device code after bot start (ms)
+const DEVICE_CODE_POLL_DURATION_MS = 30 * 1000;
+const DEVICE_CODE_POLL_INTERVAL_MS = 2000;
 
 // Supported Minecraft versions
 const SUPPORTED_VERSIONS = [
@@ -50,10 +56,6 @@ const pendingConfirmations = new Map();
 // HELPERS
 // ============================================================
 
-/**
- * Returns a Set of all allowed guild IDs (Yazanaki Empire + all clan guilds).
- * Reads dynamically from clans.json so new clans are automatically included.
- */
 function getAllowedGuildIds() {
   try {
     const clans = readClans();
@@ -138,6 +140,73 @@ function buildConfirmRow(userId, disabled = false) {
 }
 
 // ============================================================
+// DEVICE CODE POLLING
+// After /start succeeds, the VPS may need Microsoft auth.
+// Poll GET /devicecode/:discordId for up to 30s.
+// If a code appears, DM it to the user and clear it from the VPS.
+// ============================================================
+
+async function pollAndSendDeviceCode(discordId, ownerUser, dmChannel) {
+  const deadline = Date.now() + DEVICE_CODE_POLL_DURATION_MS;
+  console.log(`[/mcbot] 🔐 Polling for device code for ${discordId}...`);
+
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, DEVICE_CODE_POLL_INTERVAL_MS));
+
+    const res = await getDeviceCodeFromVps(discordId).catch(() => null);
+    if (!res || !res.ok || !res.data?.pending) continue;
+
+    const { userCode, verificationUri, expiresAt } = res.data;
+    const expiresTimestamp = expiresAt
+      ? `<t:${Math.floor(expiresAt / 1000)}:R>`
+      : "in ~15 minutes";
+
+    console.log(`[/mcbot] 🔐 Device code found for ${discordId}: ${userCode}`);
+
+    // DM the user
+    try {
+      await dmChannel.send({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔐 Microsoft Login Required")
+          .setDescription(
+            "Your Minecraft account needs to be authenticated with Microsoft before the bot can join the server.\n\n" +
+            "**This is a one-time setup.** After you log in, your token will be cached and future bot starts will be instant."
+          )
+          .addFields(
+            {
+              name: "1️⃣ Go to this URL",
+              value: `**[${verificationUri}](${verificationUri})**`,
+              inline: false,
+            },
+            {
+              name: "2️⃣ Enter this code",
+              value: `\`\`\`${userCode}\`\`\``,
+              inline: false,
+            },
+            {
+              name: "⏰ Expires",
+              value: expiresTimestamp,
+              inline: true,
+            },
+          )
+          .setColor(0x2196f3)
+          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager • Microsoft Auth" })
+          .setTimestamp()],
+      });
+    } catch (err) {
+      console.error(`[/mcbot] ❌ Could not DM device code to ${discordId}:`, err.message);
+    }
+
+    // Clear from VPS so it doesn't get re-sent
+    await clearDeviceCodeOnVps(discordId).catch(() => {});
+    return;
+  }
+
+  // No code appeared within the window — token was already cached, no auth needed
+  console.log(`[/mcbot] ✅ No device code appeared for ${discordId} — cached token used`);
+}
+
+// ============================================================
 // MODULE EXPORT
 // ============================================================
 
@@ -146,7 +215,6 @@ module.exports = {
     .setName("mcbot")
     .setDescription("Control your Minecraft bot on the Yazanaki VPS")
 
-    // ── start ────────────────────────────────────────────────
     .addSubcommand((sub) =>
       sub
         .setName("start")
@@ -168,28 +236,24 @@ module.exports = {
         )
     )
 
-    // ── stop ─────────────────────────────────────────────────
     .addSubcommand((sub) =>
       sub
         .setName("stop")
         .setDescription("Stop your currently running Minecraft bot")
     )
 
-    // ── status ───────────────────────────────────────────────
     .addSubcommand((sub) =>
       sub
         .setName("status")
         .setDescription("Check the status of your Minecraft bot")
     )
 
-    // ── list (admin) ─────────────────────────────────────────
     .addSubcommand((sub) =>
       sub
         .setName("list")
         .setDescription("[Admin] List all active bots on the VPS")
     )
 
-    // ── stopall (admin) ──────────────────────────────────────
     .addSubcommand((sub) =>
       sub
         .setName("stopall")
@@ -206,7 +270,7 @@ module.exports = {
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log(`[/mcbot] 🎯 /${sub} — ${interaction.user.tag} (${userId})`);
 
-    // ── GUILD LOCK: Yazanaki Empire + all clan discords ───────
+    // ── GUILD LOCK ────────────────────────────────────────────
     const allowedGuilds = getAllowedGuildIds();
     if (!interaction.guild || !allowedGuilds.has(interaction.guild.id)) {
       return interaction.reply({
@@ -219,9 +283,8 @@ module.exports = {
     }
 
     // ============================================================
-    // ADMIN SUBCOMMANDS (require KickMembers permission)
+    // ADMIN SUBCOMMANDS
     // ============================================================
-
     if (sub === "list" || sub === "stopall") {
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
         return interaction.reply({
@@ -235,10 +298,8 @@ module.exports = {
 
       await interaction.deferReply({ ephemeral: true });
 
-      // ── list ─────────────────────────────────────────────
       if (sub === "list") {
         const response = await listAllBotsOnVps();
-
         if (!response.ok) {
           return interaction.editReply({
             embeds: [errorEmbed(
@@ -249,7 +310,6 @@ module.exports = {
         }
 
         const bots = response.data.bots || [];
-
         if (bots.length === 0) {
           return interaction.editReply({
             embeds: [infoEmbed("No Active Bots", "There are no bots currently running on the VPS.")],
@@ -276,14 +336,11 @@ module.exports = {
             inline: false,
           });
         }
-
         return interaction.editReply({ embeds: [embed] });
       }
 
-      // ── stopall ───────────────────────────────────────────
       if (sub === "stopall") {
         const response = await stopAllBotsOnVps();
-
         if (!response.ok) {
           return interaction.editReply({
             embeds: [errorEmbed(
@@ -292,7 +349,6 @@ module.exports = {
             )],
           });
         }
-
         const stopped = response.data?.stopped ?? "?";
         return interaction.editReply({
           embeds: [new EmbedBuilder()
@@ -306,13 +362,11 @@ module.exports = {
     }
 
     // ============================================================
-    // MEMBER SUBCOMMANDS (require active empire membership)
+    // MEMBER SUBCOMMANDS
     // ============================================================
-
     await interaction.deferReply({ ephemeral: true });
 
     const validation = validateMember(userId);
-
     if (!validation.valid) {
       console.warn(`[/mcbot] 🚫 Validation failed for ${userId}: ${validation.reason}`);
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -338,7 +392,6 @@ module.exports = {
         });
       }
 
-      // Check if there's already a pending confirmation for this user
       if (pendingConfirmations.has(userId)) {
         return interaction.editReply({
           embeds: [warningEmbed(
@@ -350,10 +403,10 @@ module.exports = {
 
       console.log(`[/mcbot] 🤖 Requesting confirmation: ${minecraftUser} → ${serverAddress} (v${version})`);
 
-      // Try to DM the user
       let dmMessage;
+      let dmChannel;
       try {
-        const dmChannel = await interaction.user.createDM();
+        dmChannel = await interaction.user.createDM();
         const confirmEmbed = new EmbedBuilder()
           .setTitle("🤖 Bot Start Confirmation")
           .setDescription(
@@ -385,13 +438,11 @@ module.exports = {
         });
       }
 
-      // Store pending confirmation with timeout
       const timeoutId = setTimeout(async () => {
         if (!pendingConfirmations.has(userId)) return;
         pendingConfirmations.delete(userId);
         console.log(`[/mcbot] ⏰ Confirmation timed out for ${minecraftUser}`);
 
-        // Disable buttons on DM
         try {
           await dmMessage.edit({
             embeds: [new EmbedBuilder()
@@ -408,7 +459,6 @@ module.exports = {
           });
         } catch {}
 
-        // Try to update the original interaction reply
         try {
           await interaction.editReply({
             embeds: [warningEmbed(
@@ -427,6 +477,7 @@ module.exports = {
         empireId,
         interaction,
         dmMessage,
+        dmChannel,
         timeoutId,
       });
 
@@ -520,76 +571,76 @@ module.exports = {
       const bot = response.data.bot;
       const uptime = bot.uptimeSeconds ? formatUptime(bot.uptimeSeconds) : "Unknown";
 
-      const embed = new EmbedBuilder()
-        .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.status.toUpperCase()}`)
-        .setColor(getStatusColor(bot.status))
-        .addFields(
-          { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: true },
-          { name: "🆔 Empire ID", value: `\`${empireId}\``, inline: true },
-          { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: false },
-          { name: "📦 Version", value: `\`${bot.version}\``, inline: true },
-          { name: "⏱️ Uptime", value: `\`${uptime}\``, inline: true },
-          { name: "📅 Started", value: `<t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`, inline: false },
-        )
-        .setFooter({ text: "Use /mcbot stop to disconnect your bot • Yazanaki Empire" })
-        .setTimestamp();
-
-      return interaction.editReply({ embeds: [embed] });
+      return interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.minecraftUser}`)
+          .addFields(
+            { name: "📊 Status", value: `\`${bot.status}\``, inline: true },
+            { name: "⏱️ Uptime", value: `\`${uptime}\``, inline: true },
+            { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: true },
+            { name: "🎮 Version", value: `\`${bot.version}\``, inline: true },
+            { name: "📅 Started", value: `<t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`, inline: true },
+          )
+          .setColor(getStatusColor(bot.status))
+          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+          .setTimestamp()],
+      });
     }
   },
 
   // ============================================================
-  // BUTTON HANDLER — DM Confirmations
+  // BUTTON HANDLER — DM confirm/reject buttons
   // ============================================================
   async buttonHandler(interaction) {
-    const { customId } = interaction;
+    const { customId, user } = interaction;
 
-    if (!customId.startsWith("mcbot_confirm_") && !customId.startsWith("mcbot_reject_")) return;
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log(`[/mcbot] 🔘 DM Button: ${customId} from ${user.tag} (${user.id})`);
 
     const isConfirm = customId.startsWith("mcbot_confirm_");
+    const isReject = customId.startsWith("mcbot_reject_");
+
+    if (!isConfirm && !isReject) return;
+
     const targetUserId = isConfirm
       ? customId.replace("mcbot_confirm_", "")
       : customId.replace("mcbot_reject_", "");
 
-    // Only the correct user can respond
-    if (interaction.user.id !== targetUserId) {
+    // Verify the person clicking owns this request
+    if (user.id !== targetUserId) {
       return interaction.reply({
-        embeds: [errorEmbed("Not Your Request", "This confirmation is not for you.")],
-        ephemeral: true,
+        content: "❌ This confirmation is not for your account.",
       });
     }
 
     const pending = pendingConfirmations.get(targetUserId);
 
     if (!pending) {
-      // Already handled (timed out or duplicate press)
-      return interaction.reply({
-        embeds: [warningEmbed(
-          "Request Expired",
-          "This confirmation has already been handled or has expired."
-        )],
-        ephemeral: true,
-      });
-    }
-
-    // Clear the timeout and remove from pending
-    clearTimeout(pending.timeoutId);
-    pendingConfirmations.delete(targetUserId);
-
-    // Disable buttons on the DM immediately
-    try {
-      await interaction.update({ components: [buildConfirmRow(targetUserId, true)] });
-    } catch {
-      await interaction.deferUpdate().catch(() => {});
-    }
-
-    // ── REJECTED ─────────────────────────────────────────────
-    if (!isConfirm) {
-      console.log(`[/mcbot] ❌ Bot start rejected by ${pending.minecraftUser}`);
-
-      // Update DM
+      await interaction.deferUpdate();
       try {
-        await pending.dmMessage.edit({
+        await interaction.message.edit({
+          embeds: [warningEmbed(
+            "Request Expired",
+            "This bot start request has already expired or been handled."
+          )],
+          components: [buildConfirmRow(targetUserId, true)],
+        });
+      } catch {}
+      return;
+    }
+
+    // Clear pending + cancel timeout
+    pendingConfirmations.delete(targetUserId);
+    clearTimeout(pending.timeoutId);
+
+    await interaction.deferUpdate();
+
+    // ── REJECTED ──────────────────────────────────────────────
+    if (isReject) {
+      console.log(`[/mcbot] ❌ Rejected by ${user.tag}`);
+
+      try {
+        await interaction.message.edit({
           embeds: [new EmbedBuilder()
             .setTitle("❌ Bot Start Rejected")
             .setDescription("You rejected the bot start request.")
@@ -604,7 +655,6 @@ module.exports = {
         });
       } catch {}
 
-      // Update original interaction
       try {
         await pending.interaction.editReply({
           embeds: [warningEmbed("Request Rejected", "You rejected the bot start request.")],
@@ -615,8 +665,8 @@ module.exports = {
       return;
     }
 
-    // ── CONFIRMED — actually start the bot ───────────────────
-    console.log(`[/mcbot] ✅ Bot start confirmed by ${pending.minecraftUser} → ${pending.serverAddress} (v${pending.version})`);
+    // ── CONFIRMED ─────────────────────────────────────────────
+    console.log(`[/mcbot] ✅ Confirmed: ${pending.minecraftUser} → ${pending.serverAddress} (v${pending.version})`);
 
     const response = await startBotOnVps(
       targetUserId,
@@ -627,7 +677,6 @@ module.exports = {
 
     if (!response.ok) {
       let errEmbed;
-
       if (response.data?.reason === "already_running") {
         errEmbed = warningEmbed(
           "Already Running",
@@ -636,22 +685,22 @@ module.exports = {
       } else if (response.data?.reason === "max_bots_reached") {
         errEmbed = warningEmbed(
           "Bot Limit Reached",
-          `The VPS has reached its bot limit (\`${response.data.max}\`). Try again later.`
+          `The VPS has reached its bot limit (\`${response.data.max}\`).`
         );
       } else if (response.status === 0) {
         errEmbed = errorEmbed(
           "VPS Unreachable",
-          `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Connection refused"}\`\`\``
+          `Could not reach the VPS.\n\`\`\`${response.data?.error || "Connection refused"}\`\`\``
         );
       } else {
         errEmbed = errorEmbed(
           "Start Failed",
-          `Failed to start your bot.\n\`\`\`${response.data?.error || response.data?.reason || "Unknown error"}\`\`\``
+          `Failed to start the bot.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
         );
       }
 
       try {
-        await pending.dmMessage.edit({
+        await interaction.message.edit({
           embeds: [errEmbed],
           components: [buildConfirmRow(targetUserId, true)],
         });
@@ -665,32 +714,45 @@ module.exports = {
       return;
     }
 
-    // Success
-    const successEmbedMsg = new EmbedBuilder()
-      .setTitle("🤖 Bot Started")
-      .setDescription(`Your Minecraft bot is now connecting to **${pending.serverAddress}**`)
-      .addFields(
-        { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },
-        { name: "🆔 Empire ID", value: `\`${pending.empireId}\``, inline: true },
-        { name: "🌐 Server", value: `\`${pending.serverAddress}\``, inline: false },
-        { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
-      )
-      .setColor(0x00c853)
-      .setFooter({ text: "Use /mcbot stop to disconnect your bot • Yazanaki Empire" })
-      .setTimestamp();
-
+    // ── VPS accepted the start — update DM with connecting state
     try {
-      await pending.dmMessage.edit({
-        embeds: [successEmbedMsg],
+      await interaction.message.edit({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔵 Bot Connecting...")
+          .setDescription(
+            `Your bot is connecting to **\`${pending.serverAddress}\`**.\n` +
+            `If Microsoft auth is needed, you'll receive another DM shortly with a login link.`
+          )
+          .addFields(
+            { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },
+            { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
+          )
+          .setColor(0x2196f3)
+          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+          .setTimestamp()],
         components: [buildConfirmRow(targetUserId, true)],
       });
     } catch {}
 
+    // Update the slash command reply
     try {
-      await pending.interaction.editReply({ embeds: [successEmbedMsg] });
+      await pending.interaction.editReply({
+        embeds: [successEmbed(
+          "Bot Starting",
+          `Your Minecraft bot (\`${pending.minecraftUser}\`) is connecting to \`${pending.serverAddress}\`.`
+        )],
+      });
     } catch {}
 
-    console.log(`[/mcbot] 🚀 Bot successfully started: ${pending.minecraftUser}`);
+    // ── Poll for Microsoft device code (needed on first run / expired token) ──
+    // Run async so we don't block — the user will get a separate DM if auth is needed
+    const dmChannelForCode = pending.dmChannel || await user.createDM().catch(() => null);
+    if (dmChannelForCode) {
+      pollAndSendDeviceCode(targetUserId, user, dmChannelForCode).catch(err => {
+        console.error(`[/mcbot] ❌ Device code poll error for ${targetUserId}:`, err);
+      });
+    }
+
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   },
 };

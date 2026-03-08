@@ -1,9 +1,10 @@
 // index.js
 // ✅ FIXED: Smart command deployment - only deploys when needed
 // ✅ UPDATED: Added court request interaction handlers
+// ✅ UPDATED: Added DirectMessages intent + Partials for DM button support (mcbot)
 
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes, Partials } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -25,6 +26,11 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.DirectMessages,   // ✅ Required for DM button interactions (mcbot verification)
+  ],
+  partials: [
+    Partials.Channel,   // ✅ Required for DM channel interactions to fire
+    Partials.Message,   // ✅ Required for DM message events to fire
   ],
 });
 
@@ -53,7 +59,6 @@ const DEPLOYMENT_MODE = 'all-guilds'; // ✅ DEPLOY TO ALL GUILDS
 async function deployCommands(force = false, targetGuildId = null) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🔄 LOADING COMMANDS...');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   const commands = [];
   const commandFolders = fs.readdirSync('./modules');
@@ -302,6 +307,27 @@ client.on('ready', async () => {
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   
+  // ============================================================
+  // ✅ DM BUTTON — mcbot confirm/reject (MUST be first, before guild check)
+  // These arrive from DMs where interaction.guild is null.
+  // Without this early check, DM button clicks are silently swallowed.
+  // ============================================================
+  if (
+    interaction.isButton() &&
+    (interaction.customId.startsWith('mcbot_confirm_') ||
+      interaction.customId.startsWith('mcbot_reject_'))
+  ) {
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log(`[interactions] 📬 DM button: ${interaction.customId} from ${interaction.user.tag}`);
+    const mcbotCommand = client.commands.get('mcbot');
+    if (mcbotCommand?.buttonHandler) {
+      await mcbotCommand.buttonHandler(interaction).catch(err => {
+        console.error('[interactions] ❌ mcbot DM buttonHandler error:', err);
+      });
+    }
+    return;
+  }
+
   // ============================================================
   // BUTTON INTERACTIONS
   // ============================================================

@@ -24,7 +24,7 @@ const bannedMembersPath = path.join(dataDir, "banned_members.json");
 function getVpsUrl() {
   const url = process.env.MCBOT_VPS_URL;
   if (!url) throw new Error("MCBOT_VPS_URL is not set in .env");
-  return url.replace(/\/$/, ""); // strip trailing slash
+  return url.replace(/\/$/, "");
 }
 
 function getApiKey() {
@@ -61,13 +61,10 @@ function readJSON(filePath) {
 
 /**
  * Validate that a Discord user is allowed to use the mcbot system.
- * @param {string} discordId
- * @returns {{ valid: boolean, member?: object, empireId?: string, minecraftUser?: string, reason?: string, message?: string }}
  */
 function validateMember(discordId) {
   console.log(`[mcbotlogic] 🔍 Validating member: ${discordId}`);
 
-  // ── CHECK 1: Active member ───────────────────────────────
   const members = readJSON(membersPath);
   const member = members[discordId];
 
@@ -80,7 +77,6 @@ function validateMember(discordId) {
     };
   }
 
-  // ── CHECK 2: Banned ──────────────────────────────────────
   const banned = readJSON(bannedMembersPath);
   if (banned[discordId]) {
     const banData = banned[discordId];
@@ -92,7 +88,6 @@ function validateMember(discordId) {
     };
   }
 
-  // ── CHECK 3: Kicked (cooldown) ───────────────────────────
   const kicked = readJSON(kickedMembersPath);
   if (kicked[discordId]) {
     const kickData = kicked[discordId];
@@ -112,7 +107,6 @@ function validateMember(discordId) {
     }
   }
 
-  // ── CHECK 4: Active EmpireID ─────────────────────────────
   const empireIds = readJSON(empireIdsPath);
   const empireId = member.EmpireID;
 
@@ -125,7 +119,6 @@ function validateMember(discordId) {
     };
   }
 
-  // Check ID is not deactivated (set when banned)
   const idEntry = empireIds.ids?.[empireId];
   if (idEntry && idEntry.active === false) {
     console.warn(`[mcbotlogic] ⚠️ Empire ID is deactivated: ${empireId}`);
@@ -151,17 +144,31 @@ function validateMember(discordId) {
 }
 
 // ============================================================
+// FIND OWNER BY MINECRAFT USERNAME
+// Scans members.json for the Discord ID whose minecraftUser
+// matches the given MC username (case-insensitive).
+// Used to route confirmation DMs to the account owner.
+// ============================================================
+
+/**
+ * Find the Discord ID that owns a given Minecraft username.
+ * @param {string} minecraftUser
+ * @returns {string|null} discordId or null if not found
+ */
+function findOwnerByMinecraftUser(minecraftUser) {
+  const members = readJSON(membersPath);
+  const lower = minecraftUser.toLowerCase();
+  for (const [discordId, data] of Object.entries(members)) {
+    if (data?.minecraftUser?.toLowerCase() === lower) return discordId;
+  }
+  return null;
+}
+
+// ============================================================
 // VPS API CLIENT
 // Makes authenticated HTTP requests to the VPS bot server.
 // ============================================================
 
-/**
- * Make an HTTP request to the VPS bot API.
- * @param {string} method     - "GET" | "POST"
- * @param {string} endpoint   - e.g. "/start", "/stop", "/list"
- * @param {object} [body]     - JSON body (for POST requests)
- * @returns {Promise<{ ok: boolean, status: number, data: object }>}
- */
 function vpsRequest(method, endpoint, body = null) {
   return new Promise((resolve) => {
     let vpsUrl, apiKey;
@@ -249,12 +256,31 @@ async function stopAllBotsOnVps() {
   return vpsRequest("POST", "/stopall");
 }
 
+/**
+ * Poll the VPS for a pending Microsoft device code for this user.
+ * Returns { ok: true, pending: true, userCode, verificationUri, expiresAt }
+ * or      { ok: false, pending: false } if no code is waiting.
+ */
+async function getDeviceCodeFromVps(discordId) {
+  return vpsRequest("GET", `/devicecode/${discordId}`);
+}
+
+/**
+ * Tell the VPS to clear the device code for a user (after DMing them).
+ */
+async function clearDeviceCodeOnVps(discordId) {
+  return vpsRequest("DELETE", `/devicecode/${discordId}`);
+}
+
 module.exports = {
   validateMember,
+  findOwnerByMinecraftUser,
   pingVps,
   startBotOnVps,
   stopBotOnVps,
   getBotStatusFromVps,
   listAllBotsOnVps,
   stopAllBotsOnVps,
+  getDeviceCodeFromVps,
+  clearDeviceCodeOnVps,
 };

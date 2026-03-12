@@ -39,9 +39,8 @@ const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 // Confirmation timeout: 3 minutes
 const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
 
-// How long to poll for a Microsoft device code after bot start (ms)
-const DEVICE_CODE_POLL_DURATION_MS = 30 * 1000;
-const DEVICE_CODE_POLL_INTERVAL_MS = 2000;
+// How long to poll for bot start outcome (device code + online status)
+const BOT_START_POLL_DURATION_MS = 60000;
 
 // Supported Minecraft versions
 const SUPPORTED_VERSIONS = [
@@ -140,70 +139,129 @@ function buildConfirmRow(userId, disabled = false) {
 }
 
 // ============================================================
-// DEVICE CODE POLLING
-// After /start succeeds, the VPS may need Microsoft auth.
-// Poll GET /devicecode/:discordId for up to 30s.
-// If a code appears, DM it to the user and clear it from the VPS.
+// BOT START OUTCOME POLLING
+// After /start succeeds, runs async for up to 60s to:
+//   1. Check for a Microsoft device code and DM it if found
+//   2. Poll /status/:discordId until the bot is "online" or "error"
+//   3. Update the DM embed with the final result
 // ============================================================
 
-async function pollAndSendDeviceCode(discordId, ownerUser, dmChannel) {
-  const deadline = Date.now() + DEVICE_CODE_POLL_DURATION_MS;
-  console.log(`[/mcbot] 🔐 Polling for device code for ${discordId}...`);
+async function pollBotStartOutcome(discordId, ownerUser, dmChannel, confirmMessage) {
+  const deadline = Date.now() + 60000; // 60s total window
+  let deviceCodeSent = false;
+
+  console.log(`[/mcbot] 🔄 Polling start outcome for ${discordId}...`);
 
   while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, DEVICE_CODE_POLL_INTERVAL_MS));
+    await new Promise(resolve => setTimeout(resolve, 2500));
 
-    const res = await getDeviceCodeFromVps(discordId).catch(() => null);
-    if (!res || !res.ok || !res.data?.pending) continue;
+    // ── Check for device code (only need to do this once) ────
+    if (!deviceCodeSent) {
+      const codeRes = await getDeviceCodeFromVps(discordId).catch(() => null);
+      if (codeRes?.ok && codeRes.data?.pending) {
+        const { userCode, verificationUri, expiresAt } = codeRes.data;
+        const expiresTimestamp = expiresAt
+          ? `<t:${Math.floor(expiresAt / 1000)}:R>`
+          : "in ~15 minutes";
 
-    const { userCode, verificationUri, expiresAt } = res.data;
-    const expiresTimestamp = expiresAt
-      ? `<t:${Math.floor(expiresAt / 1000)}:R>`
-      : "in ~15 minutes";
+        console.log(`[/mcbot] 🔐 Device code found for ${discordId}: ${userCode}`);
+        deviceCodeSent = true;
 
-    console.log(`[/mcbot] 🔐 Device code found for ${discordId}: ${userCode}`);
+        try {
+          await dmChannel.send({
+            embeds: [new EmbedBuilder()
+              .setTitle("🔐 Microsoft Login Required")
+              .setDescription(
+                "Your Minecraft account needs to be authenticated with Microsoft before the bot can join.\n\n" +
+                "**This is a one-time setup.** After logging in, your token is cached and future starts are instant."
+              )
+              .addFields(
+                { name: "1️⃣ Go to this URL", value: `**[${verificationUri}](${verificationUri})**`, inline: false },
+                { name: "2️⃣ Enter this code", value: `\`\`\`${userCode}\`\`\``, inline: false },
+                { name: "⏰ Expires", value: expiresTimestamp, inline: true },
+              )
+              .setColor(0x2196f3)
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager • Microsoft Auth" })
+              .setTimestamp()],
+          });
+        } catch (err) {
+          console.error(`[/mcbot] ❌ Could not DM device code to ${discordId}:`, err.message);
+        }
 
-    // DM the user
-    try {
-      await dmChannel.send({
-        embeds: [new EmbedBuilder()
-          .setTitle("🔐 Microsoft Login Required")
-          .setDescription(
-            "Your Minecraft account needs to be authenticated with Microsoft before the bot can join the server.\n\n" +
-            "**This is a one-time setup.** After you log in, your token will be cached and future bot starts will be instant."
-          )
-          .addFields(
-            {
-              name: "1️⃣ Go to this URL",
-              value: `**[${verificationUri}](${verificationUri})**`,
-              inline: false,
-            },
-            {
-              name: "2️⃣ Enter this code",
-              value: `\`\`\`${userCode}\`\`\``,
-              inline: false,
-            },
-            {
-              name: "⏰ Expires",
-              value: expiresTimestamp,
-              inline: true,
-            },
-          )
-          .setColor(0x2196f3)
-          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager • Microsoft Auth" })
-          .setTimestamp()],
-      });
-    } catch (err) {
-      console.error(`[/mcbot] ❌ Could not DM device code to ${discordId}:`, err.message);
+        await clearDeviceCodeOnVps(discordId).catch(() => {});
+      }
     }
 
-    // Clear from VPS so it doesn't get re-sent
-    await clearDeviceCodeOnVps(discordId).catch(() => {});
-    return;
+    // ── Poll bot status ──────────────────────────────────────
+    const statusRes = await getBotStatusFromVps(discordId).catch(() => null);
+    if (!statusRes?.ok) continue;
+
+    const bot = statusRes.data?.bot;
+    if (!bot) continue;
+
+    // ── Bot is online ────────────────────────────────────────
+    if (bot.status === "online") {
+      console.log(`[/mcbot] ✅ Bot online: ${discordId}`);
+      try {
+        await confirmMessage.edit({
+          embeds: [new EmbedBuilder()
+            .setTitle("🟢 Bot Online")
+            .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
+            .addFields(
+              { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: true },
+              { name: "📦 Version", value: `\`${bot.version}\``, inline: true },
+            )
+            .setColor(0x00c853)
+            .setFooter({ text: "Use /mcbot stop to disconnect • Yazanaki Empire" })
+            .setTimestamp()],
+          components: [],
+        });
+      } catch {}
+      return;
+    }
+
+    // ── Bot errored / timed out ──────────────────────────────
+    if (bot.status === "error") {
+      const errMsg = bot.spawnError || "Unknown connection error.";
+      console.warn(`[/mcbot] ❌ Bot failed for ${discordId}: ${errMsg}`);
+      try {
+        await confirmMessage.edit({
+          embeds: [new EmbedBuilder()
+            .setTitle("❌ Bot Failed to Connect")
+            .setDescription(
+              `Your bot could not connect to the server.\n\n` +
+              `**Reason:** ${errMsg}\n\n` +
+              `Common causes:\n` +
+              `• Wrong Minecraft version selected\n` +
+              `• Server is offline or unreachable\n` +
+              `• Server requires a specific version`
+            )
+            .setColor(0xf44336)
+            .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+            .setTimestamp()],
+          components: [],
+        });
+      } catch {}
+      return;
+    }
   }
 
-  // No code appeared within the window — token was already cached, no auth needed
-  console.log(`[/mcbot] ✅ No device code appeared for ${discordId} — cached token used`);
+  // 60s passed — bot still connecting (unusual, but possible on slow servers)
+  console.warn(`[/mcbot] ⏰ Outcome poll timed out for ${discordId} — bot may still be connecting`);
+  try {
+    await confirmMessage.edit({
+      embeds: [new EmbedBuilder()
+        .setTitle("⏳ Still Connecting...")
+        .setDescription(
+          "The bot is taking longer than expected to connect.\n" +
+          "Use `/mcbot status` to check if it comes online, or `/mcbot stop` to cancel."
+        )
+        .setColor(0xff9800)
+        .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+        .setTimestamp()],
+      components: [],
+    });
+  } catch {}
 }
 
 // ============================================================
@@ -745,11 +803,12 @@ module.exports = {
     } catch {}
 
     // ── Poll for Microsoft device code (needed on first run / expired token) ──
-    // Run async so we don't block — the user will get a separate DM if auth is needed
+    // Also polls bot status to update the DM embed when the bot goes online or fails.
+    // Run async so we don't block the button handler.
     const dmChannelForCode = pending.dmChannel || await user.createDM().catch(() => null);
     if (dmChannelForCode) {
-      pollAndSendDeviceCode(targetUserId, user, dmChannelForCode).catch(err => {
-        console.error(`[/mcbot] ❌ Device code poll error for ${targetUserId}:`, err);
+      pollBotStartOutcome(targetUserId, user, dmChannelForCode, interaction.message).catch(err => {
+        console.error(`[/mcbot] ❌ Start outcome poll error for ${targetUserId}:`, err);
       });
     }
 

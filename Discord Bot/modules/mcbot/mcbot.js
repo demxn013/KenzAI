@@ -45,8 +45,7 @@ const BOT_START_POLL_DURATION_MS = 60000;
 
 // Supported Minecraft versions
 const SUPPORTED_VERSIONS = [
-  "1.21.4", "1.21.1", "1.21", "1.20.4", "1.20.2", "1.20.1",
-  "1.19.4", "1.19.2", "1.18.2", "1.17.1", "1.16.5", "1.12.2",
+  "1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.21", "1.20",
 ];
 
 // Pending DM confirmations: userId -> confirmation data
@@ -287,7 +286,7 @@ module.exports = {
         .addStringOption((opt) =>
           opt
             .setName("version")
-            .setDescription("Minecraft version (default: 1.20.1)")
+            .setDescription("Minecraft version (default: 1.21.11)")
             .setRequired(false)
             .addChoices(
               ...SUPPORTED_VERSIONS.map((v) => ({ name: v, value: v }))

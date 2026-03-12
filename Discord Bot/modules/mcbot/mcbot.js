@@ -22,6 +22,7 @@ const {
 
 const {
   validateMember,
+  pingVps,
   startBotOnVps,
   stopBotOnVps,
   getBotStatusFromVps,
@@ -314,6 +315,12 @@ module.exports = {
 
     .addSubcommand((sub) =>
       sub
+        .setName("ping")
+        .setDescription("[Admin] Ping the VPS bot server for health checks")
+    )
+
+    .addSubcommand((sub) =>
+      sub
         .setName("stopall")
         .setDescription("[Admin] Emergency stop — kill ALL active bots")
     ),
@@ -343,7 +350,7 @@ module.exports = {
     // ============================================================
     // ADMIN SUBCOMMANDS
     // ============================================================
-    if (sub === "list" || sub === "stopall") {
+    if (sub === "list" || sub === "stopall" || sub === "ping") {
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
         return interaction.reply({
           embeds: [errorEmbed(
@@ -355,6 +362,35 @@ module.exports = {
       }
 
       await interaction.deferReply({ ephemeral: true });
+
+      if (sub === "ping") {
+        const response = await pingVps();
+
+        if (!response.ok) {
+          return interaction.editReply({
+            embeds: [errorEmbed(
+              "VPS Unreachable",
+              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
+            )],
+          });
+        }
+
+        const body = response.data || {};
+        return interaction.editReply({
+          embeds: [successEmbed(
+            "VPS Online",
+            [
+              "Successfully reached the VPS bot server.",
+              body.activeBots !== undefined
+                ? `Active bots reported: \`${body.activeBots}\``
+                : null,
+              body.timestamp
+                ? `Server time: <t:${Math.floor(new Date(body.timestamp).getTime() / 1000)}:R>`
+                : null,
+            ].filter(Boolean).join("\n")
+          )],
+        });
+      }
 
       if (sub === "list") {
         const response = await listAllBotsOnVps();

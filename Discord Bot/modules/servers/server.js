@@ -20,6 +20,8 @@ const {
 const serversPath = path.join(__dirname, "../data/servers.json");
 const serverLogosDir = path.join(__dirname, "../images/serverlogos");
 
+const BUTTON_TIMEOUT_MS = 10 * 60 * 1000;
+
 function readServers() {
   try {
     if (!fs.existsSync(serversPath)) return {};
@@ -128,12 +130,27 @@ module.exports = {
     }
     if (row.components.length) rows.push(row);
     console.log(`[/server] 📤 Sending server list embed with ${row.components.length} button(s)`);
-    await interaction.reply({
+    const message = await interaction.reply({
       embeds: [embed],
       components: rows.length ? rows : [],
-      ephemeral: false
+      ephemeral: false,
+      fetchReply: true
     });
     console.log("[/server] ✅ Reply sent");
+
+    if (rows.length) {
+      setTimeout(async () => {
+        try {
+          const disabledRow = new ActionRowBuilder();
+          for (const btn of row.components) {
+            disabledRow.addComponents(ButtonBuilder.from(btn).setDisabled(true));
+          }
+          await message.edit({ components: [disabledRow] });
+        } catch {
+          // ignore edit failures (message deleted, etc.)
+        }
+      }, BUTTON_TIMEOUT_MS);
+    }
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
   },
 
@@ -145,6 +162,15 @@ module.exports = {
     );
 
     try {
+      const messageAge = Date.now() - interaction.message.createdTimestamp;
+      if (messageAge > BUTTON_TIMEOUT_MS) {
+        await interaction.reply({
+          content: "⏰ These buttons have expired. Please run the command again for fresh data.",
+          ephemeral: true
+        }).catch(() => {});
+        return;
+      }
+
       // server_donutsmp -> show clans with DonutSMP team, buttons per clan
       if (id === "server_donutsmp") {
         console.log("[/server buttons] 🌐 Server: DonutSMP selected");

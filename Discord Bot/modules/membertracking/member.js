@@ -315,6 +315,17 @@ module.exports = {
       // Update the MC username in member data if it exists
       if (finalMemberData) {
         finalMemberData.minecraftUser = properMCUsername;
+      } else {
+        // Non-Yazanaki player: build minimal memberData for clearer embed
+        finalMemberData = {
+          minecraftUser: properMCUsername,
+          minecraftVersion: "n/d",
+          JoinedClan: "n/d",
+          JoinDate: "n/d",
+          YazanakiRank: "n/d",
+          EmpireID: "n/d",
+          Status: "Non-member"
+        };
       }
 
       console.log(`[/member view] 📊 Final Member Data:`, {
@@ -359,7 +370,23 @@ module.exports = {
 
       console.log("[/member view] 📤 Sending member embed + DonutSMP button");
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-      return interaction.reply({ embeds: [embed], components: [serverRow] });
+      const message = await interaction.reply({
+        embeds: [embed],
+        components: [serverRow],
+        fetchReply: true
+      });
+
+      setTimeout(async () => {
+        try {
+          const disabledRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(serverRow.components[0]).setDisabled(true)
+          );
+          await message.edit({ components: [disabledRow] });
+        } catch {
+          // message deleted or cannot be edited
+        }
+      }, 10 * 60 * 1000);
+      return message;
     }
   },
 };

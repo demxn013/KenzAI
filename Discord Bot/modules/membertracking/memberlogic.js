@@ -525,6 +525,45 @@ async function migrateAllMemberRoles(client) {
   return { success: successCount, failed: failedCount, skipped: skippedCount };
 }
 
+function addAlternateAccount(discordId, mcName) {
+  if (!discordId || !mcName) return false;
+
+  try {
+    const members = readMembers();
+    const member = members[discordId];
+
+    if (!member) {
+      console.log(
+        `[memberlogic] ℹ️ addAlternateAccount: ${discordId} is not in members.json (skipping alt tracking)`
+      );
+      return false;
+    }
+
+    const existing = Array.isArray(member.alternateAccounts)
+      ? member.alternateAccounts
+      : [];
+
+    const lowerNew = (mcName || "").toString().toLowerCase();
+    if (
+      existing.some(
+        (alt) => (alt || "").toString().toLowerCase() === lowerNew
+      )
+    ) {
+      return true;
+    }
+
+    member.alternateAccounts = [...existing, mcName];
+    members[discordId] = member;
+    return writeMembers(members);
+  } catch (err) {
+    console.error(
+      `[memberlogic] ❌ Failed to add alternate account for ${discordId}:`,
+      err
+    );
+    return false;
+  }
+}
+
 module.exports = {
   readMembers,
   writeMembers,
@@ -538,5 +577,6 @@ module.exports = {
   resolveCommandTarget,
   isUnlinked,
   updateMemberRoles,
-  migrateAllMemberRoles
+  migrateAllMemberRoles,
+  addAlternateAccount,
 };

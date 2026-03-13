@@ -508,9 +508,10 @@ module.exports = {
       );
 
       const components = [];
+      let serverRow = null;
       if (clan.donutsmpTeamName) {
         console.log(`[/clan view] 🟠 Adding DonutSMP button for clan ${clan.abbr} (guild ${guildId})`);
-        const serverRow = new ActionRowBuilder().addComponents(
+        serverRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId(`clan_server_donutsmp_${guildId}`)
             .setLabel("DonutSMP")
@@ -522,11 +523,37 @@ module.exports = {
       if (useBannerPath || flagExists) {
         const attachment = new AttachmentBuilder(useBannerPath ? bannerPath : flagPath, { name: flagFileName });
         console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (with flag, components: ${components.length})`);
-        return interaction.editReply({ embeds: [embed], files: [attachment], components });
+        const message = await interaction.editReply({ embeds: [embed], files: [attachment], components });
+        if (serverRow) {
+          setTimeout(async () => {
+            try {
+              const disabledRow = new ActionRowBuilder().addComponents(
+                ButtonBuilder.from(serverRow.components[0]).setDisabled(true)
+              );
+              await message.edit({ components: [disabledRow] });
+            } catch {
+              // ignore edit errors
+            }
+          }, 10 * 60 * 1000);
+        }
+        return message;
       }
 
       console.log(`[/clan view] ✅ Sending clan embed for ${clan.abbr} (components: ${components.length})`);
-      return interaction.editReply({ embeds: [embed], components });
+      const message = await interaction.editReply({ embeds: [embed], components });
+      if (serverRow) {
+        setTimeout(async () => {
+          try {
+            const disabledRow = new ActionRowBuilder().addComponents(
+              ButtonBuilder.from(serverRow.components[0]).setDisabled(true)
+            );
+            await message.edit({ components: [disabledRow] });
+          } catch {
+            // ignore edit errors
+          }
+        }, 10 * 60 * 1000);
+      }
+      return message;
     }
 
     // -------------------------------------------------------------------------

@@ -43,6 +43,10 @@ const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
 // How long to poll for bot start outcome (device code + online status)
 const BOT_START_POLL_DURATION_MS = 60000;
 
+// VPS defaults the version when omitted
+const VPS_DEFAULT_VERSION = "1.21.8";
+const AUTO_VERSION = "auto";
+
 // Supported Minecraft versions
 const SUPPORTED_VERSIONS = [
   "1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.21", "1.20",
@@ -81,6 +85,36 @@ function getStatusEmoji(status) {
 function getStatusColor(status) {
   const map = { online: 0x00c853, reconnecting: 0xffd600, connecting: 0x2196f3, error: 0xf44336 };
   return map[status] ?? 0x000000;
+}
+
+function isDonutSmpAddress(serverAddress) {
+  return typeof serverAddress === "string" && serverAddress.toLowerCase().includes("donutsmp.net");
+}
+
+function formatRequestedVersion(version) {
+  if (!version) return `default (${VPS_DEFAULT_VERSION})`;
+  if (version === AUTO_VERSION) return "auto";
+  return version;
+}
+
+function buildStatusHints(bot) {
+  const hints = [];
+  const cat = bot?.errorCategory;
+
+  if (cat === "auth_error") {
+    hints.push("Authentication required. Start again to receive a Microsoft device-code login DM.");
+  }
+
+  if (cat === "server_rejected" || cat === "protocol_mismatch") {
+    hints.push("Server likely rejected the client or there's a protocol mismatch.");
+    if (isDonutSmpAddress(`${bot?.serverHost ?? ""}`)) {
+      hints.push("If this is DonutSMP, try starting with version `auto`.");
+    } else {
+      hints.push("Try a different server address or specify the correct Minecraft version.");
+    }
+  }
+
+  return hints;
 }
 
 // ============================================================
@@ -286,9 +320,10 @@ module.exports = {
         .addStringOption((opt) =>
           opt
             .setName("version")
-            .setDescription("Minecraft version (default: 1.21.11)")
+            .setDescription(`Minecraft version (omit to use VPS default: ${VPS_DEFAULT_VERSION}; use "auto" for DonutSMP)`)
             .setRequired(false)
             .addChoices(
+              { name: "auto (DonutSMP)", value: AUTO_VERSION },
               ...SUPPORTED_VERSIONS.map((v) => ({ name: v, value: v }))
             )
         )
@@ -474,7 +509,10 @@ module.exports = {
     // ── start ─────────────────────────────────────────────────
     if (sub === "start") {
       const serverAddress = interaction.options.getString("server").trim();
-      const version = interaction.options.getString("version") || "1.20.1";
+      const versionOpt = interaction.options.getString("version");
+      const inferredAuto = !versionOpt && isDonutSmpAddress(serverAddress);
+      const versionForPayload = inferredAuto ? AUTO_VERSION : (versionOpt || undefined);
+      const versionForDisplay = formatRequestedVersion(versionForPayload);
 
       if (!serverAddress || serverAddress.length < 3) {
         return interaction.editReply({
@@ -494,7 +532,7 @@ module.exports = {
         });
       }
 
-      console.log(`[/mcbot] 🤖 Requesting confirmation: ${minecraftUser} → ${serverAddress} (v${version})`);
+      console.log(`[/mcbot] 🤖 Requesting confirmation: ${minecraftUser} → ${serverAddress} (v${versionForDisplay})`);
 
       let dmMessage;
       let dmChannel;
@@ -510,7 +548,7 @@ module.exports = {
             { name: "🎮 Minecraft User", value: `\`${minecraftUser}\``, inline: true },
             { name: "🆔 Empire ID", value: `\`${empireId}\``, inline: true },
             { name: "🌐 Target Server", value: `\`${serverAddress}\``, inline: false },
-            { name: "📦 Version", value: `\`${version}\``, inline: true },
+            { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
             { name: "⏰ Expires", value: `<t:${Math.floor((Date.now() + CONFIRMATION_TIMEOUT_MS) / 1000)}:R>`, inline: true },
           )
           .setColor(0xffd600)
@@ -543,7 +581,7 @@ module.exports = {
               .setDescription("Your bot start request has **expired** after 3 minutes and was automatically rejected.")
               .addFields(
                 { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-                { name: "📦 Version", value: `\`${version}\``, inline: true },
+                { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
               )
               .setColor(0x9e9e9e)
               .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -566,7 +604,7 @@ module.exports = {
         userId,
         minecraftUser,
         serverAddress,
-        version,
+        version: versionForPayload,
         empireId,
         interaction,
         dmMessage,
@@ -583,7 +621,7 @@ module.exports = {
           )
           .addFields(
             { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-            { name: "📦 Version", value: `\`${version}\``, inline: true },
+            { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
           )
           .setColor(0xffd600)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -663,6 +701,13 @@ module.exports = {
 
       const bot = response.data.bot;
       const uptime = bot.uptimeSeconds ? formatUptime(bot.uptimeSeconds) : "Unknown";
+      const hints = buildStatusHints(bot);
+      const diagLines = [
+        bot?.errorCategory ? `**Category:** \`${bot.errorCategory}\`` : null,
+        bot?.errorCode ? `**Code:** \`${bot.errorCode}\`` : null,
+        bot?.lastKickReason ? `**Last kick:** ${bot.lastKickReason}` : null,
+        bot?.lastError ? `**Last error:** ${bot.lastError}` : null,
+      ].filter(Boolean);
 
       return interaction.editReply({
         embeds: [new EmbedBuilder()
@@ -673,6 +718,12 @@ module.exports = {
             { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: true },
             { name: "🎮 Version", value: `\`${bot.version}\``, inline: true },
             { name: "📅 Started", value: `<t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`, inline: true },
+            ...(hints.length
+              ? [{ name: "💡 Suggestions", value: hints.map((h) => `• ${h}`).join("\n"), inline: false }]
+              : []),
+            ...(diagLines.length
+              ? [{ name: "🧾 Details", value: diagLines.join("\n"), inline: false }]
+              : []),
           )
           .setColor(getStatusColor(bot.status))
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -739,7 +790,7 @@ module.exports = {
             .setDescription("You rejected the bot start request.")
             .addFields(
               { name: "🌐 Server", value: `\`${pending.serverAddress}\``, inline: true },
-              { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
+              { name: "📦 Version", value: `\`${formatRequestedVersion(pending.version)}\``, inline: true },
             )
             .setColor(0xf44336)
             .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -759,7 +810,7 @@ module.exports = {
     }
 
     // ── CONFIRMED ─────────────────────────────────────────────
-    console.log(`[/mcbot] ✅ Confirmed: ${pending.minecraftUser} → ${pending.serverAddress} (v${pending.version})`);
+    console.log(`[/mcbot] ✅ Confirmed: ${pending.minecraftUser} → ${pending.serverAddress} (v${formatRequestedVersion(pending.version)})`);
 
     const response = await startBotOnVps(
       targetUserId,
@@ -818,7 +869,7 @@ module.exports = {
           )
           .addFields(
             { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },
-            { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
+            { name: "📦 Version", value: `\`${formatRequestedVersion(pending.version)}\``, inline: true },
           )
           .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })

@@ -3,7 +3,7 @@
 // on the empire VPS from Discord.
 //
 // Subcommands:
-//   start  <server> [version]  — Start your MC bot on a server (requires DM confirmation)
+//   start  <server> [account]  — Start your MC bot on a server (requires DM confirmation)
 //   stop                       — Stop your running bot
 //   status                     — Check your bot's current status
 //   list                       — [Admin] List all active bots
@@ -33,6 +33,7 @@ const {
 } = require("./mcbotlogic");
 
 const { readClans } = require("../clantracking/clanlogic");
+const { getAllAccountsForDiscord } = require("../linking/linklogic");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -43,14 +44,20 @@ const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
 // How long to poll for bot start outcome (device code + online status)
 const BOT_START_POLL_DURATION_MS = 60000;
 
-// VPS defaults the version when omitted
-const VPS_DEFAULT_VERSION = "1.21.8";
-const AUTO_VERSION = "auto";
+// ============================================================
+// SERVER → VERSION MAP
+// Maps partial server address strings (lowercase) to the
+// Minecraft version that should be used for that server.
+// Add entries here whenever a new server is registered.
+// First matching key wins; falls back to DEFAULT_VERSION.
+// ============================================================
+const SERVER_VERSION_MAP = {
+  "donutsmp.net": "auto",
+  // "hypixel.net": "1.21.1",
+  // "example.net":  "1.20",
+};
 
-// Supported Minecraft versions
-const SUPPORTED_VERSIONS = [
-  "1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.21", "1.20",
-];
+const DEFAULT_VERSION = "1.21.8";
 
 // Pending DM confirmations: userId -> confirmation data
 const pendingConfirmations = new Map();
@@ -87,14 +94,18 @@ function getStatusColor(status) {
   return map[status] ?? 0x000000;
 }
 
-function isDonutSmpAddress(serverAddress) {
-  return typeof serverAddress === "string" && serverAddress.toLowerCase().includes("donutsmp.net");
-}
-
-function formatRequestedVersion(version) {
-  if (!version) return `default (${VPS_DEFAULT_VERSION})`;
-  if (version === AUTO_VERSION) return "auto";
-  return version;
+/**
+ * Resolves the correct Minecraft version for a given server address.
+ * Checks SERVER_VERSION_MAP keys (case-insensitive substring match).
+ * Falls back to DEFAULT_VERSION if no match is found.
+ */
+function getVersionForServer(serverAddress) {
+  if (!serverAddress) return DEFAULT_VERSION;
+  const lower = serverAddress.toLowerCase();
+  for (const [pattern, version] of Object.entries(SERVER_VERSION_MAP)) {
+    if (lower.includes(pattern)) return version;
+  }
+  return DEFAULT_VERSION;
 }
 
 function buildStatusHints(bot) {
@@ -106,12 +117,8 @@ function buildStatusHints(bot) {
   }
 
   if (cat === "server_rejected" || cat === "protocol_mismatch") {
-    hints.push("Server likely rejected the client or there's a protocol mismatch.");
-    if (isDonutSmpAddress(`${bot?.serverHost ?? ""}`)) {
-      hints.push("If this is DonutSMP, try starting with version `auto`.");
-    } else {
-      hints.push("Try a different server address or specify the correct Minecraft version.");
-    }
+    hints.push("Server rejected the client or there's a protocol mismatch.");
+    hints.push("Contact an admin — the server version mapping may need to be updated.");
   }
 
   return hints;
@@ -177,106 +184,99 @@ function buildConfirmRow(userId, disabled = false) {
 // After /start succeeds, runs async for up to 60s to:
 //   1. Check for a Microsoft device code and DM it if found
 //   2. Poll /status/:discordId until the bot is "online" or "error"
-//   3. Update the DM embed with the final result
+//   3. Update the DM confirmation embed with final outcome
 // ============================================================
 
-async function pollBotStartOutcome(discordId, ownerUser, dmChannel, confirmMessage) {
-  const deadline = Date.now() + 60000; // 60s total window
-  let deviceCodeSent = false;
-
-  console.log(`[/mcbot] 🔄 Polling start outcome for ${discordId}...`);
+async function pollBotStartOutcome(discordId, user, dmChannel, confirmMessage) {
+  const deadline = Date.now() + BOT_START_POLL_DURATION_MS;
+  let deviceCodeDmSent = false;
 
   while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    await new Promise((r) => setTimeout(r, 3000));
 
-    // ── Check for device code (only need to do this once) ────
-    if (!deviceCodeSent) {
-      const codeRes = await getDeviceCodeFromVps(discordId).catch(() => null);
-      if (codeRes?.ok && codeRes.data?.pending) {
-        const { userCode, verificationUri, expiresAt } = codeRes.data;
-        const expiresTimestamp = expiresAt
-          ? `<t:${Math.floor(expiresAt / 1000)}:R>`
-          : "in ~15 minutes";
-
-        console.log(`[/mcbot] 🔐 Device code found for ${discordId}: ${userCode}`);
-        deviceCodeSent = true;
-
-        try {
+    // ── Check for Microsoft device code ──────────────────────
+    if (!deviceCodeDmSent) {
+      try {
+        const codeRes = await getDeviceCodeFromVps(discordId);
+        if (codeRes.ok && codeRes.data?.pending) {
+          const { userCode, verificationUri } = codeRes.data;
           await dmChannel.send({
             embeds: [new EmbedBuilder()
               .setTitle("🔐 Microsoft Login Required")
               .setDescription(
-                "Your Minecraft account needs to be authenticated with Microsoft before the bot can join.\n\n" +
-                "**This is a one-time setup.** After logging in, your token is cached and future starts are instant."
-              )
-              .addFields(
-                { name: "1️⃣ Go to this URL", value: `**[${verificationUri}](${verificationUri})**`, inline: false },
-                { name: "2️⃣ Enter this code", value: `\`\`\`${userCode}\`\`\``, inline: false },
-                { name: "⏰ Expires", value: expiresTimestamp, inline: true },
+                "Your Minecraft bot needs to authenticate with Microsoft.\n\n" +
+                `**1.** Go to: **${verificationUri}**\n` +
+                `**2.** Enter code: \`${userCode}\`\n\n` +
+                "The bot will connect automatically once you log in."
               )
               .setColor(0x2196f3)
-              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager • Microsoft Auth" })
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
               .setTimestamp()],
           });
-        } catch (err) {
-          console.error(`[/mcbot] ❌ Could not DM device code to ${discordId}:`, err.message);
+          await clearDeviceCodeOnVps(discordId);
+          deviceCodeDmSent = true;
         }
-
-        await clearDeviceCodeOnVps(discordId).catch(() => {});
+      } catch (err) {
+        console.error(`[/mcbot] ❌ Device code poll error for ${discordId}:`, err.message);
       }
     }
 
-    // ── Poll bot status ──────────────────────────────────────
-    const statusRes = await getBotStatusFromVps(discordId).catch(() => null);
-    if (!statusRes?.ok) continue;
+    // ── Poll bot status ────────────────────────────────────────
+    try {
+      const statusRes = await getBotStatusFromVps(discordId);
+      if (!statusRes.ok) continue;
 
-    const bot = statusRes.data?.bot;
-    if (!bot) continue;
+      const bot = statusRes.data?.bot;
+      if (!bot) continue;
 
-    // ── Bot is online ────────────────────────────────────────
-    if (bot.status === "online") {
-      console.log(`[/mcbot] ✅ Bot online: ${discordId}`);
-      try {
-        await confirmMessage.edit({
-          embeds: [new EmbedBuilder()
-            .setTitle("🟢 Bot Online")
-            .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
-            .addFields(
-              { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: true },
-              { name: "📦 Version", value: `\`${bot.version}\``, inline: true },
-            )
-            .setColor(0x00c853)
-            .setFooter({ text: "Use /mcbot stop to disconnect • Yazanaki Empire" })
-            .setTimestamp()],
-          components: [],
-        });
-      } catch {}
-      return;
-    }
+      const status = bot.status;
 
-    // ── Bot errored / timed out ──────────────────────────────
-    if (bot.status === "error") {
-      const errMsg = bot.spawnError || "Unknown connection error.";
-      console.warn(`[/mcbot] ❌ Bot failed for ${discordId}: ${errMsg}`);
-      try {
-        await confirmMessage.edit({
-          embeds: [new EmbedBuilder()
-            .setTitle("❌ Bot Failed to Connect")
-            .setDescription(
-              `Your bot could not connect to the server.\n\n` +
-              `**Reason:** ${errMsg}\n\n` +
-              `Common causes:\n` +
-              `• Wrong Minecraft version selected\n` +
-              `• Server is offline or unreachable\n` +
-              `• Server requires a specific version`
-            )
-            .setColor(0xf44336)
-            .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-            .setTimestamp()],
-          components: [],
-        });
-      } catch {}
-      return;
+      if (status === "online") {
+        console.log(`[/mcbot] 🟢 Bot online for ${discordId}`);
+        try {
+          await confirmMessage.edit({
+            embeds: [new EmbedBuilder()
+              .setTitle("🟢 Bot Online")
+              .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
+              .addFields(
+                { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: true },
+                { name: "📦 Version", value: `\`${bot.version}\``, inline: true },
+                { name: "⏱️ Uptime", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: true },
+              )
+              .setColor(0x00c853)
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+              .setTimestamp()],
+            components: [],
+          });
+        } catch {}
+        return;
+      }
+
+      if (status === "error") {
+        const errMsg = bot.errorMessage || "Unknown error";
+        console.warn(`[/mcbot] ❌ Bot failed for ${discordId}: ${errMsg}`);
+        try {
+          await confirmMessage.edit({
+            embeds: [new EmbedBuilder()
+              .setTitle("❌ Bot Failed to Connect")
+              .setDescription(
+                `Your bot could not connect to the server.\n\n` +
+                `**Reason:** ${errMsg}\n\n` +
+                `Common causes:\n` +
+                `• Server is offline or unreachable\n` +
+                `• Server requires authentication or whitelisting\n` +
+                `• Contact an admin if the issue persists`
+              )
+              .setColor(0xf44336)
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+              .setTimestamp()],
+            components: [],
+          });
+        } catch {}
+        return;
+      }
+    } catch (err) {
+      console.error(`[/mcbot] ❌ Status poll error for ${discordId}:`, err.message);
     }
   }
 
@@ -319,13 +319,10 @@ module.exports = {
         )
         .addStringOption((opt) =>
           opt
-            .setName("version")
-            .setDescription(`Minecraft version (omit to use VPS default: ${VPS_DEFAULT_VERSION}; use "auto" for DonutSMP)`)
+            .setName("account")
+            .setDescription("Minecraft account to use (defaults to your main account)")
             .setRequired(false)
-            .addChoices(
-              { name: "auto (DonutSMP)", value: AUTO_VERSION },
-              ...SUPPORTED_VERSIONS.map((v) => ({ name: v, value: v }))
-            )
+            .setAutocomplete(true)
         )
     )
 
@@ -358,6 +355,35 @@ module.exports = {
         .setName("stopall")
         .setDescription("[Admin] Emergency stop — kill ALL active bots")
     ),
+
+  // ============================================================
+  // AUTOCOMPLETE
+  // Provides the account dropdown list for /mcbot start account:
+  // ============================================================
+  async autocomplete(interaction) {
+    const focused = interaction.options.getFocused();
+    const userId = interaction.user.id;
+
+    let choices = [];
+    try {
+      const { main, alternateAccounts } = getAllAccountsForDiscord(userId);
+      if (main) {
+        choices.push({ name: `${main} (main)`, value: main });
+      }
+      for (const alt of alternateAccounts) {
+        choices.push({ name: `${alt} (alt)`, value: alt });
+      }
+    } catch (err) {
+      console.error(`[/mcbot autocomplete] ❌ Error fetching accounts for ${userId}:`, err.message);
+    }
+
+    // Filter by what the user has typed so far (case-insensitive)
+    const filtered = choices.filter((c) =>
+      c.name.toLowerCase().includes(focused.toLowerCase())
+    );
+
+    await interaction.respond(filtered.slice(0, 25));
+  },
 
   // ============================================================
   // EXECUTE
@@ -503,16 +529,13 @@ module.exports = {
       });
     }
 
-    const { minecraftUser, empireId } = validation;
-    console.log(`[/mcbot] ✅ Member validated: ${minecraftUser} (${empireId})`);
+    const { minecraftUser: mainMinecraftUser, empireId } = validation;
+    console.log(`[/mcbot] ✅ Member validated: ${mainMinecraftUser} (${empireId})`);
 
     // ── start ─────────────────────────────────────────────────
     if (sub === "start") {
       const serverAddress = interaction.options.getString("server").trim();
-      const versionOpt = interaction.options.getString("version");
-      const inferredAuto = !versionOpt && isDonutSmpAddress(serverAddress);
-      const versionForPayload = inferredAuto ? AUTO_VERSION : (versionOpt || undefined);
-      const versionForDisplay = formatRequestedVersion(versionForPayload);
+      const accountOpt = interaction.options.getString("account");
 
       if (!serverAddress || serverAddress.length < 3) {
         return interaction.editReply({
@@ -521,6 +544,29 @@ module.exports = {
             "Please provide a valid server address.\nExample: `play.example.net` or `123.45.67.89:25565`"
           )],
         });
+      }
+
+      // ── Resolve version from server address map ──────────────
+      const resolvedVersion = getVersionForServer(serverAddress);
+
+      // ── Resolve Minecraft account to use ────────────────────
+      let chosenAccount = mainMinecraftUser;
+      if (accountOpt) {
+        // Validate the chosen account belongs to this user
+        const { main, alternateAccounts } = getAllAccountsForDiscord(userId);
+        const allAccounts = [main, ...alternateAccounts].filter(Boolean);
+        const match = allAccounts.find(
+          (a) => a.toLowerCase() === accountOpt.toLowerCase()
+        );
+        if (!match) {
+          return interaction.editReply({
+            embeds: [errorEmbed(
+              "Account Not Found",
+              `\`${accountOpt}\` is not linked to your Discord account.\nUse \`/link alt <username>\` to add alternate accounts.`
+            )],
+          });
+        }
+        chosenAccount = match;
       }
 
       if (pendingConfirmations.has(userId)) {
@@ -532,7 +578,7 @@ module.exports = {
         });
       }
 
-      console.log(`[/mcbot] 🤖 Requesting confirmation: ${minecraftUser} → ${serverAddress} (v${versionForDisplay})`);
+      console.log(`[/mcbot] 🤖 Requesting confirmation: ${chosenAccount} → ${serverAddress} (v${resolvedVersion})`);
 
       let dmMessage;
       let dmChannel;
@@ -545,10 +591,10 @@ module.exports = {
             "Please confirm or reject this request within **3 minutes**."
           )
           .addFields(
-            { name: "🎮 Minecraft User", value: `\`${minecraftUser}\``, inline: true },
+            { name: "🎮 Minecraft User", value: `\`${chosenAccount}\``, inline: true },
             { name: "🆔 Empire ID", value: `\`${empireId}\``, inline: true },
             { name: "🌐 Target Server", value: `\`${serverAddress}\``, inline: false },
-            { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
+            { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
             { name: "⏰ Expires", value: `<t:${Math.floor((Date.now() + CONFIRMATION_TIMEOUT_MS) / 1000)}:R>`, inline: true },
           )
           .setColor(0xffd600)
@@ -572,7 +618,7 @@ module.exports = {
       const timeoutId = setTimeout(async () => {
         if (!pendingConfirmations.has(userId)) return;
         pendingConfirmations.delete(userId);
-        console.log(`[/mcbot] ⏰ Confirmation timed out for ${minecraftUser}`);
+        console.log(`[/mcbot] ⏰ Confirmation timed out for ${chosenAccount}`);
 
         try {
           await dmMessage.edit({
@@ -581,7 +627,7 @@ module.exports = {
               .setDescription("Your bot start request has **expired** after 3 minutes and was automatically rejected.")
               .addFields(
                 { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-                { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
+                { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
               )
               .setColor(0x9e9e9e)
               .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -602,9 +648,9 @@ module.exports = {
 
       pendingConfirmations.set(userId, {
         userId,
-        minecraftUser,
+        minecraftUser: chosenAccount,
         serverAddress,
-        version: versionForPayload,
+        version: resolvedVersion,
         empireId,
         interaction,
         dmMessage,
@@ -621,7 +667,7 @@ module.exports = {
           )
           .addFields(
             { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-            { name: "📦 Version", value: `\`${versionForDisplay}\``, inline: true },
+            { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
           )
           .setColor(0xffd600)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -631,7 +677,7 @@ module.exports = {
 
     // ── stop ──────────────────────────────────────────────────
     if (sub === "stop") {
-      console.log(`[/mcbot] 🛑 Stopping bot for: ${minecraftUser}`);
+      console.log(`[/mcbot] 🛑 Stopping bot for: ${mainMinecraftUser}`);
 
       const response = await stopBotOnVps(userId);
 
@@ -644,14 +690,6 @@ module.exports = {
             )],
           });
         }
-        if (response.status === 0) {
-          return interaction.editReply({
-            embeds: [errorEmbed(
-              "VPS Unreachable",
-              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Connection refused"}\`\`\``
-            )],
-          });
-        }
         return interaction.editReply({
           embeds: [errorEmbed(
             "Stop Failed",
@@ -660,100 +698,90 @@ module.exports = {
         });
       }
 
+      console.log(`[/mcbot] ✅ Bot stopped for: ${mainMinecraftUser}`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       return interaction.editReply({
         embeds: [successEmbed(
           "Bot Stopped",
-          `Your Minecraft bot (\`${minecraftUser}\`) has been disconnected from the server.`
+          `Your Minecraft bot (\`${mainMinecraftUser}\`) has been stopped.`
         )],
       });
     }
 
     // ── status ────────────────────────────────────────────────
     if (sub === "status") {
-      console.log(`[/mcbot] 📊 Status check for: ${minecraftUser}`);
-
       const response = await getBotStatusFromVps(userId);
 
       if (!response.ok) {
-        if (response.status === 404) {
+        if (response.data?.reason === "no_bot_running") {
           return interaction.editReply({
             embeds: [infoEmbed(
               "No Bot Running",
-              "You have no bot currently running.\nUse `/mcbot start <server>` to launch one."
-            )],
-          });
-        }
-        if (response.status === 0) {
-          return interaction.editReply({
-            embeds: [errorEmbed(
-              "VPS Unreachable",
-              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Connection refused"}\`\`\``
+              "You don't have a bot currently running.\nUse `/mcbot start <server>` to launch one."
             )],
           });
         }
         return interaction.editReply({
           embeds: [errorEmbed(
-            "Status Unavailable",
-            `Could not fetch your bot status.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
+            "Status Check Failed",
+            `Could not retrieve your bot status.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
           )],
         });
       }
 
-      const bot = response.data.bot;
-      const uptime = bot.uptimeSeconds ? formatUptime(bot.uptimeSeconds) : "Unknown";
-      const hints = buildStatusHints(bot);
-      const diagLines = [
-        bot?.errorCategory ? `**Category:** \`${bot.errorCategory}\`` : null,
-        bot?.errorCode ? `**Code:** \`${bot.errorCode}\`` : null,
-        bot?.lastKickReason ? `**Last kick:** ${bot.lastKickReason}` : null,
-        bot?.lastError ? `**Last error:** ${bot.lastError}` : null,
-      ].filter(Boolean);
+      const bot = response.data?.bot;
+      if (!bot) {
+        return interaction.editReply({
+          embeds: [infoEmbed(
+            "No Bot Running",
+            "You don't have a bot currently running.\nUse `/mcbot start <server>` to launch one."
+          )],
+        });
+      }
 
-      return interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.minecraftUser}`)
-          .addFields(
-            { name: "📊 Status", value: `\`${bot.status}\``, inline: true },
-            { name: "⏱️ Uptime", value: `\`${uptime}\``, inline: true },
-            { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: true },
-            { name: "🎮 Version", value: `\`${bot.version}\``, inline: true },
-            { name: "📅 Started", value: `<t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`, inline: true },
-            ...(hints.length
-              ? [{ name: "💡 Suggestions", value: hints.map((h) => `• ${h}`).join("\n"), inline: false }]
-              : []),
-            ...(diagLines.length
-              ? [{ name: "🧾 Details", value: diagLines.join("\n"), inline: false }]
-              : []),
-          )
-          .setColor(getStatusColor(bot.status))
-          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-          .setTimestamp()],
-      });
+      const hints = buildStatusHints(bot);
+      const uptime = bot.uptimeSeconds ? formatUptime(bot.uptimeSeconds) : "Unknown";
+      const embed = new EmbedBuilder()
+        .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.status}`)
+        .addFields(
+          { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: true },
+          { name: "📦 Version", value: `\`${bot.version}\``, inline: true },
+          { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: false },
+          { name: "⏱️ Uptime", value: `\`${uptime}\``, inline: true },
+          { name: "📅 Started", value: `<t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`, inline: true },
+        )
+        .setColor(getStatusColor(bot.status))
+        .setTimestamp()
+        .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" });
+
+      if (hints.length > 0) {
+        embed.addFields({ name: "💡 Hints", value: hints.join("\n"), inline: false });
+      }
+
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+      return interaction.editReply({ embeds: [embed] });
     }
   },
 
   // ============================================================
-  // BUTTON HANDLER — DM confirm/reject buttons
+  // BUTTON HANDLER
+  // Handles mcbot_confirm_<userId> and mcbot_reject_<userId>
+  // buttons sent via DM.
   // ============================================================
   async buttonHandler(interaction) {
-    const { customId, user } = interaction;
-
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[/mcbot] 🔘 DM Button: ${customId} from ${user.tag} (${user.id})`);
-
+    const customId = interaction.customId;
     const isConfirm = customId.startsWith("mcbot_confirm_");
     const isReject = customId.startsWith("mcbot_reject_");
 
     if (!isConfirm && !isReject) return;
 
-    const targetUserId = isConfirm
-      ? customId.replace("mcbot_confirm_", "")
-      : customId.replace("mcbot_reject_", "");
+    const targetUserId = customId.replace("mcbot_confirm_", "").replace("mcbot_reject_", "");
+    const user = interaction.user;
 
-    // Verify the person clicking owns this request
     if (user.id !== targetUserId) {
       return interaction.reply({
-        content: "❌ This confirmation is not for your account.",
+        content: "❌ This confirmation belongs to another user.",
+        ephemeral: true,
       });
     }
 
@@ -790,7 +818,7 @@ module.exports = {
             .setDescription("You rejected the bot start request.")
             .addFields(
               { name: "🌐 Server", value: `\`${pending.serverAddress}\``, inline: true },
-              { name: "📦 Version", value: `\`${formatRequestedVersion(pending.version)}\``, inline: true },
+              { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
             )
             .setColor(0xf44336)
             .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -810,7 +838,7 @@ module.exports = {
     }
 
     // ── CONFIRMED ─────────────────────────────────────────────
-    console.log(`[/mcbot] ✅ Confirmed: ${pending.minecraftUser} → ${pending.serverAddress} (v${formatRequestedVersion(pending.version)})`);
+    console.log(`[/mcbot] ✅ Confirmed: ${pending.minecraftUser} → ${pending.serverAddress} (v${pending.version})`);
 
     const response = await startBotOnVps(
       targetUserId,
@@ -869,7 +897,7 @@ module.exports = {
           )
           .addFields(
             { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },
-            { name: "📦 Version", value: `\`${formatRequestedVersion(pending.version)}\``, inline: true },
+            { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
           )
           .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })

@@ -1,6 +1,7 @@
 // Discord Bot/events/interactionCreate.js
 // ✅ UPDATED: Added mcbot DM button routing before guild guard
 // ✅ UPDATED: Full routing to match index.js button/modal/select handlers
+// ✅ UPDATED: Added autocomplete routing for commands that support it
 
 const { handleDraftChoice } = require("../modules/empire/draftlogic");
 
@@ -23,6 +24,19 @@ module.exports = {
       if (mcbotCommand?.buttonHandler) {
         await mcbotCommand.buttonHandler(interaction).catch(err => {
           console.error("[interactionCreate] ❌ mcbot DM buttonHandler error:", err);
+        });
+      }
+      return;
+    }
+
+    // ============================================================
+    // AUTOCOMPLETE INTERACTIONS
+    // ============================================================
+    if (interaction.isAutocomplete()) {
+      const command = client.commands.get(interaction.commandName);
+      if (command?.autocomplete) {
+        await command.autocomplete(interaction).catch(err => {
+          console.error(`[interactionCreate] ❌ Autocomplete error in /${interaction.commandName}:`, err);
         });
       }
       return;

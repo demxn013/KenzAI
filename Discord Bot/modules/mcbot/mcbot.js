@@ -47,9 +47,10 @@ const BOT_START_POLL_DURATION_MS = 60000;
 // ============================================================
 // SERVER → VERSION MAP
 // Maps partial server address strings (lowercase) to the
-// Minecraft version that should be used for that server.
+// Minecraft version mineflayer should use for that server.
 // Add entries here whenever a new server is registered.
 // First matching key wins; falls back to DEFAULT_VERSION.
+// Version is resolved internally — users never set this.
 // ============================================================
 const SERVER_VERSION_MAP = {
   "donutsmp.net": "auto",
@@ -57,7 +58,7 @@ const SERVER_VERSION_MAP = {
   // "example.net":  "1.20",
 };
 
-const DEFAULT_VERSION = "1.21.8";
+const DEFAULT_VERSION = "1.21.4";
 
 // Pending DM confirmations: userId -> confirmation data
 const pendingConfirmations = new Map();
@@ -98,6 +99,7 @@ function getStatusColor(status) {
  * Resolves the correct Minecraft version for a given server address.
  * Checks SERVER_VERSION_MAP keys (case-insensitive substring match).
  * Falls back to DEFAULT_VERSION if no match is found.
+ * This is purely internal — version is never exposed as a user option.
  */
 function getVersionForServer(serverAddress) {
   if (!serverAddress) return DEFAULT_VERSION;
@@ -359,6 +361,7 @@ module.exports = {
   // ============================================================
   // AUTOCOMPLETE
   // Provides the account dropdown list for /mcbot start account:
+  // Populated from linking.json via getAllAccountsForDiscord.
   // ============================================================
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused();
@@ -407,112 +410,79 @@ module.exports = {
       });
     }
 
-    // ============================================================
-    // ADMIN SUBCOMMANDS
-    // ============================================================
-    if (sub === "list" || sub === "stopall" || sub === "ping") {
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-        return interaction.reply({
+    // ── ADMIN SUBCOMMANDS (no defer, no member check) ─────────
+    if (sub === "ping") {
+      await interaction.deferReply({ ephemeral: true });
+      const response = await pingVps();
+      if (!response.ok) {
+        return interaction.editReply({
           embeds: [errorEmbed(
-            "Missing Permission",
-            "You need the **Kick Members** permission to use this command."
+            "VPS Unreachable",
+            `Could not reach the VPS.\n\`\`\`${response.data?.error || "Connection refused"}\`\`\``
           )],
+        });
+      }
+      return interaction.editReply({
+        embeds: [successEmbed("VPS Online", `VPS responded successfully.\n\`\`\`${JSON.stringify(response.data, null, 2)}\`\`\``)],
+      });
+    }
+
+    if (sub === "list") {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.reply({
+          embeds: [errorEmbed("Access Denied", "Only administrators can list all bots.")],
           ephemeral: true,
         });
       }
-
       await interaction.deferReply({ ephemeral: true });
-
-      if (sub === "ping") {
-        const response = await pingVps();
-
-        if (!response.ok) {
-          return interaction.editReply({
-            embeds: [errorEmbed(
-              "VPS Unreachable",
-              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
-            )],
-          });
-        }
-
-        const body = response.data || {};
+      const response = await listAllBotsOnVps();
+      if (!response.ok) {
         return interaction.editReply({
-          embeds: [successEmbed(
-            "VPS Online",
-            [
-              "Successfully reached the VPS bot server.",
-              body.activeBots !== undefined
-                ? `Active bots reported: \`${body.activeBots}\``
-                : null,
-              body.timestamp
-                ? `Server time: <t:${Math.floor(new Date(body.timestamp).getTime() / 1000)}:R>`
-                : null,
-            ].filter(Boolean).join("\n")
-          )],
+          embeds: [errorEmbed("List Failed", `\`\`\`${response.data?.error || "Unknown error"}\`\`\``)],
         });
       }
-
-      if (sub === "list") {
-        const response = await listAllBotsOnVps();
-        if (!response.ok) {
-          return interaction.editReply({
-            embeds: [errorEmbed(
-              "VPS Unreachable",
-              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
-            )],
-          });
-        }
-
-        const bots = response.data.bots || [];
-        if (bots.length === 0) {
-          return interaction.editReply({
-            embeds: [infoEmbed("No Active Bots", "There are no bots currently running on the VPS.")],
-          });
-        }
-
-        const embed = new EmbedBuilder()
+      const bots = response.data?.bots || [];
+      if (bots.length === 0) {
+        return interaction.editReply({
+          embeds: [infoEmbed("No Active Bots", "There are no bots currently running on the VPS.")],
+        });
+      }
+      const lines = bots.map((b) =>
+        `• \`${b.minecraftUser}\` → \`${b.serverHost}:${b.serverPort}\` [${getStatusEmoji(b.status)} ${b.status}] (v${b.version})`
+      );
+      return interaction.editReply({
+        embeds: [new EmbedBuilder()
           .setTitle(`🤖 Active Bots (${bots.length})`)
-          .setColor(0x000000)
+          .setDescription(lines.join("\n"))
+          .setColor(0x2196f3)
           .setTimestamp()
-          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" });
+          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })],
+      });
+    }
 
-        for (const bot of bots) {
-          const uptime = bot.uptimeSeconds ? formatUptime(bot.uptimeSeconds) : "Unknown";
-          embed.addFields({
-            name: `${getStatusEmoji(bot.status)} ${bot.minecraftUser} — ${bot.status}`,
-            value: [
-              `👤 Discord: <@${bot.discordId}>`,
-              `🌐 Server: \`${bot.serverHost}:${bot.serverPort}\``,
-              `🎮 Version: \`${bot.version}\``,
-              `⏱️ Uptime: \`${uptime}\``,
-              `📅 Started: <t:${Math.floor(new Date(bot.startedAt).getTime() / 1000)}:R>`,
-            ].join("\n"),
-            inline: false,
-          });
-        }
-        return interaction.editReply({ embeds: [embed] });
-      }
-
-      if (sub === "stopall") {
-        const response = await stopAllBotsOnVps();
-        if (!response.ok) {
-          return interaction.editReply({
-            embeds: [errorEmbed(
-              "VPS Unreachable",
-              `Could not reach the VPS bot server.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``
-            )],
-          });
-        }
-        const stopped = response.data?.stopped ?? "?";
-        return interaction.editReply({
-          embeds: [new EmbedBuilder()
-            .setTitle("🚨 Emergency Stop Executed")
-            .setDescription(`Successfully stopped **${stopped}** bot(s).`)
-            .setColor(0xf44336)
-            .setTimestamp()
-            .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })],
+    if (sub === "stopall") {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.reply({
+          embeds: [errorEmbed("Access Denied", "Only administrators can stop all bots.")],
+          ephemeral: true,
         });
       }
+      await interaction.deferReply({ ephemeral: true });
+      const response = await stopAllBotsOnVps();
+      if (!response.ok) {
+        return interaction.editReply({
+          embeds: [errorEmbed("Stop All Failed", `\`\`\`${response.data?.error || "Unknown error"}\`\`\``)],
+        });
+      }
+      const stopped = response.data?.stopped ?? "?";
+      return interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setTitle("🚨 Emergency Stop Executed")
+          .setDescription(`Successfully stopped **${stopped}** bot(s).`)
+          .setColor(0xf44336)
+          .setTimestamp()
+          .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })],
+      });
     }
 
     // ============================================================
@@ -546,7 +516,7 @@ module.exports = {
         });
       }
 
-      // ── Resolve version from server address map ──────────────
+      // ── Resolve version internally from server address map ───
       const resolvedVersion = getVersionForServer(serverAddress);
 
       // ── Resolve Minecraft account to use ────────────────────
@@ -594,7 +564,6 @@ module.exports = {
             { name: "🎮 Minecraft User", value: `\`${chosenAccount}\``, inline: true },
             { name: "🆔 Empire ID", value: `\`${empireId}\``, inline: true },
             { name: "🌐 Target Server", value: `\`${serverAddress}\``, inline: false },
-            { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
             { name: "⏰ Expires", value: `<t:${Math.floor((Date.now() + CONFIRMATION_TIMEOUT_MS) / 1000)}:R>`, inline: true },
           )
           .setColor(0xffd600)
@@ -627,7 +596,6 @@ module.exports = {
               .setDescription("Your bot start request has **expired** after 3 minutes and was automatically rejected.")
               .addFields(
                 { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-                { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
               )
               .setColor(0x9e9e9e)
               .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -667,7 +635,6 @@ module.exports = {
           )
           .addFields(
             { name: "🌐 Server", value: `\`${serverAddress}\``, inline: true },
-            { name: "📦 Version", value: `\`${resolvedVersion}\``, inline: true },
           )
           .setColor(0xffd600)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -818,7 +785,6 @@ module.exports = {
             .setDescription("You rejected the bot start request.")
             .addFields(
               { name: "🌐 Server", value: `\`${pending.serverAddress}\``, inline: true },
-              { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
             )
             .setColor(0xf44336)
             .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -897,7 +863,6 @@ module.exports = {
           )
           .addFields(
             { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },
-            { name: "📦 Version", value: `\`${pending.version}\``, inline: true },
           )
           .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })

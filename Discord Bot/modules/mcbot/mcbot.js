@@ -228,9 +228,9 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
               .setTitle("🟢 Bot Online")
               .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
               .addFields(
-                { name: "🎮 Minecraft User", value: `\`${bot.minecraftUser}\``, inline: false },
-                { name: "📦 Version", value: `\`${bot.version}\``, inline: false },
-                { name: "⏱️ Uptime", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
+                { name: "🎮 __Minecraft User__", value: `\`${bot.minecraftUser}\``, inline: false },
+                { name: "📦 __Version__", value: `\`${bot.version}\``, inline: false },
+                { name: "⏱️ __Uptime__", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
               )
               .setColor(0x00c853)
               .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -505,8 +505,8 @@ module.exports = {
               "**Confirm** to start the bot, or **Reject** to cancel."
             )
             .addFields(
-              { name: "🎮 Account", value: `\`${chosenAccount}\``, inline: false },
-              { name: "🌐 Server", value: `\`${serverAddress}\``, inline: false },
+              { name: "🎮 __Account__", value: `\`${chosenAccount}\``, inline: false },
+              { name: "🌐 __Server__", value: `\`${serverAddress}\``, inline: false },
             )
             .setColor(0xffd600)
             .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -556,8 +556,8 @@ module.exports = {
           .setTitle("📨 Check Your DMs")
           .setDescription("A confirmation request has been sent to your DMs.\nYou have **3 minutes** to accept or reject it.")
           .addFields(
-            { name: "🎮 Account", value: `\`${chosenAccount}\``, inline: false },
-            { name: "🌐 Server", value: `\`${serverAddress}\``, inline: false },
+            { name: "🎮 __Account__", value: `\`${chosenAccount}\``, inline: false },
+            { name: "🌐 __Server__", value: `\`${serverAddress}\``, inline: false },
           )
           .setColor(0xffd600)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -805,11 +805,10 @@ function buildSingleStatusEmbed(bot) {
   return new EmbedBuilder()
     .setTitle(`${getStatusEmoji(bot.status)} Bot Status — \`${bot.minecraftUser}\``)
     .addFields(
-      { name: "🎮 Account", value: `\`${bot.minecraftUser}\``, inline: false },
-      { name: "📊 Status", value: `${getStatusEmoji(bot.status)} ${bot.status}`, inline: false },
-      { name: "🌐 Server", value: `\`${bot.serverHost}:${bot.serverPort}\``, inline: false },
-      { name: "📦 Version", value: `\`${bot.version}\``, inline: false },
-      { name: "⏱️ Uptime", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
+      { name: "🎮 __Account__", value: `\`${bot.minecraftUser}\``, inline: false },
+      { name: "📊 __Status__", value: `${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
+      { name: "🌐 __Server__", value: `\`${bot.serverHost}\``, inline: false },
+      { name: "⏱️ __Uptime__", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
       ...(bot.spawnError ? [{ name: "⚠️ Error", value: bot.spawnError + hintText, inline: falsee }] : []),
     )
     .setColor(getStatusColor(bot.status))
@@ -819,7 +818,7 @@ function buildSingleStatusEmbed(bot) {
 
 function buildMultiStatusEmbed(bots) {
   const lines = bots.map((b) =>
-    `• \`${b.minecraftUser}\` → \`${b.serverHost}:${b.serverPort}\` [${getStatusEmoji(b.status)} ${b.status}] ⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}`
+    `• \`${b.minecraftUser}\` → \`${b.serverHost}\` [${getStatusEmoji(b.status)}⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}`
   );
 
   return new EmbedBuilder()

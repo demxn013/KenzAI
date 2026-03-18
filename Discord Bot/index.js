@@ -3,6 +3,7 @@
 // ✅ UPDATED: Added court request interaction handlers
 // ✅ UPDATED: Added DirectMessages intent + Partials for DM button support (mcbot)
 // ✅ UPDATED: Added autocomplete routing to interactionCreate handler
+// ✅ UPDATED: Added monetization webhook server startup
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes, Partials } = require('discord.js');
@@ -16,6 +17,11 @@ const crypto = require('crypto');
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { handleDraftChoice } = require('./modules/empire/draftlogic');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
+
+// ============================================================
+// ✅ MONETIZATION IMPORTS
+// ============================================================
+const { startWebhookServer } = require('./modules/mcbot/monetization/webhookserver');
 
 // ============================================================
 // CLIENT SETUP
@@ -237,6 +243,7 @@ async function clearDuplicateCommands() {
             { body: [] }
           );
           console.log(`   ✅ Cleared: ${guild.name}`);
+          
         } catch (error) {
           console.error(`   ❌ Failed: ${partialGuild.name || guildId} - ${error.message}`);
         }
@@ -301,6 +308,19 @@ client.on('ready', async () => {
   // ✅ POINTS SYSTEM EVENTS (message + voice)
   // ============================================================
   setupPointsEvents(client);
+
+  // ============================================================
+  // ✅ MONETIZATION WEBHOOK SERVER
+  // Only starts if WEBHOOK_PORT is set in .env.
+  // Set REQUIRE_SUBSCRIPTION=true to enforce subscriptions in /mcbot.
+  // ============================================================
+  if (process.env.WEBHOOK_PORT) {
+    console.log("💳 Starting monetization webhook server...");
+    startWebhookServer(client);
+  } else {
+    console.log("💳 Monetization webhook server skipped (WEBHOOK_PORT not set)");
+    console.log("   Set WEBHOOK_PORT in .env and configure Patreon/Stripe to enable.");
+  }
 });
 
 // ============================================================
@@ -347,136 +367,61 @@ client.on('interactionCreate', async (interaction) => {
   // ============================================================
   if (interaction.isButton()) {
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(
-      `[/interactions] 🔘 Button: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`
-    );
+    console.log(`[/interactions] 🔘 Button: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`);
 
-    // ✅ DRAFT CHOICE BUTTONS
+    // Draft choice buttons
     if (interaction.customId.startsWith('draft_')) {
       return handleDraftChoice(interaction);
     }
-    
-    // ✅ COURT REQUEST BUTTONS
-    if (interaction.customId === 'start_court_request' ||
-        interaction.customId === 'close_court_request' ||
-        interaction.customId.startsWith('escalate_court_request_') ||
-        interaction.customId.startsWith('dismiss_court_request_')) {
-      
+
+    // Court request buttons
+    if (
+      interaction.customId === 'start_court_request' ||
+      interaction.customId === 'close_court_request' ||
+      interaction.customId.startsWith('escalate_court_request_') ||
+      interaction.customId.startsWith('dismiss_court_request_')
+    ) {
       const courtrequestCommand = client.commands.get('courtrequest');
-      if (courtrequestCommand && courtrequestCommand.buttonHandler) {
+      if (courtrequestCommand?.buttonHandler) {
         return courtrequestCommand.buttonHandler(interaction);
       }
     }
-    
-    // Application system buttons
-    if (interaction.customId === 'start_application' ||
-        interaction.customId === 'close_ticket' ||
-        interaction.customId.startsWith('accept_application_') ||
-        interaction.customId.startsWith('reject_application_')) {
-      
-      const applicationCommand = client.commands.get('application');
-      if (applicationCommand && applicationCommand.buttonHandler) {
-        return applicationCommand.buttonHandler(interaction);
-      }
-    }
-
-    // Points shop / redeem buttons
-    if (interaction.customId.startsWith('points_shop_') || interaction.customId.startsWith('points_redeem_')) {
-      const pointsCommand = client.commands.get('points');
-      if (pointsCommand && pointsCommand.buttonHandler) {
-        return pointsCommand.buttonHandler(interaction);
-      }
-    }
-
-    // Servers module (DonutSMP / clan server / member server stats)
-    if (interaction.customId.startsWith('server_') || interaction.customId.startsWith('clan_server_') || interaction.customId.startsWith('member_server_')) {
-      console.log(`[/interactions] 🔁 Routing to servers module for ${interaction.customId}`);
-      const serverCommand = client.commands.get('server');
-      if (serverCommand && serverCommand.buttonHandler) {
-        return serverCommand.buttonHandler(interaction);
-      } else {
-        console.warn("[/interactions] ⚠️ Server command or buttonHandler not found for", interaction.customId);
-      }
-    }
   }
 
   // ============================================================
-  // STRING SELECT MENU (points shop reward selection)
+  // SLASH COMMAND INTERACTIONS
   // ============================================================
-  if (interaction.isStringSelectMenu()) {
-    if (interaction.customId === 'points_select_reward') {
-      const pointsCommand = client.commands.get('points');
-      if (pointsCommand && pointsCommand.selectMenuHandler) {
-        return pointsCommand.selectMenuHandler(interaction);
-      }
-    }
-  }
-  
-  // ============================================================
-  // MODAL SUBMISSIONS
-  // ============================================================
-  if (interaction.isModalSubmit()) {
-    
-    // ✅ COURT REQUEST MODALS
-    if (interaction.customId.startsWith('court_request_modal_') ||
-        interaction.customId.startsWith('close_court_request_modal_')) {
-      
-      const courtrequestCommand = client.commands.get('courtrequest');
-      if (courtrequestCommand && courtrequestCommand.modalHandler) {
-        return courtrequestCommand.modalHandler(interaction);
-      }
-    }
-    
-    // Application modals
-    if (interaction.customId.startsWith('application_modal_') ||
-        interaction.customId.startsWith('close_reason_modal_')) {
-      
-      const applicationCommand = client.commands.get('application');
-      if (applicationCommand && applicationCommand.modalHandler) {
-        return applicationCommand.modalHandler(interaction);
-      }
-    }
+  if (!interaction.isChatInputCommand()) return;
 
-    // Points modals (custom role, nickname, clan build)
-    if (interaction.customId.startsWith('points_customrole_modal_') ||
-        interaction.customId.startsWith('points_nickname_modal_') ||
-        interaction.customId.startsWith('points_clan_build_modal_')) {
-      const pointsCommand = client.commands.get('points');
-      if (pointsCommand && pointsCommand.modalHandler) {
-        return pointsCommand.modalHandler(interaction);
-      }
-    }
+  const command = client.commands.get(interaction.commandName);
+
+  if (!command) {
+    console.error(`❌ No command matching ${interaction.commandName} was found.`);
+    return;
   }
-  
-  // ============================================================
-  // SLASH COMMANDS
-  // ============================================================
-  if (interaction.isChatInputCommand()) {
-    const command = client.commands.get(interaction.commandName);
+
+  if (!interaction.guild) {
+    await interaction.reply({
+      content: '❌ Commands can only be used in a server.',
+      ephemeral: true
+    });
+    return;
+  }
     
-    if (!command) {
-      console.warn(`⚠️ No command found: ${interaction.commandName}`);
-      return interaction.reply({
-        content: '❌ Command not found!',
-        ephemeral: true
-      });
-    }
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error(`❌ Error executing ${interaction.commandName}:`, error);
     
-    try {
-      await command.execute(interaction);
-    } catch (error) {
-      console.error(`❌ Error executing ${interaction.commandName}:`, error);
-      
-      const errorMessage = {
-        content: '❌ An error occurred while executing this command.',
-        ephemeral: true
-      };
-      
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMessage);
-      } else {
-        await interaction.reply(errorMessage);
-      }
+    const errorMessage = {
+      content: '❌ An error occurred while executing this command.',
+      ephemeral: true
+    };
+    
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(errorMessage);
+    } else {
+      await interaction.reply(errorMessage);
     }
   }
 });

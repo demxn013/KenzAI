@@ -3,12 +3,24 @@
 // on the empire VPS from Discord. Supports multiple simultaneous bots
 // (one per linked Minecraft account).
 //
-// Subcommands:
-//   start  <server> [account]  — Start a MC bot on a server (requires DM confirmation)
-//   stop   [account]           — Stop a running bot (auto-selects if only one running)
-//   status [account]           — Check a bot's current status
+// Bot subcommands:
+//   start  <server> [account]  — Start a MC bot (requires DM confirmation)
+//   stop   [account]           — Stop a running bot
+//   status [account]           — Check bot status
+//   ping                       — [Admin] Ping the VPS
 //   list                       — [Admin] List all active bots
 //   stopall                    — [Admin] Emergency stop all bots
+//
+// Slot subcommands (/mcbot slot ...):
+//   slot status                — Show your subscription tier and active slots
+//   slot available             — Show global slot availability per tier
+//   slot queue                 — Show your queue position
+//   slot release [slot_id]     — Release one of your active slots
+//   slot grant <user> <tier>   — [Admin] Manually grant a subscription
+//   slot revoke <user>         — [Admin] Revoke a subscription + all slots
+//   slot info <user>           — [Admin] View a user's full subscription info
+//
+// ✅ MONETIZATION: Set REQUIRE_SUBSCRIPTION=true in .env to enforce subscription checks.
 
 "use strict";
 
@@ -37,24 +49,38 @@ const {
 const { readClans } = require("../clantracking/clanlogic");
 const { getAllAccountsForDiscord } = require("../linking/linklogic");
 
-// Yazanaki Empire Guild ID
-const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
+// ============================================================
+// ✅ MONETIZATION IMPORTS
+// Set REQUIRE_SUBSCRIPTION=true in .env to enforce subscriptions.
+// When false (default), /mcbot start/stop work exactly as before.
+// ============================================================
+const {
+  requestSlot,
+  releaseSlotByUser,
+  clearAllActiveSlots,
+  getSlotAvailability,
+  getQueueStats,
+  getTierConfig,
+  releaseSlot,
+  grantSubscription,
+  revokeSubscription,
+} = require("./monetization/slotmanager");
 
-// Confirmation timeout: 3 minutes
-const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
+const db = require("./monetization/subscriptiondb");
 
-// How long to poll for bot start outcome.
-// Must match the VPS interactive auth timeout (5 min) so the embed
-// keeps updating while the user completes Microsoft sign-in.
-const BOT_START_POLL_DURATION_MS = 5 * 60 * 1000;
+const REQUIRE_SUBSCRIPTION = process.env.REQUIRE_SUBSCRIPTION === "true";
 
 // ============================================================
-// SERVER → VERSION MAP
+// CONSTANTS
 // ============================================================
+
+const YAZANAKI_EMPIRE_GUILD_ID  = "1220847061797179524";
+const CONFIRMATION_TIMEOUT_MS   = 3 * 60 * 1000;  // 3 minutes
+const BOT_START_POLL_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
 const SERVER_VERSION_MAP = {
   "donutsmp.net": "auto",
 };
-
 const DEFAULT_VERSION = "1.21.4";
 
 // Pending DM confirmations: userId -> confirmation data
@@ -103,7 +129,7 @@ function getVersionForServer(serverAddress) {
 
 function buildStatusHints(bot) {
   const hints = [];
-  const cat = bot?.errorCategory;
+  const cat   = bot?.errorCategory;
   if (cat === "auth_error") {
     hints.push("Authentication required. Start again to receive a Microsoft device-code login DM.");
   }
@@ -149,214 +175,143 @@ function buildConfirmRow(userId, disabled = false) {
   );
 }
 
-// ============================================================
-// BOT START OUTCOME POLLING
-//
-// Runs for up to BOT_START_POLL_DURATION_MS (5 min) after /start.
-//
-// Key behaviour:
-//   - Polls for device codes continuously throughout — does NOT
-//     stop after the first code. prismarine-auth may generate a new
-//     code if its retry loop fires after a stale cache refresh fails.
-//     If a new code comes in, we send a follow-up DM with the updated
-//     code so the user always has the current, valid one to enter.
-//   - Polls bot status until "online" or "error".
-// ============================================================
+// Slot-specific embed helpers
+function tierBadge(tier) {
+  const badges = { standard: "🔵 Standard", premium: "🟣 Premium", vip: "👑 VIP", none: "⚫ None" };
+  return badges[tier] || tier;
+}
 
-async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmMessage) {
-  const deadline = Date.now() + BOT_START_POLL_DURATION_MS;
-  const pollInterval = 3000;
-  let lastCodeShown = null;
+function formatDate(iso) {
+  if (!iso) return "N/A";
+  return `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
+}
 
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, pollInterval));
-
-    // ── Poll device code ───────────────────────────────────────
-    try {
-      const codeRes = await getDeviceCodeFromVps(discordId, minecraftUser);
-      if (codeRes.ok && codeRes.data?.pending) {
-        const { userCode, verificationUri } = codeRes.data;
-
-        if (userCode !== lastCodeShown) {
-          const isUpdate = lastCodeShown !== null;
-          console.log(`[/mcbot] 🔐 ${isUpdate ? "Updated" : "New"} device code for ${discordId}/${minecraftUser}: ${userCode}`);
-
-          try {
-            await dmChannel.send({
-              embeds: [new EmbedBuilder()
-                .setTitle(isUpdate ? "🔄 New Login Code Generated" : "🔐 Microsoft Login Required")
-                .setDescription(
-                  (isUpdate
-                    ? "⚠️ A new login code was generated. **Use this code instead** — the previous code is no longer valid.\n\n"
-                    : "Your Minecraft bot needs to authenticate with Microsoft.\n\n") +
-                  `**1.** Go to: **${verificationUri}**\n` +
-                  `**2.** Enter code: \`${userCode}\`\n\n` +
-                  "You have **5 minutes** to sign in. The bot will connect automatically once you log in."
-                )
-                .setColor(isUpdate ? 0xff9800 : 0x2196f3)
-                .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-                .setTimestamp()],
-            });
-
-            lastCodeShown = userCode;
-            // Clear the code from VPS so we can detect a future update
-            await clearDeviceCodeOnVps(discordId, minecraftUser);
-          } catch (dmErr) {
-            console.error(`[/mcbot] ❌ Failed to DM device code to ${discordId}:`, dmErr.message);
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[/mcbot] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
-    }
-
-    // ── Poll bot status ────────────────────────────────────────
-    try {
-      const statusRes = await getBotStatusFromVps(discordId, minecraftUser);
-      if (!statusRes.ok) continue;
-
-      const bot = statusRes.data?.bot;
-      if (!bot) continue;
-
-      const status = bot.status;
-
-      if (status === "online") {
-        console.log(`[/mcbot] 🟢 Bot online for ${discordId}/${minecraftUser}`);
-        try {
-          await confirmMessage.edit({
-            embeds: [new EmbedBuilder()
-              .setTitle("🟢 Bot Online")
-              .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
-              .addFields(
-                { name: "🎮 __Minecraft User__", value: `\`${bot.minecraftUser}\``, inline: false },
-                { name: "📦 __Version__", value: `\`${bot.version}\``, inline: false },
-                { name: "⏱️ __Uptime__", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
-              )
-              .setColor(0x00c853)
-              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-              .setTimestamp()],
-            components: [],
-          });
-        } catch {}
-        return;
-      }
-
-      if (status === "error") {
-        const errMsg = bot.spawnError || bot.errorMessage || "Unknown error";
-        console.warn(`[/mcbot] ❌ Bot failed for ${discordId}/${minecraftUser}: ${errMsg}`);
-        try {
-          await confirmMessage.edit({
-            embeds: [new EmbedBuilder()
-              .setTitle("❌ Bot Failed to Connect")
-              .setDescription(
-                `Your bot could not connect to the server.\n\n` +
-                `**Reason:** ${errMsg}\n\n` +
-                `Common causes:\n` +
-                `• Microsoft sign-in was not completed in time\n` +
-                `• Server is offline or unreachable\n` +
-                `• Server requires authentication or whitelisting\n` +
-                `• Contact an admin if the issue persists`
-              )
-              .setColor(0xf44336)
-              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-              .setTimestamp()],
-            components: [],
-          });
-        } catch {}
-        return;
-      }
-    } catch (err) {
-      console.error(`[/mcbot] ❌ Status poll error for ${discordId}/${minecraftUser}:`, err.message);
-    }
-  }
-
-  // 5 minutes passed — bot still connecting
-  console.warn(`[/mcbot] ⏰ Outcome poll timed out for ${discordId}/${minecraftUser} — bot may still be connecting`);
-  try {
-    await confirmMessage.edit({
-      embeds: [new EmbedBuilder()
-        .setTitle("⏳ Still Connecting...")
-        .setDescription(
-          "The bot is taking longer than expected to connect.\n" +
-          "Use `/mcbot status` to check if it comes online, or `/mcbot stop` to cancel."
-        )
-        .setColor(0xff9800)
-        .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
-        .setTimestamp()],
-      components: [],
-    });
-  } catch {}
+function progressBar(used, total, length = 10) {
+  const filled = Math.round((used / Math.max(total, 1)) * length);
+  return "🟦".repeat(filled) + "⬜".repeat(length - filled) + ` ${used}/${total}`;
 }
 
 // ============================================================
-// MODULE EXPORT
+// COMMAND DEFINITION
 // ============================================================
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("mcbot")
-    .setDescription("Control your Minecraft bot on the Yazanaki VPS")
+    .setDescription("Control your Minecraft bot on the Yazanaki Empire VPS.")
 
-    .addSubcommand((sub) =>
+    // ── Bot subcommands ────────────────────────────────────────
+    .addSubcommand(sub =>
       sub
         .setName("start")
-        .setDescription("Start your Minecraft bot on a server")
-        .addStringOption((opt) =>
-          opt
-            .setName("server")
-            .setDescription("Minecraft server address (e.g. play.example.net or 123.45.67.89:25565)")
-            .setRequired(true)
+        .setDescription("Start a Minecraft bot on a server")
+        .addStringOption(opt =>
+          opt.setName("server")
+             .setDescription("Server address (e.g. play.example.net or 123.45.67.89:25565)")
+             .setRequired(true)
         )
-        .addStringOption((opt) =>
-          opt
-            .setName("account")
-            .setDescription("Minecraft account to use (defaults to your main account)")
-            .setRequired(false)
-            .setAutocomplete(true)
+        .addStringOption(opt =>
+          opt.setName("account")
+             .setDescription("Minecraft account to use (defaults to your main account)")
+             .setRequired(false)
+             .setAutocomplete(true)
         )
     )
-
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
         .setName("stop")
         .setDescription("Stop a running Minecraft bot")
-        .addStringOption((opt) =>
-          opt
-            .setName("account")
-            .setDescription("Which account's bot to stop (required if you have multiple running)")
-            .setRequired(false)
-            .setAutocomplete(true)
+        .addStringOption(opt =>
+          opt.setName("account")
+             .setDescription("Which account's bot to stop (required if you have multiple running)")
+             .setRequired(false)
+             .setAutocomplete(true)
         )
     )
-
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
         .setName("status")
         .setDescription("Check the status of a Minecraft bot")
-        .addStringOption((opt) =>
-          opt
-            .setName("account")
-            .setDescription("Which account's bot to check (shows all if omitted)")
-            .setRequired(false)
-            .setAutocomplete(true)
+        .addStringOption(opt =>
+          opt.setName("account")
+             .setDescription("Which account's bot to check (shows all if omitted)")
+             .setRequired(false)
+             .setAutocomplete(true)
         )
     )
-
-    .addSubcommand((sub) =>
-      sub.setName("list").setDescription("[Admin] List all active bots on the VPS")
-    )
-
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub.setName("ping").setDescription("[Admin] Ping the VPS bot server for health checks")
     )
-
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
+      sub.setName("list").setDescription("[Admin] List all active bots on the VPS")
+    )
+    .addSubcommand(sub =>
       sub.setName("stopall").setDescription("[Admin] Emergency stop — kill ALL active bots")
+    )
+
+    // ── Slot subcommand group ─────────────────────────────────
+    .addSubcommandGroup(group =>
+      group
+        .setName("slot")
+        .setDescription("Manage your KenzAI bot subscription and slots.")
+
+        .addSubcommand(sub =>
+          sub.setName("status").setDescription("Show your subscription tier and active bot slots.")
+        )
+        .addSubcommand(sub =>
+          sub.setName("available").setDescription("Show how many bot slots are available globally per tier.")
+        )
+        .addSubcommand(sub =>
+          sub.setName("queue").setDescription("Check your current position in the bot slot queue.")
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName("release")
+            .setDescription("Release one of your active bot slots.")
+            .addStringOption(opt =>
+              opt.setName("slot_id")
+                 .setDescription("The Slot ID to release (from /mcbot slot status). Omit if you only have one slot.")
+                 .setRequired(false)
+            )
+        )
+        // Admin subcommands (flat inside the group — Discord doesn't allow nested groups)
+        .addSubcommand(sub =>
+          sub
+            .setName("grant")
+            .setDescription("[Admin] Manually grant a subscription tier to a user.")
+            .addUserOption(opt => opt.setName("user").setDescription("Discord user").setRequired(true))
+            .addStringOption(opt =>
+              opt.setName("tier")
+                 .setDescription("Subscription tier to grant")
+                 .setRequired(true)
+                 .addChoices(
+                   { name: "Standard", value: "standard" },
+                   { name: "Premium",  value: "premium"  },
+                   { name: "VIP",      value: "vip"      }
+                 )
+            )
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName("revoke")
+            .setDescription("[Admin] Revoke a user's subscription and release all their slots.")
+            .addUserOption(opt => opt.setName("user").setDescription("Discord user").setRequired(true))
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName("info")
+            .setDescription("[Admin] View a user's full subscription and slot details.")
+            .addUserOption(opt => opt.setName("user").setDescription("Discord user").setRequired(true))
+        )
     ),
+
+  // ============================================================
+  // AUTOCOMPLETE
+  // ============================================================
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused();
-    const userId = interaction.user.id;
+    const userId  = interaction.user.id;
 
     let choices = [];
     try {
@@ -369,16 +324,21 @@ module.exports = {
       console.error(`[/mcbot autocomplete] ❌ Error fetching accounts for ${userId}:`, err.message);
     }
 
-    const filtered = choices.filter((c) => c.name.toLowerCase().includes(focused.toLowerCase()));
+    const filtered = choices.filter(c => c.name.toLowerCase().includes(focused.toLowerCase()));
     await interaction.respond(filtered.slice(0, 25));
   },
 
+  // ============================================================
+  // EXECUTE
+  // ============================================================
+
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
+    const group  = interaction.options.getSubcommandGroup(false);
+    const sub    = interaction.options.getSubcommand();
     const userId = interaction.user.id;
 
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[/mcbot] 🎯 /${sub} — ${interaction.user.tag} (${userId})`);
+    console.log(`[/mcbot] 🎯 ${group ? `slot ${sub}` : sub} — ${interaction.user.tag} (${userId})`);
 
     const allowedGuilds = getAllowedGuildIds();
     if (!interaction.guild || !allowedGuilds.has(interaction.guild.id)) {
@@ -388,7 +348,12 @@ module.exports = {
       });
     }
 
-    // ── ADMIN SUBCOMMANDS ─────────────────────────────────────
+    // ── Route slot group ──────────────────────────────────────
+    if (group === "slot") {
+      return _handleSlot(interaction, sub, userId);
+    }
+
+    // ── Admin bot subcommands (no member validation needed) ───
     if (sub === "ping") {
       await interaction.deferReply({ ephemeral: true });
       const response = await pingVps();
@@ -415,7 +380,7 @@ module.exports = {
       if (bots.length === 0) {
         return interaction.editReply({ embeds: [infoEmbed("No Active Bots", "There are no bots currently running on the VPS.")] });
       }
-      const lines = bots.map((b) =>
+      const lines = bots.map(b =>
         `• \`${b.minecraftUser}\` (<@${b.discordId}>) → \`${b.serverHost}:${b.serverPort}\` [${getStatusEmoji(b.status)} ${b.status}] (v${b.version})`
       );
       return interaction.editReply({
@@ -437,6 +402,7 @@ module.exports = {
       if (!response.ok) {
         return interaction.editReply({ embeds: [errorEmbed("Stop All Failed", `\`\`\`${response.data?.error || "Unknown error"}\`\`\``)] });
       }
+      if (REQUIRE_SUBSCRIPTION) clearAllActiveSlots();
       const stopped = response.data?.stopped ?? "?";
       return interaction.editReply({
         embeds: [new EmbedBuilder()
@@ -448,7 +414,7 @@ module.exports = {
       });
     }
 
-    // ── MEMBER SUBCOMMANDS ────────────────────────────────────
+    // ── Member-validated bot subcommands ──────────────────────
     await interaction.deferReply({ ephemeral: true });
 
     const validation = validateMember(userId);
@@ -464,7 +430,7 @@ module.exports = {
     // ── start ─────────────────────────────────────────────────
     if (sub === "start") {
       const serverAddress = interaction.options.getString("server").trim();
-      const accountOpt = interaction.options.getString("account");
+      const accountOpt    = interaction.options.getString("account");
 
       if (!serverAddress || serverAddress.length < 3) {
         return interaction.editReply({
@@ -478,13 +444,43 @@ module.exports = {
       if (accountOpt) {
         const { main, alternateAccounts } = getAllAccountsForDiscord(userId);
         const allAccounts = [main, ...alternateAccounts].filter(Boolean);
-        const match = allAccounts.find((a) => a.toLowerCase() === accountOpt.toLowerCase());
+        const match = allAccounts.find(a => a.toLowerCase() === accountOpt.toLowerCase());
         if (!match) {
           return interaction.editReply({
             embeds: [errorEmbed("Account Not Found", `\`${accountOpt}\` is not linked to your Discord account.\nUse \`/link alt <username>\` to add alternate accounts.`)],
           });
         }
         chosenAccount = match;
+      }
+
+      // ✅ MONETIZATION: Check subscription and pre-assign slot before DM confirmation.
+      let preAssignedSlot = null;
+      if (REQUIRE_SUBSCRIPTION) {
+        const slotResult = requestSlot(userId, chosenAccount, { server_address: serverAddress });
+
+        if (slotResult.status === "error") {
+          return interaction.editReply({ embeds: [errorEmbed("Subscription Required", slotResult.message)] });
+        }
+
+        if (slotResult.status === "queued") {
+          console.log(`[/mcbot] ⏳ ${userId} queued at position #${slotResult.position}`);
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+          return interaction.editReply({
+            embeds: [new EmbedBuilder()
+              .setTitle("⏳ Added to Queue")
+              .setDescription(slotResult.message)
+              .addFields(
+                { name: "📦 Tier",     value: `\`${slotResult.queueEntry.tier}\``, inline: true },
+                { name: "📍 Position", value: `#${slotResult.position}`,           inline: true },
+              )
+              .setColor(0xffd600)
+              .setFooter({ text: "Yazanaki Empire • Bot Slot Manager" })
+              .setTimestamp()],
+          });
+        }
+
+        preAssignedSlot = slotResult.slot || null;
+        console.log(`[/mcbot] 🎫 Slot ${preAssignedSlot?.slot_id || "existing"} for ${userId}/${chosenAccount}`);
       }
 
       if (pendingConfirmations.has(userId)) {
@@ -506,7 +502,7 @@ module.exports = {
             )
             .addFields(
               { name: "🎮 __Account__", value: `\`${chosenAccount}\``, inline: false },
-              { name: "🌐 __Server__", value: `\`${serverAddress}\``, inline: false },
+              { name: "🌐 __Server__",  value: `\`${serverAddress}\``, inline: false },
             )
             .setColor(0xffd600)
             .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -515,6 +511,7 @@ module.exports = {
         });
       } catch (err) {
         console.error(`[/mcbot] ❌ Could not DM ${userId}:`, err.message);
+        if (REQUIRE_SUBSCRIPTION && preAssignedSlot) releaseSlotByUser(userId, chosenAccount);
         return interaction.editReply({
           embeds: [errorEmbed("DM Failed", "Could not send you a DM.\nPlease enable DMs from server members and try again.")],
         });
@@ -522,6 +519,7 @@ module.exports = {
 
       const timeoutId = setTimeout(async () => {
         pendingConfirmations.delete(userId);
+        if (REQUIRE_SUBSCRIPTION && preAssignedSlot) releaseSlotByUser(userId, chosenAccount);
         try {
           await dmMessage.edit({
             embeds: [new EmbedBuilder()
@@ -543,23 +541,20 @@ module.exports = {
         userId,
         minecraftUser: chosenAccount,
         serverAddress,
-        version: resolvedVersion,
+        version:        resolvedVersion,
         empireId,
         interaction,
         dmMessage,
         dmChannel,
         timeoutId,
+        preAssignedSlot,
       });
 
       return interaction.editReply({
         embeds: [new EmbedBuilder()
           .setTitle("📨 Check Your DMs")
           .setDescription("A confirmation request has been sent to your DMs.\nYou have **3 minutes** to accept or reject it.")
-          .addFields(
-            { name: "🎮 __Account__", value: `\`${chosenAccount}\``, inline: false },
-            { name: "🌐 __Server__", value: `\`${serverAddress}\``, inline: false },
-          )
-          .setColor(0xffd600)
+          .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
           .setTimestamp()],
       });
@@ -568,15 +563,12 @@ module.exports = {
     // ── stop ──────────────────────────────────────────────────
     if (sub === "stop") {
       const accountOpt = interaction.options.getString("account");
-
-      // Resolve which account to stop
-      let targetAccount = null;
+      let targetAccount;
 
       if (accountOpt) {
-        // User explicitly specified an account — validate it belongs to them
         const { main, alternateAccounts } = getAllAccountsForDiscord(userId);
         const allAccounts = [main, ...alternateAccounts].filter(Boolean);
-        const match = allAccounts.find((a) => a.toLowerCase() === accountOpt.toLowerCase());
+        const match = allAccounts.find(a => a.toLowerCase() === accountOpt.toLowerCase());
         if (!match) {
           return interaction.editReply({
             embeds: [errorEmbed("Account Not Found", `\`${accountOpt}\` is not linked to your Discord account.`)],
@@ -584,36 +576,25 @@ module.exports = {
         }
         targetAccount = match;
       } else {
-        // No account specified — check how many bots are running for this user
         const userBotsRes = await getUserBotsFromVps(userId);
         if (!userBotsRes.ok) {
           return interaction.editReply({
-            embeds: [errorEmbed("VPS Error", `Could not fetch your active bots.\n\`\`\`${userBotsRes.data?.error || "Unknown error"}\`\`\``)],
+            embeds: [errorEmbed("VPS Error", `Could not fetch your running bots.\n\`\`\`${userBotsRes.data?.error || "Unknown error"}\`\`\``)],
           });
         }
-
         const runningBots = userBotsRes.data?.bots || [];
-
         if (runningBots.length === 0) {
           return interaction.editReply({
             embeds: [warningEmbed("No Bot Running", "You don't have any bots currently running.\nUse `/mcbot start <server>` to launch one.")],
           });
         }
-
         if (runningBots.length === 1) {
-          // Auto-select the only running bot
           targetAccount = runningBots[0].minecraftUser;
         } else {
-          // Multiple bots running — ask user to specify
-          const lines = runningBots.map((b) =>
-            `• \`${b.minecraftUser}\` → \`${b.serverHost}:${b.serverPort}\` [${getStatusEmoji(b.status)} ${b.status}]`
-          );
+          const lines = runningBots.map(b => `• \`${b.minecraftUser}\` → \`${b.serverHost}:${b.serverPort}\``).join("\n");
           return interaction.editReply({
-            embeds: [warningEmbed(
-              "Multiple Bots Running",
-              `You have **${runningBots.length}** bots running. Specify which one to stop:\n\n` +
-              lines.join("\n") +
-              "\n\nUsage: `/mcbot stop account:<username>`"
+            embeds: [infoEmbed("Specify Which Bot to Stop",
+              `You have **${runningBots.length}** bots running. Specify which one to stop:\n\n${lines}\n\nUsage: \`/mcbot stop account:<username>\``
             )],
           });
         }
@@ -631,6 +612,13 @@ module.exports = {
           embeds: [errorEmbed("Stop Failed", `Failed to stop bot for \`${targetAccount}\`.\n\`\`\`${response.data?.error || "Unknown error"}\`\`\``)],
         });
       }
+
+      // ✅ MONETIZATION: Release slot on successful stop
+      if (REQUIRE_SUBSCRIPTION) {
+        const releaseResult = releaseSlotByUser(userId, targetAccount);
+        console.log(`[/mcbot] 🎫 Slot released for ${userId}/${targetAccount}: ${releaseResult.message}`);
+      }
+
       console.log(`[/mcbot] ✅ Bot stopped for: ${targetAccount}`);
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       return interaction.editReply({
@@ -643,10 +631,9 @@ module.exports = {
       const accountOpt = interaction.options.getString("account");
 
       if (accountOpt) {
-        // Status for a specific account
         const { main, alternateAccounts } = getAllAccountsForDiscord(userId);
         const allAccounts = [main, ...alternateAccounts].filter(Boolean);
-        const match = allAccounts.find((a) => a.toLowerCase() === accountOpt.toLowerCase());
+        const match = allAccounts.find(a => a.toLowerCase() === accountOpt.toLowerCase());
         if (!match) {
           return interaction.editReply({
             embeds: [errorEmbed("Account Not Found", `\`${accountOpt}\` is not linked to your Discord account.`)],
@@ -665,11 +652,9 @@ module.exports = {
           });
         }
 
-        const bot = response.data?.bot;
-        return interaction.editReply({ embeds: [buildSingleStatusEmbed(bot)] });
+        return interaction.editReply({ embeds: [buildSingleStatusEmbed(response.data?.bot)] });
 
       } else {
-        // No account specified — show all running bots for this user
         const userBotsRes = await getUserBotsFromVps(userId);
         if (!userBotsRes.ok) {
           return interaction.editReply({
@@ -678,18 +663,14 @@ module.exports = {
         }
 
         const runningBots = userBotsRes.data?.bots || [];
-
         if (runningBots.length === 0) {
           return interaction.editReply({
             embeds: [infoEmbed("No Bots Running", "You don't have any bots currently running.\nUse `/mcbot start <server>` to launch one.")],
           });
         }
-
         if (runningBots.length === 1) {
           return interaction.editReply({ embeds: [buildSingleStatusEmbed(runningBots[0])] });
         }
-
-        // Multiple bots — show summary of all
         return interaction.editReply({ embeds: [buildMultiStatusEmbed(runningBots)] });
       }
     }
@@ -704,7 +685,7 @@ module.exports = {
     const userId = user.id;
 
     const isConfirm = customId.startsWith("mcbot_confirm_");
-    const isReject = customId.startsWith("mcbot_reject_");
+    const isReject  = customId.startsWith("mcbot_reject_");
 
     if (!isConfirm && !isReject) return;
 
@@ -726,6 +707,10 @@ module.exports = {
 
     if (isReject) {
       console.log(`[/mcbot] ❌ Bot start rejected by ${userId}`);
+      if (REQUIRE_SUBSCRIPTION && pending.preAssignedSlot) {
+        releaseSlotByUser(userId, pending.minecraftUser);
+        console.log(`[/mcbot] 🎫 Pre-assigned slot released for ${userId} (rejected)`);
+      }
       await interaction.update({
         embeds: [new EmbedBuilder()
           .setTitle("❌ Bot Start Cancelled")
@@ -734,9 +719,7 @@ module.exports = {
           .setTimestamp()],
         components: [],
       });
-      try {
-        await pending.interaction.editReply({ embeds: [warningEmbed("Request Cancelled", "You cancelled the bot start request.")] });
-      } catch {}
+      try { await pending.interaction.editReply({ embeds: [warningEmbed("Request Cancelled", "You cancelled the bot start request.")] }); } catch {}
       return;
     }
 
@@ -771,7 +754,7 @@ module.exports = {
 
     if (!startResponse.ok) {
       const reason = startResponse.data?.reason;
-      let errMsg = `\`\`\`${startResponse.data?.error || "Unknown error"}\`\`\``;
+      let errMsg   = `\`\`\`${startResponse.data?.error || "Unknown error"}\`\`\``;
 
       if (reason === "already_running") {
         const addr = startResponse.data?.serverAddress || "a server";
@@ -780,36 +763,370 @@ module.exports = {
         errMsg = `The VPS has reached its maximum bot limit (${startResponse.data?.max ?? "?"}). Try again later.`;
       }
 
-      try {
-        await interaction.message.edit({
-          embeds: [errorEmbed("Failed to Start Bot", errMsg)],
-          components: [],
-        });
-      } catch {}
+      if (REQUIRE_SUBSCRIPTION && pending.preAssignedSlot) {
+        releaseSlotByUser(userId, pending.minecraftUser);
+        console.log(`[/mcbot] 🎫 Slot released for ${userId} (VPS start failed)`);
+      }
+
+      try { await interaction.message.edit({ embeds: [errorEmbed("Failed to Start Bot", errMsg)], components: [] }); } catch {}
       return;
     }
 
-    // Poll for outcome
     await pollBotStartOutcome(userId, pending.minecraftUser, pending.dmChannel, interaction.message);
   },
 };
+
+// ============================================================
+// SLOT SUBCOMMAND HANDLER
+// ============================================================
+
+async function _handleSlot(interaction, sub, userId) {
+  // Admin gate for grant / revoke / info
+  const adminSubs = ["grant", "revoke", "info"];
+  if (adminSubs.includes(sub)) {
+    if (!interaction.member?.permissions?.has(PermissionsBitField.Flags.Administrator)) {
+      return interaction.reply({
+        embeds: [errorEmbed("Access Denied", "Only administrators can use `/mcbot slot grant`, `revoke`, or `info`.")],
+        ephemeral: true,
+      });
+    }
+    await interaction.deferReply({ ephemeral: true });
+    return _handleSlotAdmin(interaction, sub);
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  if (sub === "status")    return _slotStatus(interaction, userId);
+  if (sub === "available") return _slotAvailable(interaction);
+  if (sub === "queue")     return _slotQueue(interaction, userId);
+  if (sub === "release")   return _slotRelease(interaction, userId);
+}
+
+// ── /mcbot slot status ────────────────────────────────────────
+async function _slotStatus(interaction, userId) {
+  const user  = db.getOrCreateUser(userId);
+  const slots = db.getSlotsForUser(userId);
+  const queue = db.getQueueForUser(userId);
+  const subActive = user.active && user.subscription_tier !== "none";
+
+  const embed = new EmbedBuilder()
+    .setTitle("🎫 Your KenzAI Subscription")
+    .setColor(subActive ? 0x00c853 : 0x9e9e9e)
+    .setFooter({ text: "KenzAI • Bot Slot Manager" })
+    .setTimestamp()
+    .addFields(
+      { name: "📦 Subscription Tier", value: tierBadge(user.subscription_tier), inline: true },
+      { name: "📊 Status",            value: subActive ? "🟢 Active" : "🔴 Inactive", inline: true },
+      { name: "🔧 Slots Used",        value: `${slots.length} / ${user.max_slots_allowed || 0}`, inline: true },
+      { name: "💳 Platform",          value: user.payment_platform ? `\`${user.payment_platform}\`` : "N/A", inline: true },
+      { name: "📅 Updated",           value: formatDate(user.updated_at), inline: true },
+    );
+
+  if (slots.length > 0) {
+    const lines = slots.map(s =>
+      `• \`${s.slot_id}\` — \`${s.mc_username}\` (${tierBadge(s.tier)}) started ${formatDate(s.start_time)}`
+    );
+    embed.addFields({ name: `🤖 Active Slots (${slots.length})`, value: lines.join("\n"), inline: false });
+  } else {
+    embed.addFields({ name: "🤖 Active Slots", value: "None", inline: false });
+  }
+
+  if (queue) {
+    const pos = db.getQueuePosition(userId);
+    embed.addFields({ name: "⏳ Queue Position", value: `#${pos} (${tierBadge(queue.tier)})`, inline: false });
+  }
+
+  if (!subActive) {
+    embed.setDescription("You don't have an active KenzAI subscription.\nContact an admin or subscribe via Patreon/Stripe to get bot slots.");
+  }
+
+  return interaction.editReply({ embeds: [embed] });
+}
+
+// ── /mcbot slot available ─────────────────────────────────────
+async function _slotAvailable(interaction) {
+  const avail      = getSlotAvailability();
+  const { total: queueTotal } = getQueueStats();
+
+  const embed = new EmbedBuilder()
+    .setTitle("🌐 Bot Slot Availability")
+    .setColor(0x2196f3)
+    .setFooter({ text: "KenzAI • Bot Slot Manager" })
+    .setTimestamp();
+
+  for (const [tier, info] of Object.entries(avail)) {
+    const bar = progressBar(info.occupied, info.total);
+    embed.addFields({
+      name:   tierBadge(tier),
+      value:  `${bar}\n**${info.available}** / ${info.total} available · ${info.maxPerUser} slot(s) per user`,
+      inline: false,
+    });
+  }
+
+  embed.addFields({ name: "⏳ Queue Length", value: `**${queueTotal}** user(s) waiting`, inline: false });
+  return interaction.editReply({ embeds: [embed] });
+}
+
+// ── /mcbot slot queue ─────────────────────────────────────────
+async function _slotQueue(interaction, userId) {
+  const entry = db.getQueueForUser(userId);
+
+  if (!entry) {
+    return interaction.editReply({
+      embeds: [infoEmbed("Not In Queue", "You're not currently in the bot slot queue.\nUse `/mcbot start` to request a slot.")],
+    });
+  }
+
+  const pos   = db.getQueuePosition(userId);
+  const stats = getQueueStats();
+
+  return interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setTitle("⏳ Your Queue Position")
+      .setColor(0xffd600)
+      .setFooter({ text: "KenzAI • Bot Slot Manager" })
+      .setTimestamp()
+      .addFields(
+        { name: "📍 Position",    value: `**#${pos}** of ${stats.total}`, inline: true },
+        { name: "📦 Tier",        value: tierBadge(entry.tier),           inline: true },
+        { name: "🎮 Account",     value: `\`${entry.mc_username}\``,      inline: true },
+        { name: "🕐 Queued Since", value: formatDate(entry.queued_at),    inline: false },
+      )
+      .setDescription("You'll receive a DM when a slot becomes available.")],
+  });
+}
+
+// ── /mcbot slot release ───────────────────────────────────────
+async function _slotRelease(interaction, userId) {
+  const slotIdOpt = interaction.options.getString("slot_id");
+  const slots     = db.getSlotsForUser(userId);
+
+  if (slots.length === 0) {
+    return interaction.editReply({ embeds: [infoEmbed("No Active Slots", "You have no active bot slots to release.")] });
+  }
+
+  let targetSlot;
+  if (slotIdOpt) {
+    targetSlot = slots.find(s => s.slot_id === slotIdOpt);
+    if (!targetSlot) {
+      return interaction.editReply({
+        embeds: [errorEmbed("Slot Not Found", `\`${slotIdOpt}\` is not one of your active slots.\nUse \`/mcbot slot status\` to see your slots.`)],
+      });
+    }
+  } else if (slots.length === 1) {
+    targetSlot = slots[0];
+  } else {
+    const list = slots.map(s => `• \`${s.slot_id}\` — \`${s.mc_username}\``).join("\n");
+    return interaction.editReply({
+      embeds: [infoEmbed("Specify a Slot", `You have **${slots.length}** active slots. Use \`/mcbot slot release slot_id:<id>\`:\n\n${list}`)],
+    });
+  }
+
+  const result = releaseSlot(targetSlot.slot_id, userId);
+  if (!result.success) {
+    return interaction.editReply({ embeds: [errorEmbed("Release Failed", result.message)] });
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("✅ Slot Released")
+    .setDescription(`Slot \`${targetSlot.slot_id}\` (\`${targetSlot.mc_username}\`) has been released.`)
+    .setColor(0x00c853)
+    .setFooter({ text: "KenzAI • Bot Slot Manager" })
+    .setTimestamp();
+
+  if (result.nextUser) {
+    embed.addFields({
+      name:  "📢 Queue Promoted",
+      value: `<@${result.nextUser.user_id}> has been promoted from the queue and assigned this slot.`,
+    });
+  }
+
+  return interaction.editReply({ embeds: [embed] });
+}
+
+// ── /mcbot slot grant|revoke|info ────────────────────────────
+async function _handleSlotAdmin(interaction, sub) {
+  const targetUser = interaction.options.getUser("user");
+  const tier       = interaction.options.getString("tier");
+  const targetId   = targetUser?.id;
+
+  if (sub === "grant") {
+    const result = grantSubscription(targetId, tier, "manual");
+    if (!result.success) {
+      return interaction.editReply({ embeds: [errorEmbed("Grant Failed", result.message)] });
+    }
+    return interaction.editReply({
+      embeds: [successEmbed("Subscription Granted",
+        `Granted **${tierBadge(tier)}** subscription to <@${targetId}>.\nThey can now use \`/mcbot slot status\` to check their slots.`
+      )],
+    });
+  }
+
+  if (sub === "revoke") {
+    const result = revokeSubscription(targetId, "manual");
+    return interaction.editReply({
+      embeds: [successEmbed("Subscription Revoked",
+        `Revoked subscription for <@${targetId}>.\n**${result.revokedSlots}** slot(s) released.`
+      )],
+    });
+  }
+
+  if (sub === "info") {
+    const user  = db.getOrCreateUser(targetId);
+    const slots = db.getSlotsForUser(targetId);
+    const queue = db.getQueueForUser(targetId);
+    const logs  = db.getLogsForUser(targetId, 5);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🔍 Subscription Info — <@${targetId}>`)
+      .setColor(0x2196f3)
+      .setFooter({ text: "KenzAI • Admin View" })
+      .setTimestamp()
+      .addFields(
+        { name: "📦 Tier",        value: tierBadge(user.subscription_tier), inline: true },
+        { name: "📊 Active",      value: user.active ? "🟢 Yes" : "🔴 No",  inline: true },
+        { name: "💳 Platform",    value: user.payment_platform || "N/A",    inline: true },
+        { name: "🆔 Payment ID",  value: user.payment_id       || "N/A",    inline: true },
+        { name: "🔧 Max Slots",   value: String(user.max_slots_allowed),    inline: true },
+        { name: "🤖 Active Slots", value: String(slots.length),            inline: true },
+      );
+
+    if (slots.length > 0) {
+      embed.addFields({ name: "Slots", value: slots.map(s => `\`${s.slot_id}\` ${s.mc_username} (${s.tier})`).join("\n") });
+    }
+    if (queue) {
+      embed.addFields({ name: "Queue", value: `Position #${db.getQueuePosition(targetId)}` });
+    }
+    if (logs.length > 0) {
+      embed.addFields({ name: "Recent Log", value: logs.map(l => `\`${l.action}\` (${l.tier}) ${formatDate(l.timestamp)}`).join("\n") });
+    }
+
+    return interaction.editReply({ embeds: [embed] });
+  }
+}
+
+// ============================================================
+// BOT START OUTCOME POLLING
+// ============================================================
+
+async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmMessage) {
+  const deadline     = Date.now() + BOT_START_POLL_DURATION_MS;
+  const pollInterval = 3000;
+  let lastCodeShown  = null;
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, pollInterval));
+
+    // ── Poll device code ───────────────────────────────────────
+    try {
+      const codeRes = await getDeviceCodeFromVps(discordId, minecraftUser);
+      if (codeRes.ok && codeRes.data?.pending) {
+        const { userCode, verificationUri } = codeRes.data;
+        if (userCode !== lastCodeShown) {
+          const isUpdate = lastCodeShown !== null;
+          console.log(`[/mcbot] 🔐 ${isUpdate ? "Updated" : "New"} device code for ${discordId}/${minecraftUser}: ${userCode}`);
+          try {
+            await dmChannel.send({
+              embeds: [new EmbedBuilder()
+                .setTitle(isUpdate ? "🔄 New Login Code Generated" : "🔐 Microsoft Login Required")
+                .setDescription(
+                  (isUpdate
+                    ? "⚠️ A new login code was generated. **Use this code instead** — the previous code is no longer valid.\n\n"
+                    : "Your Minecraft bot needs to authenticate with Microsoft.\n\n") +
+                  `**1.** Go to: **${verificationUri}**\n` +
+                  `**2.** Enter code: \`${userCode}\`\n\n` +
+                  "You have **5 minutes** to sign in. The bot will connect automatically once you log in."
+                )
+                .setColor(isUpdate ? 0xff9800 : 0x2196f3)
+                .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+                .setTimestamp()],
+            });
+            lastCodeShown = userCode;
+            await clearDeviceCodeOnVps(discordId, minecraftUser);
+          } catch (dmErr) {
+            console.error(`[/mcbot] ❌ Failed to DM device code to ${discordId}:`, dmErr.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[/mcbot] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
+    }
+
+    // ── Poll bot status ────────────────────────────────────────
+    try {
+      const statusRes = await getBotStatusFromVps(discordId, minecraftUser);
+      if (!statusRes.ok) continue;
+
+      const bot    = statusRes.data?.bot;
+      if (!bot) continue;
+      const status = bot.status;
+
+      if (status === "online") {
+        console.log(`[/mcbot] 🟢 Bot online for ${discordId}/${minecraftUser}`);
+        try {
+          await confirmMessage.edit({
+            embeds: [new EmbedBuilder()
+              .setTitle("🟢 Bot Online")
+              .setDescription(`Your Minecraft bot is now **online** on \`${bot.serverHost}:${bot.serverPort}\`.`)
+              .addFields(
+                { name: "🎮 __Minecraft User__", value: `\`${bot.minecraftUser}\``,                   inline: false },
+                { name: "📦 __Version__",        value: `\`${bot.version}\``,                         inline: false },
+                { name: "⏱️ __Uptime__",          value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
+              )
+              .setColor(0x00c853)
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+              .setTimestamp()],
+          });
+        } catch {}
+        return;
+      }
+
+      if (status === "error") {
+        console.log(`[/mcbot] 🔴 Bot error for ${discordId}/${minecraftUser}`);
+        const hints    = buildStatusHints(bot);
+        const hintText = hints.length > 0 ? `\n\n💡 ${hints.join("\n💡 ")}` : "";
+        try {
+          await confirmMessage.edit({
+            embeds: [new EmbedBuilder()
+              .setTitle("🔴 Bot Failed to Start")
+              .setDescription(`The bot encountered an error.\n\`\`\`${bot.spawnError || "Unknown error"}\`\`\`` + hintText)
+              .setColor(0xf44336)
+              .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+              .setTimestamp()],
+          });
+        } catch {}
+        return;
+      }
+    } catch (err) {
+      console.error(`[/mcbot] ❌ Status poll error for ${discordId}/${minecraftUser}:`, err.message);
+    }
+  }
+
+  // Deadline reached
+  console.warn(`[/mcbot] ⏰ Poll timed out for ${discordId}/${minecraftUser}`);
+  try {
+    await confirmMessage.edit({
+      embeds: [warningEmbed("Timed Out", "The bot start timed out. Use `/mcbot status` to check if the bot is running.")],
+    });
+  } catch {}
+}
 
 // ============================================================
 // STATUS EMBED BUILDERS
 // ============================================================
 
 function buildSingleStatusEmbed(bot) {
-  const hints = buildStatusHints(bot);
+  const hints    = buildStatusHints(bot);
   const hintText = hints.length > 0 ? `\n\n💡 ${hints.join("\n💡 ")}` : "";
 
   return new EmbedBuilder()
     .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.minecraftUser}`)
     .addFields(
-      { name: "🎮 __Account__", value: `> \`${bot.minecraftUser}\``, inline: false },
-      { name: "📊 __Status__", value: `> ${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
-      { name: "🌐 __Server__", value: `> \`${bot.serverHost}\``, inline: false },
-      { name: "⏱️ __Uptime__", value: `> \`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
-      ...(bot.spawnError ? [{ name: "⚠️ Error", value: bot.spawnError + hintText, inline: falsee }] : []),
+      { name: "🎮 __Account__", value: `> \`${bot.minecraftUser}\``,                        inline: false },
+      { name: "📊 __Status__",  value: `> ${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
+      { name: "🌐 __Server__",  value: `> \`${bot.serverHost}\``,                           inline: false },
+      { name: "⏱️ __Uptime__",  value: `> \`${formatUptime(bot.uptimeSeconds ?? 0)}\``,     inline: false },
+      ...(bot.spawnError ? [{ name: "⚠️ Error", value: bot.spawnError + hintText, inline: false }] : []),
     )
     .setColor(getStatusColor(bot.status))
     .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -817,13 +1134,12 @@ function buildSingleStatusEmbed(bot) {
 }
 
 function buildMultiStatusEmbed(bots) {
-  const lines = bots.map((b) =>
-    `• \`${b.minecraftUser}\` → \`${b.serverHost}\` [${getStatusEmoji(b.status)}⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}`
+  const lines = bots.map(b =>
+    `• \`${b.minecraftUser}\` → \`${b.serverHost}\` [${getStatusEmoji(b.status)}] ⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}`
   );
-
   return new EmbedBuilder()
     .setTitle(`🤖 Your Active Bots (${bots.length})`)
-    .setDescription(lines.join("\n") + "\n\n\n*Use `/mcbot status account:<username>` for details on a specific bot.*")
+    .setDescription(lines.join("\n") + "\n\n*Use `/mcbot status account:<username>` for details on a specific bot.*")
     .setColor(0x2196f3)
     .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
     .setTimestamp();

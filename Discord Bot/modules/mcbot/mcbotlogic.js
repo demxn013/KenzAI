@@ -1,59 +1,57 @@
 // Discord Bot/modules/mcbot/mcbotlogic.js
-// Logic layer between /mcbot commands and the VPS bot server.
-// Handles member validation and all VPS HTTP API calls.
+// Security validation layer for /mcbot command.
+// Validates members against members.json, empireids.json, kicked/banned lists.
+// Makes authenticated HTTP calls to the VPS bot API.
 
 "use strict";
 
-const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
+
+const dataDir = path.join(__dirname, "..", "data");
+const membersPath = path.join(dataDir, "members.json");
+const empireIdsPath = path.join(dataDir, "empireids.json");
+const kickedMembersPath = path.join(dataDir, "kicked_members.json");
+const bannedMembersPath = path.join(dataDir, "banned_members.json");
 
 // ============================================================
-// DATA PATHS
+// CONFIG — loaded from process.env (KenzAI's .env)
+// MCBOT_VPS_URL  — e.g. "http://123.45.67.89:4823"
+// MCBOT_API_KEY  — must match API_KEY in VPS .env
 // ============================================================
 
-const membersPath = path.join(__dirname, "../../data/members.json");
-const bannedMembersPath = path.join(__dirname, "../../data/bannedMembers.json");
-const kickedMembersPath = path.join(__dirname, "../../data/kickedMembers.json");
-const empireIdsPath = path.join(__dirname, "../../data/empireIds.json");
+function getVpsUrl() {
+  const url = process.env.MCBOT_VPS_URL;
+  if (!url) throw new Error("MCBOT_VPS_URL is not set in .env");
+  return url.replace(/\/$/, "");
+}
+
+function getApiKey() {
+  const key = process.env.MCBOT_API_KEY;
+  if (!key) throw new Error("MCBOT_API_KEY is not set in .env");
+  return key;
+}
 
 // ============================================================
-// HELPERS
+// DATA READERS
 // ============================================================
 
 function readJSON(filePath) {
   try {
     if (!fs.existsSync(filePath)) return {};
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error(`[mcbotlogic] ❌ Error reading ${path.basename(filePath)}:`, err.message);
     return {};
   }
 }
 
-function getVpsUrl() {
-  const url = process.env.VPS_URL;
-  if (!url || url.trim() === "") {
-    throw new Error("VPS_URL is not configured in environment variables.");
-  }
-  return url.replace(/\/$/, "");
-}
-
-function getApiKey() {
-  const key = process.env.VPS_API_KEY;
-  if (!key || key.trim() === "") {
-    throw new Error("VPS_API_KEY is not configured in environment variables.");
-  }
-  return key;
-}
-
 // ============================================================
-// MEMBER VALIDATION
+// SECURITY VALIDATION
 // ============================================================
 
-/**
- * Validate that a Discord user is an active, non-banned,
- * non-kicked Yazanaki Empire member with a Minecraft account linked.
- */
 function validateMember(discordId) {
   console.log(`[mcbotlogic] 🔍 Validating member: ${discordId}`);
 
@@ -137,16 +135,8 @@ function validateMember(discordId) {
 
 // ============================================================
 // FIND OWNER BY MINECRAFT USERNAME
-// Scans members.json for the Discord ID whose minecraftUser
-// matches the given MC username (case-insensitive).
-// Used to route confirmation DMs to the account owner.
 // ============================================================
 
-/**
- * Find the Discord ID that owns a given Minecraft username.
- * @param {string} minecraftUser
- * @returns {string|null} discordId or null if not found
- */
 function findOwnerByMinecraftUser(minecraftUser) {
   const members = readJSON(membersPath);
   const lower = minecraftUser.toLowerCase();
@@ -158,7 +148,6 @@ function findOwnerByMinecraftUser(minecraftUser) {
 
 // ============================================================
 // VPS API CLIENT
-// Makes authenticated HTTP requests to the VPS bot server.
 // ============================================================
 
 function vpsRequest(method, endpoint, body = null) {
@@ -230,8 +219,6 @@ async function startBotOnVps(discordId, minecraftUser, serverAddress, version) {
 
 /**
  * Stop a specific bot by discordId + minecraftUser.
- * @param {string} discordId
- * @param {string} minecraftUser
  */
 async function stopBotOnVps(discordId, minecraftUser) {
   return vpsRequest("POST", "/stop", { discordId, minecraftUser });
@@ -239,8 +226,6 @@ async function stopBotOnVps(discordId, minecraftUser) {
 
 /**
  * Get status for a specific (discordId, minecraftUser) bot.
- * @param {string} discordId
- * @param {string} minecraftUser
  */
 async function getBotStatusFromVps(discordId, minecraftUser) {
   return vpsRequest("GET", `/status/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
@@ -248,7 +233,6 @@ async function getBotStatusFromVps(discordId, minecraftUser) {
 
 /**
  * Get statuses of ALL bots running for a given Discord user.
- * @param {string} discordId
  */
 async function getUserBotsFromVps(discordId) {
   return vpsRequest("GET", `/bots/${encodeURIComponent(discordId)}`);
@@ -266,10 +250,6 @@ async function stopAllBotsOnVps() {
 
 /**
  * Poll the VPS for a pending Microsoft device code for a specific bot.
- * Returns { ok: true, pending: true, userCode, verificationUri, expiresAt }
- * or      { ok: false, pending: false } if no code is waiting.
- * @param {string} discordId
- * @param {string} minecraftUser
  */
 async function getDeviceCodeFromVps(discordId, minecraftUser) {
   return vpsRequest("GET", `/devicecode/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
@@ -277,8 +257,6 @@ async function getDeviceCodeFromVps(discordId, minecraftUser) {
 
 /**
  * Tell the VPS to clear the device code for a specific bot (after DMing the user).
- * @param {string} discordId
- * @param {string} minecraftUser
  */
 async function clearDeviceCodeOnVps(discordId, minecraftUser) {
   return vpsRequest("DELETE", `/devicecode/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);

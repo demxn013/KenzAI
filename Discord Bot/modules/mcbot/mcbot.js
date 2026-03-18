@@ -41,8 +41,10 @@ const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 // Confirmation timeout: 3 minutes
 const CONFIRMATION_TIMEOUT_MS = 3 * 60 * 1000;
 
-// How long to poll for bot start outcome (device code + online status)
-const BOT_START_POLL_DURATION_MS = 60000;
+// How long to poll for bot start outcome (device code + online status).
+// Must be at least as long as the VPS spawn timeout for interactive auth (5 min)
+// so the Discord embed keeps updating while the user completes Microsoft sign-in.
+const BOT_START_POLL_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 // ============================================================
 // SERVER → VERSION MAP
@@ -183,7 +185,7 @@ function buildConfirmRow(userId, disabled = false) {
 
 // ============================================================
 // BOT START OUTCOME POLLING
-// After /start succeeds, runs async for up to 60s to:
+// After /start succeeds, runs async for up to BOT_START_POLL_DURATION_MS to:
 //   1. Check for a Microsoft device code and DM it if found
 //   2. Poll /status/:discordId until the bot is "online" or "error"
 //   3. Update the DM confirmation embed with final outcome
@@ -209,7 +211,8 @@ async function pollBotStartOutcome(discordId, user, dmChannel, confirmMessage) {
                 "Your Minecraft bot needs to authenticate with Microsoft.\n\n" +
                 `**1.** Go to: **${verificationUri}**\n` +
                 `**2.** Enter code: \`${userCode}\`\n\n` +
-                "The bot will connect automatically once you log in."
+                "You have **5 minutes** to sign in. The bot will connect automatically once you log in.\n" +
+                "This message will update when the bot comes online."
               )
               .setColor(0x2196f3)
               .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -255,7 +258,7 @@ async function pollBotStartOutcome(discordId, user, dmChannel, confirmMessage) {
       }
 
       if (status === "error") {
-        const errMsg = bot.errorMessage || "Unknown error";
+        const errMsg = bot.spawnError || bot.errorMessage || "Unknown error";
         console.warn(`[/mcbot] ❌ Bot failed for ${discordId}: ${errMsg}`);
         try {
           await confirmMessage.edit({
@@ -265,6 +268,7 @@ async function pollBotStartOutcome(discordId, user, dmChannel, confirmMessage) {
                 `Your bot could not connect to the server.\n\n` +
                 `**Reason:** ${errMsg}\n\n` +
                 `Common causes:\n` +
+                `• Microsoft sign-in was not completed in time\n` +
                 `• Server is offline or unreachable\n` +
                 `• Server requires authentication or whitelisting\n` +
                 `• Contact an admin if the issue persists`
@@ -282,7 +286,7 @@ async function pollBotStartOutcome(discordId, user, dmChannel, confirmMessage) {
     }
   }
 
-  // 60s passed — bot still connecting (unusual, but possible on slow servers)
+  // 5 minutes passed — bot still connecting
   console.warn(`[/mcbot] ⏰ Outcome poll timed out for ${discordId} — bot may still be connecting`);
   try {
     await confirmMessage.edit({
@@ -543,7 +547,7 @@ module.exports = {
         return interaction.editReply({
           embeds: [warningEmbed(
             "Confirmation Pending",
-            "You already have a pending bot start confirmation in your DMs. Please respond to that first."
+            "You already have a pending bot start confirmation in your DMs.\nPlease respond to that first."
           )],
         });
       }
@@ -859,7 +863,8 @@ module.exports = {
           .setTitle("🔵 Bot Connecting...")
           .setDescription(
             `Your bot is connecting to **\`${pending.serverAddress}\`**.\n` +
-            `If Microsoft auth is needed, you'll receive another DM shortly with a login link.`
+            `If Microsoft auth is needed, you'll receive another DM shortly with a login link.\n` +
+            `This message will update automatically (up to 5 minutes).`
           )
           .addFields(
             { name: "🎮 Minecraft User", value: `\`${pending.minecraftUser}\``, inline: true },

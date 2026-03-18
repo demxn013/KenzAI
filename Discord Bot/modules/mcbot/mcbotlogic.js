@@ -1,66 +1,58 @@
 // Discord Bot/modules/mcbot/mcbotlogic.js
-// Security validation layer for /mcbot command.
-// Validates members against members.json, empireids.json, kicked/banned lists.
-// Makes authenticated HTTP calls to the VPS bot API.
+// Logic layer between /mcbot commands and the VPS bot server.
+// Handles member validation and all VPS HTTP API calls.
 
 "use strict";
 
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const http = require("http");
-
-const dataDir = path.join(__dirname, "..", "data");
-const membersPath = path.join(dataDir, "members.json");
-const empireIdsPath = path.join(dataDir, "empireids.json");
-const kickedMembersPath = path.join(dataDir, "kicked_members.json");
-const bannedMembersPath = path.join(dataDir, "banned_members.json");
 
 // ============================================================
-// CONFIG — loaded from process.env (KenzAI's .env)
-// MCBOT_VPS_URL  — e.g. "http://123.45.67.89:4823"
-// MCBOT_API_KEY  — must match API_KEY in VPS .env
+// DATA PATHS
 // ============================================================
 
-function getVpsUrl() {
-  const url = process.env.MCBOT_VPS_URL;
-  if (!url) throw new Error("MCBOT_VPS_URL is not set in .env");
-  return url.replace(/\/$/, "");
-}
-
-function getApiKey() {
-  const key = process.env.MCBOT_API_KEY;
-  if (!key) throw new Error("MCBOT_API_KEY is not set in .env");
-  return key;
-}
+const membersPath = path.join(__dirname, "../../data/members.json");
+const bannedMembersPath = path.join(__dirname, "../../data/bannedMembers.json");
+const kickedMembersPath = path.join(__dirname, "../../data/kickedMembers.json");
+const empireIdsPath = path.join(__dirname, "../../data/empireIds.json");
 
 // ============================================================
-// DATA READERS
+// HELPERS
 // ============================================================
 
 function readJSON(filePath) {
   try {
     if (!fs.existsSync(filePath)) return {};
-    const raw = fs.readFileSync(filePath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error(`[mcbotlogic] ❌ Error reading ${path.basename(filePath)}:`, err.message);
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
     return {};
   }
 }
 
+function getVpsUrl() {
+  const url = process.env.VPS_URL;
+  if (!url || url.trim() === "") {
+    throw new Error("VPS_URL is not configured in environment variables.");
+  }
+  return url.replace(/\/$/, "");
+}
+
+function getApiKey() {
+  const key = process.env.VPS_API_KEY;
+  if (!key || key.trim() === "") {
+    throw new Error("VPS_API_KEY is not configured in environment variables.");
+  }
+  return key;
+}
+
 // ============================================================
-// SECURITY VALIDATION
-// Checks (in order):
-//   1. User exists in members.json (is an active empire member)
-//   2. User is NOT in banned_members.json (permanent ban)
-//   3. User is NOT in kicked_members.json (3-month cooldown still active)
-//   4. User has an active EmpireID in empireids.json
-// Returns { valid: true, member, empireId, minecraftUser }
-//      or { valid: false, reason, message }
+// MEMBER VALIDATION
 // ============================================================
 
 /**
- * Validate that a Discord user is allowed to use the mcbot system.
+ * Validate that a Discord user is an active, non-banned,
+ * non-kicked Yazanaki Empire member with a Minecraft account linked.
  */
 function validateMember(discordId) {
   console.log(`[mcbotlogic] 🔍 Validating member: ${discordId}`);
@@ -236,14 +228,30 @@ async function startBotOnVps(discordId, minecraftUser, serverAddress, version) {
   return vpsRequest("POST", "/start", { discordId, minecraftUser, serverAddress, version });
 }
 
-/** Stop a user's bot */
-async function stopBotOnVps(discordId) {
-  return vpsRequest("POST", "/stop", { discordId });
+/**
+ * Stop a specific bot by discordId + minecraftUser.
+ * @param {string} discordId
+ * @param {string} minecraftUser
+ */
+async function stopBotOnVps(discordId, minecraftUser) {
+  return vpsRequest("POST", "/stop", { discordId, minecraftUser });
 }
 
-/** Get a user's bot status */
-async function getBotStatusFromVps(discordId) {
-  return vpsRequest("GET", `/status/${discordId}`);
+/**
+ * Get status for a specific (discordId, minecraftUser) bot.
+ * @param {string} discordId
+ * @param {string} minecraftUser
+ */
+async function getBotStatusFromVps(discordId, minecraftUser) {
+  return vpsRequest("GET", `/status/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
+}
+
+/**
+ * Get statuses of ALL bots running for a given Discord user.
+ * @param {string} discordId
+ */
+async function getUserBotsFromVps(discordId) {
+  return vpsRequest("GET", `/bots/${encodeURIComponent(discordId)}`);
 }
 
 /** List all active bots (admin) */
@@ -257,19 +265,23 @@ async function stopAllBotsOnVps() {
 }
 
 /**
- * Poll the VPS for a pending Microsoft device code for this user.
+ * Poll the VPS for a pending Microsoft device code for a specific bot.
  * Returns { ok: true, pending: true, userCode, verificationUri, expiresAt }
  * or      { ok: false, pending: false } if no code is waiting.
+ * @param {string} discordId
+ * @param {string} minecraftUser
  */
-async function getDeviceCodeFromVps(discordId) {
-  return vpsRequest("GET", `/devicecode/${discordId}`);
+async function getDeviceCodeFromVps(discordId, minecraftUser) {
+  return vpsRequest("GET", `/devicecode/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
 }
 
 /**
- * Tell the VPS to clear the device code for a user (after DMing them).
+ * Tell the VPS to clear the device code for a specific bot (after DMing the user).
+ * @param {string} discordId
+ * @param {string} minecraftUser
  */
-async function clearDeviceCodeOnVps(discordId) {
-  return vpsRequest("DELETE", `/devicecode/${discordId}`);
+async function clearDeviceCodeOnVps(discordId, minecraftUser) {
+  return vpsRequest("DELETE", `/devicecode/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
 }
 
 module.exports = {
@@ -279,6 +291,7 @@ module.exports = {
   startBotOnVps,
   stopBotOnVps,
   getBotStatusFromVps,
+  getUserBotsFromVps,
   listAllBotsOnVps,
   stopAllBotsOnVps,
   getDeviceCodeFromVps,

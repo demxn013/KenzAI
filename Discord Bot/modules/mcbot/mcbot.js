@@ -803,12 +803,12 @@ function buildSingleStatusEmbed(bot) {
   const hintText = hints.length > 0 ? `\n\n💡 ${hints.join("\n💡 ")}` : "";
 
   return new EmbedBuilder()
-    .setTitle(`${getStatusEmoji(bot.status)} Bot Status — \`${bot.minecraftUser}\``)
+    .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.minecraftUser}`)
     .addFields(
-      { name: "🎮 __Account__", value: `\`${bot.minecraftUser}\``, inline: false },
-      { name: "📊 __Status__", value: `${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
-      { name: "🌐 __Server__", value: `\`${bot.serverHost}\``, inline: false },
-      { name: "⏱️ __Uptime__", value: `\`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
+      { name: "🎮 __Account__", value: `> \`${bot.minecraftUser}\``, inline: false },
+      { name: "📊 __Status__", value: `> ${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
+      { name: "🌐 __Server__", value: `> \`${bot.serverHost}\``, inline: false },
+      { name: "⏱️ __Uptime__", value: `> \`${formatUptime(bot.uptimeSeconds ?? 0)}\``, inline: false },
       ...(bot.spawnError ? [{ name: "⚠️ Error", value: bot.spawnError + hintText, inline: falsee }] : []),
     )
     .setColor(getStatusColor(bot.status))
@@ -823,7 +823,7 @@ function buildMultiStatusEmbed(bots) {
 
   return new EmbedBuilder()
     .setTitle(`🤖 Your Active Bots (${bots.length})`)
-    .setDescription(lines.join("\n") + "\n\nUse `/mcbot status account:<username>` for details on a specific bot.")
+    .setDescription(lines.join("\n") + "\n\n\n*Use `/mcbot status account:<username>` for details on a specific bot.*")
     .setColor(0x2196f3)
     .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
     .setTimestamp();

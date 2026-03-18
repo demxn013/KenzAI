@@ -19,9 +19,9 @@ const { handleDraftChoice } = require('./modules/empire/draftlogic');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
 
 // ============================================================
-// ✅ MONETIZATION IMPORTS
+// ✅ PATREON POLLER
 // ============================================================
-const { startWebhookServer } = require('./modules/mcbot/monetization/webhookserver');
+const { startPatreonPoller } = require('./modules/mcbot/monetization/patreonpoller');
 
 // ============================================================
 // CLIENT SETUP
@@ -310,17 +310,11 @@ client.on('ready', async () => {
   setupPointsEvents(client);
 
   // ============================================================
-  // ✅ MONETIZATION WEBHOOK SERVER
-  // Only starts if WEBHOOK_PORT is set in .env.
-  // Set REQUIRE_SUBSCRIPTION=true to enforce subscriptions in /mcbot.
+  // ✅ PATREON POLLER
+  // Polls Patreon API to sync patron subscriptions automatically.
+  // Requires PATREON_ACCESS_TOKEN in .env. Silently skips if not set.
   // ============================================================
-  if (process.env.WEBHOOK_PORT) {
-    console.log("💳 Starting monetization webhook server...");
-    startWebhookServer(client);
-  } else {
-    console.log("💳 Monetization webhook server skipped (WEBHOOK_PORT not set)");
-    console.log("   Set WEBHOOK_PORT in .env and configure Patreon/Stripe to enable.");
-  }
+  startPatreonPoller(client);
 });
 
 // ============================================================

@@ -2,6 +2,7 @@
 // ✅ FIXED: Smart command deployment - only deploys when needed
 // ✅ UPDATED: Added court request interaction handlers
 // ✅ UPDATED: Added DirectMessages intent + Partials for DM button support (mcbot)
+// ✅ UPDATED: Added autocomplete routing to interactionCreate handler
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes, Partials } = require('discord.js');
@@ -323,6 +324,19 @@ client.on('interactionCreate', async (interaction) => {
     if (mcbotCommand?.buttonHandler) {
       await mcbotCommand.buttonHandler(interaction).catch(err => {
         console.error('[interactions] ❌ mcbot DM buttonHandler error:', err);
+      });
+    }
+    return;
+  }
+
+  // ============================================================
+  // ✅ AUTOCOMPLETE INTERACTIONS
+  // ============================================================
+  if (interaction.isAutocomplete()) {
+    const command = client.commands.get(interaction.commandName);
+    if (command?.autocomplete) {
+      await command.autocomplete(interaction).catch(err => {
+        console.error(`[interactions] ❌ Autocomplete error in /${interaction.commandName}:`, err);
       });
     }
     return;

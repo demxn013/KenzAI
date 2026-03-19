@@ -19,6 +19,58 @@ const autolink = require("../linking/autolink");
 const { acceptApplicant } = require("./acceptedapplicants.js");
 const { checkApplicationEligibility } = require("../membertracking/memberkickban"); // ✅ NEW
 
+/**
+ * Build permission overwrites for a new ticket channel.
+ * Inherits all overwrites from the parent category, then adds/merges
+ * the applicant's personal overwrite and the bot's overwrite on top.
+ * This ensures every role that can see the category can also see the ticket.
+ */
+function buildTicketOverwrites(category, applicantId, botId) {
+  // Copy all existing category overwrites (roles + specific users already set there)
+  const overwrites = category.permissionOverwrites.cache.map(overwrite => ({
+    id: overwrite.id,
+    allow: overwrite.allow,
+    deny: overwrite.deny,
+    type: overwrite.type
+  }));
+
+  // Add (or override) the applicant's personal overwrite
+  const existingApplicantIdx = overwrites.findIndex(o => o.id === applicantId);
+  const applicantOverwrite = {
+    id: applicantId,
+    allow: [
+      PermissionsBitField.Flags.ViewChannel,
+      PermissionsBitField.Flags.SendMessages,
+      PermissionsBitField.Flags.AttachFiles,
+      PermissionsBitField.Flags.EmbedLinks
+    ]
+  };
+  if (existingApplicantIdx !== -1) {
+    overwrites[existingApplicantIdx] = applicantOverwrite;
+  } else {
+    overwrites.push(applicantOverwrite);
+  }
+
+  // Add (or override) the bot's overwrite
+  const existingBotIdx = overwrites.findIndex(o => o.id === botId);
+  const botOverwrite = {
+    id: botId,
+    allow: [
+      PermissionsBitField.Flags.ViewChannel,
+      PermissionsBitField.Flags.SendMessages,
+      PermissionsBitField.Flags.ManageChannels,
+      PermissionsBitField.Flags.ManageMessages
+    ]
+  };
+  if (existingBotIdx !== -1) {
+    overwrites[existingBotIdx] = botOverwrite;
+  } else {
+    overwrites.push(botOverwrite);
+  }
+
+  return overwrites;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("application")
@@ -53,7 +105,7 @@ module.exports = {
     // 🟢 Open Application Ticket (Modal)
     if (interaction.customId === "start_application") {
       // ============================================================
-      // ✅ NEW: CHECK KICK/BAN STATUS BEFORE ALLOWING APPLICATION
+      // ✅ CHECK KICK/BAN STATUS BEFORE ALLOWING APPLICATION
       // ============================================================
       const eligibility = checkApplicationEligibility(interaction.user.id);
       
@@ -62,7 +114,6 @@ module.exports = {
         console.log(`[application] 📋 Status: ${eligibility.status}`);
         console.log(`[application] 📋 Reason: ${eligibility.reason}`);
         
-        // User is banned or on kick cooldown
         return interaction.reply({
           content: eligibility.message,
           ephemeral: true
@@ -208,11 +259,9 @@ module.exports = {
         console.log(`[application] 📊 Status: ${applicantData.accepted ? 'Accepted' : 'Rejected'}`);
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        // ✅ DISABLE ONLY THE ACCEPT AND REJECT BUTTONS, KEEP CLOSE BUTTON
         try {
           const currentMessage = interaction.message;
           
-          // Rebuild the buttons with Accept/Reject disabled
           const newRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId("close_ticket")
@@ -222,12 +271,12 @@ module.exports = {
               .setCustomId(`accept_application_${discordId}`)
               .setLabel("✅ Accept")
               .setStyle(ButtonStyle.Success)
-              .setDisabled(true), // ✅ Disabled
+              .setDisabled(true),
             new ButtonBuilder()
               .setCustomId(`reject_application_${discordId}`)
               .setLabel("❌ Reject")
               .setStyle(ButtonStyle.Danger)
-              .setDisabled(true) // ✅ Disabled
+              .setDisabled(true)
           );
 
           await currentMessage.edit({ components: [newRow] });
@@ -253,11 +302,9 @@ module.exports = {
       // ✅ PROCESS THE APPLICATION (FIRST TIME ONLY)
       // ============================================================
       
-      // Normalize values from applicantData
       const savedMCUser = applicantData.minecraftUser || applicantData.minecraftName || "";
       const savedMCVersion = applicantData.minecraftVersion || applicantData.minecraftVersion || "";
 
-      // Save applicant with unified fields
       saveApplicant(
         discordId,
         {
@@ -275,7 +322,7 @@ module.exports = {
         applicantData.server ?? interaction.guild.id,
         applicantData.closeReason ?? null,
         isAccepted,
-        new Date().toISOString() // ✅ This is the FIRST and ONLY close date
+        new Date().toISOString()
       );
 
       console.log(`[application] 📝 Application marked as ${isAccepted ? 'accepted' : 'rejected'}`);
@@ -296,12 +343,12 @@ module.exports = {
             .setCustomId(`accept_application_${discordId}`)
             .setLabel("✅ Accept")
             .setStyle(ButtonStyle.Success)
-            .setDisabled(true), // ✅ Disabled
+            .setDisabled(true),
           new ButtonBuilder()
             .setCustomId(`reject_application_${discordId}`)
             .setLabel("❌ Reject")
             .setStyle(ButtonStyle.Danger)
-            .setDisabled(true) // ✅ Disabled
+            .setDisabled(true)
         );
 
         await currentMessage.edit({ components: [newRow] });
@@ -380,7 +427,7 @@ module.exports = {
       }
 
       // ============================================================
-      // ✅ NOTIFY APPLICANT IN CHANNEL (visible to them, with real ping)
+      // ✅ NOTIFY APPLICANT IN CHANNEL
       // ============================================================
       const resultEmbed = new EmbedBuilder()
         .setTitle(isAccepted ? "✅ Application Accepted" : "❌ Application Denied")
@@ -441,31 +488,19 @@ module.exports = {
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")}-${ticketNumber}`;
 
+      // ✅ FIXED: Inherit category permissions so staff roles with category
+      // access can see the ticket, while still granting applicant personal access.
+      const permissionOverwrites = buildTicketOverwrites(
+        category,
+        interaction.user.id,
+        guild.members.me.id
+      );
+
       const channel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
         parent: category.id,
-        permissionOverwrites: [
-          { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-          {
-            id: interaction.user.id,
-            allow: [
-              PermissionsBitField.Flags.ViewChannel,
-              PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.AttachFiles,
-              PermissionsBitField.Flags.EmbedLinks
-            ]
-          },
-          {
-            id: guild.members.me.id,
-            allow: [
-              PermissionsBitField.Flags.ViewChannel,
-              PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.ManageChannels,
-              PermissionsBitField.Flags.ManageMessages
-            ]
-          }
-        ]
+        permissionOverwrites
       });
 
       // ✅ FIXED: Save applicant IMMEDIATELY with minecraftUser field
@@ -476,7 +511,7 @@ module.exports = {
       saveApplicant(interaction.user.id, {
         discordId: interaction.user.id,
         discordUser: interaction.user.tag,
-        minecraftUser: mcName, // ✅ FIXED: Using minecraftUser instead of minecraftName
+        minecraftUser: mcName,
         ticketChannel: channel.id,
         ticketNumber,
         minecraftVersion: mcVersion,
@@ -495,7 +530,6 @@ module.exports = {
       // ✅ FIXED: Run autolink AFTER saving, with async/await
       console.log(`[application] 🔗 Starting autolink process...`);
       
-      // Run autolink asynchronously (don't wait for it to complete the modal response)
       autolink.processApplicant(interaction.user.id, 1000).then(result => {
         if (result.success) {
           console.log(`[application] ✅ Autolink successful: ${result.minecraftUser}`);
@@ -561,7 +595,7 @@ module.exports = {
           .setStyle(ButtonStyle.Danger)
       );
 
-      // Ping applicant in message content so they actually get notified (embeds don't trigger pings)
+      // Ping applicant in message content so they actually get notified
       await channel.send({
         content: `<@${interaction.user.id}>`,
         embeds: [infoEmbed, termsEmbed],

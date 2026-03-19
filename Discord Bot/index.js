@@ -1,9 +1,6 @@
 // index.js
-// ✅ FIXED: Smart command deployment - only deploys when needed
-// ✅ UPDATED: Added court request interaction handlers
-// ✅ UPDATED: Added DirectMessages intent + Partials for DM button support (mcbot)
-// ✅ UPDATED: Added autocomplete routing to interactionCreate handler
-// ✅ UPDATED: Added monetization webhook server startup
+// Handles: bot startup, command loading/deployment, event loading.
+// All interaction handling lives in events/interactionCreate.js.
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes, Partials } = require('discord.js');
@@ -12,16 +9,10 @@ const path = require('path');
 const crypto = require('crypto');
 
 // ============================================================
-// ✅ DRAFT SYSTEM IMPORTS
+// IMPORTS
 // ============================================================
 const { startScheduler } = require('./modules/empire/draftscheduler');
-const { handleDraftChoice } = require('./modules/empire/draftlogic');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
-
-// ============================================================
-// ✅ PATREON POLLER
-// ============================================================
-const { startPatreonPoller } = require('./modules/mcbot/monetization/patreonpoller');
 
 // ============================================================
 // CLIENT SETUP
@@ -33,60 +24,67 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.DirectMessages,   // ✅ Required for DM button interactions (mcbot verification)
+    GatewayIntentBits.DirectMessages,
   ],
   partials: [
-    Partials.Channel,   // ✅ Required for DM channel interactions to fire
-    Partials.Message,   // ✅ Required for DM message events to fire
+    Partials.Channel,
+    Partials.Message,
   ],
 });
 
 client.commands = new Collection();
 
 // ============================================================
-// ✅ AUTO-CLEAR MODE (Set to true ONCE to clear duplicates)
+// CONFIG FLAGS
 // ============================================================
-const AUTO_CLEAR_COMMANDS = false; // ✅ SET TO TRUE, restart bot, then SET BACK TO FALSE
+const AUTO_CLEAR_COMMANDS = false;
+const FORCE_DEPLOY = false;
+const DEPLOYMENT_MODE = 'all-guilds';
 
 // ============================================================
-// ✅ FORCE DEPLOY COMMANDS (Set to true ONCE to force deploy commands)
+// EVENT LOADER
+// Reads every file in ./events/ and registers it with the client.
+// This is what makes events/interactionCreate.js actually run.
 // ============================================================
-const FORCE_DEPLOY = false; 
+const eventsPath = path.join(__dirname, 'events');
+const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
+
+for (const file of eventFiles) {
+  const filePath = path.join(eventsPath, file);
+  try {
+    const event = require(filePath);
+    if (event.once) {
+      client.once(event.name, (...args) => event.execute(...args));
+    } else {
+      client.on(event.name, (...args) => event.execute(...args));
+    }
+    console.log(`✅ Registered event: ${event.name} (from events/${file})`);
+  } catch (err) {
+    console.warn(`⚠️ Failed to load event events/${file}:`, err.message);
+  }
+}
 
 // ============================================================
-// COMMAND DEPLOYMENT MODE
-// ============================================================
-// Set to 'all-guilds' to deploy to every server (instant updates)
-// Set to 'global' for global commands (1-hour propagation)
-const DEPLOYMENT_MODE = 'all-guilds'; // ✅ DEPLOY TO ALL GUILDS
-
-// ============================================================
-// ✅ SMART COMMAND DEPLOYMENT (prevents duplicates)
+// COMMAND DEPLOYMENT
 // ============================================================
 async function deployCommands(force = false, targetGuildId = null) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🔄 LOADING COMMANDS...');
-  
+
   const commands = [];
   const commandFolders = fs.readdirSync('./modules');
 
-  // Load all commands
   for (const folder of commandFolders) {
     const folderPath = path.join('./modules', folder);
-    
     if (!fs.statSync(folderPath).isDirectory()) continue;
-    
+
     const commandFiles = fs.readdirSync(folderPath).filter(file => file.endsWith('.js'));
-    
+
     for (const file of commandFiles) {
       const filePath = path.join(folderPath, file);
-      
       try {
-        // Clear cache to get latest version
         delete require.cache[require.resolve(`./${filePath}`)];
-        
         const command = require(`./${filePath}`);
-        
         if ('data' in command && 'execute' in command) {
           client.commands.set(command.data.name, command);
           commands.push(command.data.toJSON());
@@ -104,154 +102,96 @@ async function deployCommands(force = false, targetGuildId = null) {
     return;
   }
 
-  // ============================================================
-  // CHECK IF DEPLOYMENT IS NEEDED
-  // ============================================================
-  const commandsHash = crypto
-    .createHash('md5')
-    .update(JSON.stringify(commands))
-    .digest('hex');
-
+  const commandsHash = crypto.createHash('md5').update(JSON.stringify(commands)).digest('hex');
   const hashFile = path.join(__dirname, '.commands-hash');
   let lastHash = '';
-  
-  if (fs.existsSync(hashFile)) {
-    lastHash = fs.readFileSync(hashFile, 'utf8').trim();
-  }
+  if (fs.existsSync(hashFile)) lastHash = fs.readFileSync(hashFile, 'utf8').trim();
 
-  // ✅ Check if deployment should be skipped (unless forced)
   if (!force && !FORCE_DEPLOY && commandsHash === lastHash) {
     console.log('✅ Commands unchanged - skipping deployment');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     return;
   }
-  
-  if (FORCE_DEPLOY && !force) {
-    console.log('⚡ FORCE_DEPLOY enabled - deploying regardless of changes\n');
-  }
 
-  // ============================================================
-  // DEPLOY TO DISCORD
-  // ============================================================
+  if (FORCE_DEPLOY && !force) console.log('⚡ FORCE_DEPLOY enabled - deploying regardless of changes\n');
+
   try {
     const rest = new REST().setToken(process.env.TOKEN);
-    
     console.log(`\n🔄 Deploying ${commands.length} commands in ${DEPLOYMENT_MODE.toUpperCase()} mode...`);
-    
+
     if (DEPLOYMENT_MODE === 'all-guilds') {
-      // ✅ GET FRESH GUILD LIST
       console.log('📡 Fetching latest guild list from Discord...');
-      
       const fetchedGuilds = await client.guilds.fetch();
-      console.log(`📍 Target: ${targetGuildId ? 1 : fetchedGuilds.size} guild(s)`);
-      console.log(`⚡ Updates: INSTANT\n`);
-      
+      console.log(`📍 Target: ${targetGuildId ? 1 : fetchedGuilds.size} guild(s)\n`);
+
       if (fetchedGuilds.size === 0) {
         console.error('❌ Bot is not in any guilds!');
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         return;
       }
-      
+
       let successCount = 0;
       let failCount = 0;
-      
-      for (const [guildId, partialGuild] of fetchedGuilds) {
-        // If we're only deploying to a specific new guild, skip others
-        if (targetGuildId && guildId !== targetGuildId) continue;
 
+      for (const [guildId, partialGuild] of fetchedGuilds) {
+        if (targetGuildId && guildId !== targetGuildId) continue;
         try {
-          // Fetch full guild data
           const guild = await client.guilds.fetch(guildId);
-          
-          await rest.put(
-            Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
-            { body: commands },
-          );
-          
+          await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId), { body: commands });
           console.log(`   ✅ ${guild.name} (${guildId})`);
           successCount++;
-          
         } catch (error) {
           console.error(`   ❌ ${partialGuild.name || guildId}: ${error.message}`);
           failCount++;
         }
       }
-      
+
       console.log(`\n📊 Deployment Summary:`);
       console.log(`   ✅ Success: ${successCount}`);
       if (failCount > 0) console.log(`   ❌ Failed: ${failCount}`);
-      
+
     } else {
-      // GLOBAL MODE (1 hour propagation)
-      console.log(`🌍 Target: All guilds (global)`);
-      console.log(`⏰ Propagation time: Up to 1 hour`);
-      
-      const data = await rest.put(
-        Routes.applicationCommands(process.env.CLIENT_ID),
-        { body: commands },
-      );
-      
+      console.log(`🌍 Target: All guilds (global)\n⏰ Propagation time: Up to 1 hour`);
+      const data = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
       console.log(`✅ Deployed ${data.length} commands globally!`);
     }
 
-    // Save hash to prevent unnecessary deployments
     fs.writeFileSync(hashFile, commandsHash);
-
     console.log(`\n📋 Registered ${commands.length} commands:`);
-    commands.forEach(cmd => {
-      console.log(`   - /${cmd.name}`);
-    });
+    commands.forEach(cmd => console.log(`   - /${cmd.name}`));
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
+
   } catch (error) {
-    console.error('❌ Failed to deploy commands:', error);
-    console.error('Full error:', error.message);
+    console.error('❌ Failed to deploy commands:', error.message);
   }
 }
 
 // ============================================================
-// ✅ COMMAND TO CLEAR DUPLICATES
+// CLEAR DUPLICATE COMMANDS
 // ============================================================
 async function clearDuplicateCommands() {
   console.log('🧹 Clearing duplicate commands...\n');
-  
   const rest = new REST().setToken(process.env.TOKEN);
-  
   try {
-    // Clear global commands first (in case you had any)
     console.log('🌍 Clearing global commands...');
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: [] }
-    );
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
     console.log('✅ Global commands cleared\n');
-    
-    // Clear guild commands from all guilds
+
     if (DEPLOYMENT_MODE === 'all-guilds') {
-      // ✅ FETCH FRESH GUILD LIST
       console.log('📡 Fetching all guilds from Discord...');
-      
       const fetchedGuilds = await client.guilds.fetch();
       console.log(`📍 Clearing commands from ${fetchedGuilds.size} guild(s)...\n`);
-      
       for (const [guildId, partialGuild] of fetchedGuilds) {
         try {
           const guild = await client.guilds.fetch(guildId);
-          
-          await rest.put(
-            Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
-            { body: [] }
-          );
+          await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId), { body: [] });
           console.log(`   ✅ Cleared: ${guild.name}`);
-          
         } catch (error) {
           console.error(`   ❌ Failed: ${partialGuild.name || guildId} - ${error.message}`);
         }
       }
-      
       console.log('\n✅ All guild commands cleared!\n');
     }
-    
   } catch (error) {
     console.error('❌ Error clearing commands:', error);
   }
@@ -260,173 +200,46 @@ async function clearDuplicateCommands() {
 // ============================================================
 // READY EVENT
 // ============================================================
-client.on('ready', async () => {
+client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  
-  // ✅ FORCE FETCH ALL GUILDS FIRST
+
   console.log('\n📡 Scanning all guilds bot is in...');
-  
   try {
-    // Fetch fresh guild list from Discord API
     const fetchedGuilds = await client.guilds.fetch();
     console.log(`✅ Found ${fetchedGuilds.size} guild(s):\n`);
-    
-    // List all guilds
-    for (const [id, guild] of fetchedGuilds) {
+    for (const [id] of fetchedGuilds) {
       const fullGuild = await client.guilds.fetch(id);
       console.log(`   - ${fullGuild.name} (${id})`);
     }
     console.log('');
-    
   } catch (error) {
     console.error('❌ Failed to fetch guilds:', error.message);
   }
-  
-  // Wait a bit more to ensure everything is cached
+
   console.log('⏳ Waiting 3 seconds for cache to stabilize...\n');
   await new Promise(resolve => setTimeout(resolve, 3000));
-  
-  // ✅ AUTO-CLEAR MODE - ONLY CLEARS, DOES NOT DEPLOY
+
   if (AUTO_CLEAR_COMMANDS) {
     console.log('⚠️⚠️⚠️ AUTO-CLEAR MODE ENABLED ⚠️⚠️⚠️');
-    console.log('This will DELETE ALL COMMANDS\n');
     await clearDuplicateCommands();
     console.log('\n✅ COMMANDS CLEARED!');
     console.log('⚠️ Set AUTO_CLEAR_COMMANDS = false and restart to deploy commands\n');
   } else {
-    // ✅ NORMAL MODE - DEPLOYS COMMANDS
     await deployCommands();
   }
-  
-  // ============================================================
-  // ✅ START DRAFT SCHEDULER
-  // ============================================================
+
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
 
-  // ============================================================
-  // ✅ POINTS SYSTEM EVENTS (message + voice)
-  // ============================================================
   setupPointsEvents(client);
-
-  // ============================================================
-  // ✅ PATREON POLLER
-  // Polls Patreon API to sync patron subscriptions automatically.
-  // Requires PATREON_ACCESS_TOKEN in .env. Silently skips if not set.
-  // ============================================================
-  startPatreonPoller(client);
 });
 
 // ============================================================
-// INTERACTION HANDLER
-// ============================================================
-client.on('interactionCreate', async (interaction) => {
-  
-  // ============================================================
-  // ✅ DM BUTTON — mcbot confirm/reject (MUST be first, before guild check)
-  // These arrive from DMs where interaction.guild is null.
-  // Without this early check, DM button clicks are silently swallowed.
-  // ============================================================
-  if (
-    interaction.isButton() &&
-    (interaction.customId.startsWith('mcbot_confirm_') ||
-      interaction.customId.startsWith('mcbot_reject_'))
-  ) {
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[interactions] 📬 DM button: ${interaction.customId} from ${interaction.user.tag}`);
-    const mcbotCommand = client.commands.get('mcbot');
-    if (mcbotCommand?.buttonHandler) {
-      await mcbotCommand.buttonHandler(interaction).catch(err => {
-        console.error('[interactions] ❌ mcbot DM buttonHandler error:', err);
-      });
-    }
-    return;
-  }
-
-  // ============================================================
-  // ✅ AUTOCOMPLETE INTERACTIONS
-  // ============================================================
-  if (interaction.isAutocomplete()) {
-    const command = client.commands.get(interaction.commandName);
-    if (command?.autocomplete) {
-      await command.autocomplete(interaction).catch(err => {
-        console.error(`[interactions] ❌ Autocomplete error in /${interaction.commandName}:`, err);
-      });
-    }
-    return;
-  }
-
-  // ============================================================
-  // BUTTON INTERACTIONS
-  // ============================================================
-  if (interaction.isButton()) {
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[/interactions] 🔘 Button: ${interaction.customId} from ${interaction.user.tag} (${interaction.user.id})`);
-
-    // Draft choice buttons
-    if (interaction.customId.startsWith('draft_')) {
-      return handleDraftChoice(interaction);
-    }
-
-    // Court request buttons
-    if (
-      interaction.customId === 'start_court_request' ||
-      interaction.customId === 'close_court_request' ||
-      interaction.customId.startsWith('escalate_court_request_') ||
-      interaction.customId.startsWith('dismiss_court_request_')
-    ) {
-      const courtrequestCommand = client.commands.get('courtrequest');
-      if (courtrequestCommand?.buttonHandler) {
-        return courtrequestCommand.buttonHandler(interaction);
-      }
-    }
-  }
-
-  // ============================================================
-  // SLASH COMMAND INTERACTIONS
-  // ============================================================
-  if (!interaction.isChatInputCommand()) return;
-
-  const command = client.commands.get(interaction.commandName);
-
-  if (!command) {
-    console.error(`❌ No command matching ${interaction.commandName} was found.`);
-    return;
-  }
-
-  if (!interaction.guild) {
-    await interaction.reply({
-      content: '❌ Commands can only be used in a server.',
-      ephemeral: true
-    });
-    return;
-  }
-    
-  try {
-    await command.execute(interaction);
-  } catch (error) {
-    console.error(`❌ Error executing ${interaction.commandName}:`, error);
-    
-    const errorMessage = {
-      content: '❌ An error occurred while executing this command.',
-      ephemeral: true
-    };
-    
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(errorMessage);
-    } else {
-      await interaction.reply(errorMessage);
-    }
-  }
-});
-
-// ============================================================
-// NEW GUILD HANDLER - AUTO DEPLOY COMMANDS ON JOIN
+// NEW GUILD — AUTO DEPLOY COMMANDS ON JOIN
 // ============================================================
 client.on('guildCreate', async (guild) => {
   console.log(`➕ Joined new guild: ${guild.name} (${guild.id})`);
   try {
-    // Force deployment only for this new guild, even if commands hash is unchanged
     await deployCommands(true, guild.id);
     console.log(`✅ Commands deployed to new guild: ${guild.name} (${guild.id})`);
   } catch (error) {

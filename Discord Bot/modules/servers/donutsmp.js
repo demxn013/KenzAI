@@ -55,6 +55,8 @@ function request(path, method = "GET") {
 
 /**
  * Get player stats (kills, deaths, playtime, money, shards, etc.)
+ * NOTE: stats.playtime is returned by the DonutSMP API in MILLISECONDS.
+ * Use parsePlaytimeToMinutes() to convert before displaying.
  * @param {string} username - Minecraft username
  * @returns {Promise<{ ok: boolean, stats?: object, message?: string }>}
  */
@@ -126,7 +128,6 @@ async function getLeaderboard(type, page = 1) {
 
 /**
  * Try to get the in-game team roster from DonutSMP (if the API supports it).
- * Tries /v1/team/{teamName}. Returns a list of Minecraft usernames in the team, or null if not supported/fail.
  * @param {string} teamName - In-game team name (e.g. ONF)
  * @returns {Promise<{ ok: boolean, usernames?: string[] }>}
  */
@@ -159,18 +160,24 @@ async function getTeamRoster(teamName) {
 const defaultEmbedColor = 0xED6B23;
 
 /**
- * Build embed fields for team (clan) stats. Used with createTeamEmbed from serverembed.
- * @param {object} summed - { kills, deaths, money, playtime, shards, mobs_killed, ... }
- * @param {Array<{ username: string, value: string, rank?: number }>} [highlights] - leaderboard highlights (highlights field is added by createTeamEmbed)
- * @param {object} [statEmojis] - optional map of field keys to emoji strings
+ * Build embed fields for team (clan) stats.
+ *
+ * summed.playtime is already in MINUTES — it was accumulated via parsePlaytimeToMinutes()
+ * in server.js before being stored in playtimeMinutes.total.
+ * We call formatPlaytime() directly here; no second conversion.
+ *
+ * @param {object} summed - { kills, deaths, money, playtime (minutes already), shards, mobs_killed }
+ * @param {Array} [highlights]
+ * @param {object} [statEmojis]
  * @returns {Array<{ name: string, value: string, inline: boolean }>}
  */
 function getTeamEmbedFields(summed, highlights = [], statEmojis = null) {
   const e = (key, label) => fieldName(key, label, statEmojis);
-  const playtimeDisplay =
-    typeof summed.playtime === "number"
-      ? formatPlaytime(summed.playtime)
-      : formatPlaytime(parsePlaytimeToMinutes(summed.playtime));
+
+  // summed.playtime is already in minutes (accumulated via parsePlaytimeToMinutes in server.js)
+  const playtimeMinutes = typeof summed.playtime === "number" ? summed.playtime : 0;
+  const playtimeDisplay = formatPlaytime(playtimeMinutes);
+
   return [
     { name: e("kills", "Kills"), value: `\`${summed.kills ?? 0}\``, inline: false },
     { name: e("deaths", "Deaths"), value: `\`${summed.deaths ?? 0}\``, inline: false },
@@ -182,17 +189,24 @@ function getTeamEmbedFields(summed, highlights = [], statEmojis = null) {
 }
 
 /**
- * Build embed fields for single player stats. Used with createPlayerEmbed from serverembed.
- * @param {object} stats - from API (kills, deaths, playtime, money, shards, ...)
- * @param {object} [lookup] - from API (location, rank) for online status
- * @param {object} [statEmojis] - optional map of field keys to emoji strings
+ * Build embed fields for single player stats.
+ *
+ * stats.playtime is the raw MILLISECOND value from the DonutSMP API.
+ * We call parsePlaytimeToMinutes() here to convert ms -> minutes before formatting.
+ *
+ * @param {object} stats - from API (playtime in MILLISECONDS)
+ * @param {object} [lookup] - from API (location, rank)
+ * @param {object} [statEmojis]
  * @returns {Array<{ name: string, value: string, inline: boolean }>}
  */
 function getPlayerEmbedFields(stats, lookup = null, statEmojis = null) {
   const safe = (s) => (s != null && s !== "" ? String(s) : "0");
+  const e = (key, label) => fieldName(key, label, statEmojis);
+
+  // Convert raw milliseconds from the API to minutes, then format for display.
   const playtimeMins = parsePlaytimeToMinutes(stats?.playtime);
   const playtimeDisplay = formatPlaytime(playtimeMins);
-  const e = (key, label) => fieldName(key, label, statEmojis);
+
   return [
     { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: true },
     { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: true },
@@ -223,7 +237,6 @@ function getTeamEmbedFooter(rosterSource) {
 
 /**
  * Options for clan select embed (createClanSelectEmbed).
- * @returns {{ emptyMessage: string, clickMessage: string, footer: string }}
  */
 function getClanSelectOptions() {
   return {

@@ -191,6 +191,7 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     }
   }
 
+  // ✅ FIXED: Include points from empireData so /member view displays correct balance
   const memberData = {
     discordId: linkedDiscordId,
     minecraftUser: linkedMC,
@@ -199,7 +200,8 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     JoinDate: empireData?.JoinDate || "",
     YazanakiRank: detectedRoles.rank,
     EmpireID: empireData?.EmpireID || "",
-    Status: detectedRoles.status
+    Status: detectedRoles.status,
+    points: typeof empireData?.points === "number" ? empireData.points : 0
   };
   
   console.log(`[memberlogic] 📊 Returning data:`, memberData);
@@ -280,6 +282,7 @@ async function getMemberByDiscordId(discordId, client = null) {
     }
   }
 
+  // ✅ FIXED: Include points from empireData so /member view displays correct balance
   const memberData = {
     discordId,
     minecraftUser: linkedMC,
@@ -288,7 +291,8 @@ async function getMemberByDiscordId(discordId, client = null) {
     JoinDate: empireData?.JoinDate || "",
     YazanakiRank: detectedRoles.rank,
     EmpireID: empireData?.EmpireID || "",
-    Status: detectedRoles.status
+    Status: detectedRoles.status,
+    points: typeof empireData?.points === "number" ? empireData.points : 0
   };
   
   console.log(`[memberlogic] 📊 Returning data:`, memberData);

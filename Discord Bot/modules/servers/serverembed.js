@@ -25,13 +25,17 @@ function formatMoney(value) {
 const MIN_PER_HOUR = 60;
 const MIN_PER_DAY = 24 * MIN_PER_HOUR;
 const MIN_PER_WEEK = 7 * MIN_PER_DAY;
-// Treat a month as 30 days instead of 4 weeks
+// Treat a month as 30 days
 const MIN_PER_MONTH = 30 * MIN_PER_DAY;
 const MIN_PER_YEAR = 12 * MIN_PER_MONTH;
 
+// DonutSMP API returns playtime in milliseconds.
+// To convert to minutes: ms / 1000 (-> seconds) / 60 (-> minutes) = ms / 60,000
+const MS_PER_MINUTE = 60 * 1000; // 60,000
+
 /**
- * Format total minutes as Xy Xm Xw Xd Xh (7 days = 1 week, 4 weeks = 1 month, 12 months = 1 year).
- * Only non-zero units are included.
+ * Format total minutes as Xy Xm Xw Xd Xh.
+ * Only non-zero units are included. Input MUST be in minutes.
  * @param {number} totalMinutes
  * @returns {string}
  */
@@ -57,24 +61,35 @@ function formatPlaytime(totalMinutes) {
   return parts.join(" ") || "0h";
 }
 
-/** Parse playtime from API string into total minutes.
- * - If it explicitly contains "min", treat the number as minutes.
- * - Otherwise, DonutSMP's stats API returns the raw Minecraft playtime value in TICKS (1/20s),
- *   so convert ticks -> seconds -> minutes before formatting as y m w d h.
+/**
+ * Parse a raw playtime value from the DonutSMP API into total MINUTES.
+ *
+ * The DonutSMP stats API returns playtime in MILLISECONDS.
+ * Correct conversion: ms / 60,000 = minutes
+ *
+ * Proof: 5 days 11 hours = 471,600,000 ms
+ *   471,600,000 / 60,000 = 7,860 minutes = 5d 11h  <-- correct
+ *   471,600,000 / 1,200  = 393,000 minutes = 9 months  <-- wrong (old code treated as ticks)
+ *
+ * Special case: if the string explicitly contains "min", treat it as minutes directly.
+ *
+ * @param {string|number} playtimeRaw - Raw millisecond value from DonutSMP API
+ * @returns {number} Playtime in minutes
  */
-function parsePlaytimeToMinutes(playtimeStr) {
-  if (playtimeStr == null || playtimeStr === "") return 0;
-  const s = String(playtimeStr).trim();
+function parsePlaytimeToMinutes(playtimeRaw) {
+  if (playtimeRaw == null || playtimeRaw === "") return 0;
+  const s = String(playtimeRaw).trim();
 
+  // If the value explicitly contains "min", it's already in minutes.
   const minMatch = s.match(/(\d+)\s*min/i);
   if (minMatch) return parseInt(minMatch[1], 10);
 
+  // Strip commas and parse as a number.
   const numeric = parseFloat(s.replace(/,/g, ""));
-  if (!Number.isFinite(numeric)) return 0;
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
 
-  // ticks -> seconds (÷20) -> minutes (÷60)
-  const minutes = Math.floor(numeric / (20 * 60));
-  return minutes >= 0 ? minutes : 0;
+  // Convert milliseconds to minutes.
+  return Math.floor(numeric / MS_PER_MINUTE);
 }
 
 /**
@@ -105,8 +120,8 @@ function fieldName(key, label, statEmojis) {
  * @param {string} serverDisplayName - e.g. "DonutSMP"
  * @param {string} clanAbbr
  * @param {string} clanName
- * @param {Array<{ name: string, value: string, inline?: boolean }>} fields - produced by server module
- * @param {object} [options] - { highlights?, rosterSource?, embedColor?, footer? }
+ * @param {Array<{ name: string, value: string, inline?: boolean }>} fields
+ * @param {object} [options] - { highlights?, statEmojis?, embedColor?, footer? }
  */
 function createTeamEmbed(serverDisplayName, clanAbbr, clanName, fields, options = {}) {
   const { highlights = [], embedColor, footer } = options;
@@ -131,7 +146,7 @@ function createTeamEmbed(serverDisplayName, clanAbbr, clanName, fields, options 
  * Generic embed: player stats (single player).
  * @param {string} serverDisplayName - e.g. "DonutSMP"
  * @param {string} mcUsername
- * @param {Array<{ name: string, value: string, inline?: boolean }>} fields - produced by server module
+ * @param {Array<{ name: string, value: string, inline?: boolean }>} fields
  * @param {object} [options] - { thumbnailUrl?, embedColor?, footer? }
  */
 function createPlayerEmbed(serverDisplayName, mcUsername, fields, options = {}) {
@@ -146,10 +161,10 @@ function createPlayerEmbed(serverDisplayName, mcUsername, fields, options = {}) 
 }
 
 /**
- * Generic embed: "Select a clan" for a server (list of clans linked to that server).
- * @param {string} serverDisplayName - e.g. "DonutSMP"
+ * Generic embed: "Select a clan" for a server.
+ * @param {string} serverDisplayName
  * @param {Array<{ guildId: string, abbr: string, name: string }>} clans
- * @param {object} [options] - { emptyMessage?, clickMessage?, footer? }
+ * @param {object} [options]
  */
 function createClanSelectEmbed(serverDisplayName, clans, options = {}) {
   const { emptyMessage, clickMessage, footer, embedColor } = options;
@@ -175,5 +190,6 @@ module.exports = {
   formatPlaytime,
   parsePlaytimeToMinutes,
   escapeDiscord,
-  fieldName
+  fieldName,
+  MS_PER_MINUTE
 };

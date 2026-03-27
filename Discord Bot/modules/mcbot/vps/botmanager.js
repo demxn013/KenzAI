@@ -187,6 +187,34 @@ function saveVersionCache() {
 loadVersionCache();
 
 // ============================================================
+// HUNGER MANAGEMENT — food items the bot is allowed to eat.
+// Dangerous items (pufferfish, spider_eye, rotten_flesh,
+// poisonous_potato) are intentionally excluded.
+// ============================================================
+const BOT_FOOD_ITEMS = new Set([
+  // Cooked meats (preferred — high saturation)
+  "cooked_beef", "cooked_porkchop", "cooked_chicken", "cooked_mutton",
+  "cooked_rabbit", "cooked_cod", "cooked_salmon",
+  // Raw meats
+  "beef", "porkchop", "chicken", "mutton", "rabbit", "cod", "salmon",
+  // Bread & baked goods
+  "bread", "cookie", "pumpkin_pie",
+  // Fruits & vegetables
+  "apple", "golden_apple", "enchanted_golden_apple",
+  "carrot", "golden_carrot", "melon_slice",
+  "baked_potato", "potato", "beetroot",
+  "sweet_berries", "glow_berries",
+  // Fish & seafood
+  "tropical_fish", "dried_kelp",
+  // Misc
+  "honey_bottle",
+  // Stews (non-stackable but valid)
+  "mushroom_stew", "beetroot_soup", "rabbit_stew",
+  // Chorus fruit (teleports, but still fills hunger)
+  "chorus_fruit",
+]);
+
+// ============================================================
 // VERSION AUTO-DETECTION HELPERS
 // ============================================================
 
@@ -424,6 +452,10 @@ function startBot(discordId, minecraftUser, serverAddress, version, onDeviceCode
 
   activeBots.set(botId, entry);
 
+  // ── Hunger state — persists across reconnects for this bot session ──
+  let isEating = false;
+  let eatCooldownUntil = 0;
+
   // ── Initial spawn timeout (30s before auth code) ──────────
   entry.spawnTimeoutId = setTimeout(() => {
     if (!activeBots.has(botId)) return;
@@ -459,6 +491,54 @@ function startBot(discordId, minecraftUser, serverAddress, version, onDeviceCode
     }
 
     entry.bot = bot;
+
+    // ── Hunger / Eating behavior ────────────────────────────────
+    // mineflayer fires 'health' whenever bot.food or bot.health changes.
+    // bot.food is 0-20; 18 = 1 full bar lost (each bar = 2 points).
+    // We eat from the nearest food item in inventory, skipping dangerous foods.
+
+    /**
+     * Attempt to eat food. Returns silently if ineligible.
+     * Uses mineflayer's high-level equip + consume API which handles
+     * the right-click timing and eat animation automatically.
+     */
+    async function tryEat() {
+      if (isEating || Date.now() < eatCooldownUntil) return;
+      if (!activeBots.has(botId)) return;
+      if (bot.food >= 18) return; // Not hungry enough yet
+
+      // Find the first food item in inventory (hotbar preferred since
+      // mineflayer's inventory.items() returns hotbar slots first).
+      const foodItem = bot.inventory.items().find(
+        (item) => item && BOT_FOOD_ITEMS.has(item.name)
+      );
+      if (!foodItem) return;
+
+      isEating = true;
+      try {
+        // Equip food to main hand, then consume (right-click + wait for eat animation).
+        await bot.equip(foodItem, "hand");
+        await bot.consume();
+        eatCooldownUntil = Date.now() + 1500; // 1.5s cooldown between meals
+        console.log(
+          `[botmanager] 🍖 ${minecraftUser} ate ${foodItem.name} ` +
+          `(food: ${bot.food}/20)`
+        );
+      } catch {
+        // Ignore eating errors — item may have moved or bot may be in wrong state.
+      } finally {
+        isEating = false;
+      }
+    }
+
+    // React to any food level change from the server.
+    bot.on("health", () => {
+      if (bot.food < 18) {
+        tryEat().catch(() => {});
+      }
+    });
+
+    // ── Standard bot events ─────────────────────────────────────
 
     bot.once("login", () => {
       if (!activeBots.has(botId)) return;

@@ -90,6 +90,10 @@ const pendingConfirmations = new Map();
 // HELPERS
 // ============================================================
 
+function getPatreonUrl() {
+  return process.env.PATREON_URL || "https://www.patreon.com";
+}
+
 function getAllowedGuildIds() {
   try {
     const clans = readClans();
@@ -158,6 +162,67 @@ function successEmbed(title, description) {
 
 function infoEmbed(title, description) {
   return new EmbedBuilder().setTitle(`ℹ️ ${title}`).setDescription(description).setColor(0x2196f3).setTimestamp();
+}
+
+/**
+ * Rich upsell embed shown when a user tries to use /mcbot start without a subscription.
+ * Much more inviting than a plain error message.
+ */
+function buildUpsellEmbed() {
+  const patreonUrl = getPatreonUrl();
+  const tierConfig = getTierConfig();
+  const availability = getSlotAvailability();
+
+  const tierLines = Object.entries(tierConfig).map(([tier, config]) => {
+    const avail = availability[tier];
+    const availText = avail ? `${avail.available} slot${avail.available !== 1 ? "s" : ""} free` : "";
+    const badge = { standard: "🔵", premium: "🟣", vip: "👑" }[tier] || "•";
+    return `${badge} **${tier.charAt(0).toUpperCase() + tier.slice(1)}** — ${config.maxPerUser} bot slot${config.maxPerUser > 1 ? "s" : ""}${availText ? ` *(${availText})*` : ""}`;
+  });
+
+  return new EmbedBuilder()
+    .setTitle("🤖 Unlock Minecraft Bot Slots")
+    .setColor(0xf96854) // Patreon orange-red
+    .setDescription(
+      [
+        "**KenzAI bot slots** let you run a Minecraft AFK bot on the empire VPS — stay online in-game without keeping your game open.",
+        "",
+        "A Patreon subscription unlocks your slot instantly and keeps the VPS running.",
+        "",
+        "**Available tiers:**",
+        ...tierLines,
+      ].join("\n")
+    )
+    .addFields({
+      name: "🚀 How to subscribe",
+      value: [
+        `1. Go to [our Patreon](${patreonUrl})`,
+        "2. Choose a tier and **link your Discord** on Patreon",
+        "3. Your slot activates within 5 minutes automatically",
+        "4. Come back and run \`/mcbot start\` again!",
+      ].join("\n"),
+      inline: false,
+    })
+    .setFooter({ text: "Use /patreon for full tier details • KenzAI Bot System" })
+    .setTimestamp();
+}
+
+/**
+ * Build the upsell action row with a Patreon link button.
+ */
+function buildUpsellRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel("Subscribe on Patreon")
+      .setStyle(ButtonStyle.Link)
+      .setURL(getPatreonUrl())
+      .setEmoji("🧡"),
+    new ButtonBuilder()
+      .setCustomId("mcbot_patreon_info")
+      .setLabel("View Tiers")
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji("📊")
+  );
 }
 
 function buildConfirmRow(userId, disabled = false) {
@@ -274,7 +339,7 @@ module.exports = {
                  .setRequired(false)
             )
         )
-        // Admin subcommands (flat inside the group — Discord doesn't allow nested groups)
+        // Admin subcommands
         .addSubcommand(sub =>
           sub
             .setName("grant")
@@ -459,7 +524,13 @@ module.exports = {
         const slotResult = requestSlot(userId, chosenAccount, { server_address: serverAddress });
 
         if (slotResult.status === "error") {
-          return interaction.editReply({ embeds: [errorEmbed("Subscription Required", slotResult.message)] });
+          // ── Rich upsell embed instead of plain error ────────
+          console.log(`[/mcbot] 💸 No subscription for ${userId} — showing upsell embed`);
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+          return interaction.editReply({
+            embeds: [buildUpsellEmbed()],
+            components: [buildUpsellRow()],
+          });
         }
 
         if (slotResult.status === "queued") {
@@ -677,12 +748,24 @@ module.exports = {
   },
 
   // ============================================================
-  // BUTTON HANDLER — DM confirmation buttons
+  // BUTTON HANDLER — DM confirmation buttons + patreon info
   // ============================================================
 
   async buttonHandler(interaction) {
     const { customId, user } = interaction;
     const userId = user.id;
+
+    // ── Patreon info button (from upsell embed) ───────────────
+    if (customId === "mcbot_patreon_info") {
+      const patreonCmd = interaction.client.commands.get("patreon");
+      if (patreonCmd) {
+        return patreonCmd.execute(interaction);
+      }
+      return interaction.reply({
+        content: `🧡 Check out our Patreon for bot slot subscriptions: ${getPatreonUrl()}`,
+        ephemeral: true,
+      });
+    }
 
     const isConfirm = customId.startsWith("mcbot_confirm_");
     const isReject  = customId.startsWith("mcbot_reject_");
@@ -837,7 +920,11 @@ async function _slotStatus(interaction, userId) {
   }
 
   if (!subActive) {
-    embed.setDescription("You don't have an active KenzAI subscription.\nContact an admin or subscribe via Patreon/Stripe to get bot slots.");
+    embed.setDescription(
+      "You don't have an active KenzAI subscription.\n" +
+      `Subscribe on Patreon to get bot slots: [Click here](${process.env.PATREON_URL || "https://www.patreon.com"})\n` +
+      "Or use `/patreon` to see all available tiers."
+    );
   }
 
   return interaction.editReply({ embeds: [embed] });

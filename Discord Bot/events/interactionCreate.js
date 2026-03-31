@@ -120,6 +120,20 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // Patreon info button (from mcbot upsell embed)
+        if (interaction.customId === "mcbot_patreon_info") {
+          const cmd = client.commands.get("mcbot");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "mcbot");
+          return await cmd.buttonHandler(interaction);
+        }
+
+        // Patreon slot status button (from /patreon embed)
+        if (interaction.customId === "patreon_slot_status") {
+          const cmd = client.commands.get("patreon");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "patreon");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // Server module buttons
         if (
           interaction.customId.startsWith("server_") ||

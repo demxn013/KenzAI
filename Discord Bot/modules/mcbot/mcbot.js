@@ -10,6 +10,7 @@
 //   ping                       — [Admin] Ping the VPS
 //   list                       — [Admin] List all active bots
 //   stopall                    — [Admin] Emergency stop all bots
+//   info                       — Show bot system info and subscription tiers
 //
 // Slot subcommands (/mcbot slot ...):
 //   slot status                — Show your subscription tier and active slots
@@ -313,6 +314,9 @@ module.exports = {
     .addSubcommand(sub =>
       sub.setName("stopall").setDescription("[Admin] Emergency stop — kill ALL active bots")
     )
+    .addSubcommand(sub =>
+      sub.setName("info").setDescription("Show KenzAI bot system info, subscription tiers, and how to get started")
+    )
 
     // ── Slot subcommand group ─────────────────────────────────
     .addSubcommandGroup(group =>
@@ -477,6 +481,90 @@ module.exports = {
           .setTimestamp()
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })],
       });
+    }
+
+    // ── /mcbot info — public, no member validation needed ─────
+    if (sub === "info") {
+      const patreonUrl = getPatreonUrl();
+      const tierConfig = getTierConfig();
+      const availability = getSlotAvailability();
+
+      // Check caller's own subscription status for a personalised touch
+      const callerRecord = db.getUser(userId);
+      const callerActive = callerRecord?.active && callerRecord?.subscription_tier !== "none";
+      const callerTier   = callerActive ? callerRecord.subscription_tier : null;
+
+      const tierBadgeMap = { standard: "🔵 Standard", premium: "🟣 Premium", vip: "👑 VIP" };
+
+      const tierLines = Object.entries(tierConfig).map(([tier, config]) => {
+        const avail = availability[tier];
+        const free  = avail ? avail.available : 0;
+        const total = avail ? avail.total : config.globalLimit;
+        const isCurrent = callerTier === tier;
+        const badge = tierBadgeMap[tier] || tier;
+        return (
+          `**${badge}**${isCurrent ? " ✅" : ""}\n` +
+          `╰ ${config.maxPerUser} bot slot${config.maxPerUser > 1 ? "s" : ""} per user · ` +
+          `${free}/${total} slots free`
+        );
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle("🤖 KenzAI — Minecraft Bot System")
+        .setColor(callerActive ? 0x00c853 : 0x2196f3)
+        .setDescription(
+          callerActive
+            ? `You have an active **${tierBadgeMap[callerTier]}** subscription. ` +
+              `Use \`/mcbot start <server>\` to launch your bot, or \`/mcbot slot status\` to manage your slots.`
+            : "KenzAI lets Yazanaki Empire members run an AFK Minecraft bot on the empire VPS directly from Discord.\n\n" +
+              `Subscribe on [Patreon](${patreonUrl}) to unlock your slot.`
+        )
+        .addFields(
+          {
+            name: "📋 Bot Commands",
+            value: [
+              "`/mcbot start <server>` — Launch a bot on any Minecraft server",
+              "`/mcbot stop` — Stop your running bot",
+              "`/mcbot status` — Check if your bot is online",
+              "`/mcbot slot status` — View your subscription and active slots",
+              "`/patreon` — See all subscription tiers and benefits",
+            ].join("\n"),
+            inline: false,
+          },
+          {
+            name: "💎 Subscription Tiers",
+            value: tierLines.join("\n\n"),
+            inline: false,
+          },
+          {
+            name: "⚡ Features",
+            value: [
+              "• Supports DonutSMP, FreshSMP, Hypixel & vanilla servers",
+              "• Auto-reconnects if kicked",
+              "• Automatically eats food — bot won't starve",
+              "• Microsoft account auth — fully secure",
+              "• Version auto-detection for most servers",
+            ].join("\n"),
+            inline: false,
+          }
+        )
+        .setFooter({ text: "KenzAI • Yazanaki Empire Bot System" })
+        .setTimestamp();
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel("Subscribe on Patreon")
+          .setStyle(ButtonStyle.Link)
+          .setURL(patreonUrl)
+          .setEmoji("🧡"),
+        new ButtonBuilder()
+          .setCustomId("patreon_slot_status")
+          .setLabel("My Slot Status")
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji("📊"),
+      );
+
+      return interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
     }
 
     // ── Member-validated bot subcommands ──────────────────────

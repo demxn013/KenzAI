@@ -1,6 +1,8 @@
 // modules/empire/draftlogic.js
 // ✅ Core draft management logic + button handling
 // ✅ NEW: Decrements clan resident count when members leave
+// ✅ FIXED: Members who leave empire during draft are properly flagged
+// ✅ NEW: Draft deserter system - marks members who abandon their draft
 
 const fs = require("fs");
 const path = require("path");
@@ -19,6 +21,7 @@ const membersPath = path.join(dataDir, "members.json");
 const archivedPath = path.join(dataDir, "archived_members.json");
 const empireIdsPath = path.join(dataDir, "empireids.json");
 const clansPath = path.join(dataDir, "clans.json");
+const desertersPath = path.join(dataDir, "draft_deserters.json");
 
 // ============================================================
 // DATA ACCESS
@@ -98,6 +101,37 @@ function writeEmpireIds(data) {
     return true;
   } catch (err) {
     console.error("[draftlogic] ❌ Error writing empireids.json:", err);
+    return false;
+  }
+}
+
+/**
+ * Read or initialize the draft deserters list
+ */
+function readDeserters() {
+  try {
+    if (!fs.existsSync(desertersPath)) {
+      fs.writeFileSync(desertersPath, JSON.stringify({}, null, 4));
+      return {};
+    }
+    const raw = fs.readFileSync(desertersPath, "utf8");
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error("[draftlogic] ❌ Error reading draft_deserters.json:", err);
+    return {};
+  }
+}
+
+function writeDeserters(data) {
+  try {
+    if (fs.existsSync(desertersPath)) {
+      const backupPath = desertersPath.replace('.json', '.backup.json');
+      fs.copyFileSync(desertersPath, backupPath);
+    }
+    fs.writeFileSync(desertersPath, JSON.stringify(data, null, 4));
+    return true;
+  } catch (err) {
+    console.error("[draftlogic] ❌ Error writing draft_deserters.json:", err);
     return false;
   }
 }
@@ -334,6 +368,7 @@ async function completeDraft(discordId, outcome, client) {
 /**
  * Archive member when they leave Yazanaki Empire
  * Removes all empire-related roles and moves to archived_members.json
+ * ✅ FIXED: If member leaves during active draft, marks them as a deserter
  * ✅ NEW: Decrements clan resident count
  */
 async function archiveMember(discordId, reason, client) {
@@ -348,6 +383,12 @@ async function archiveMember(discordId, reason, client) {
     console.error(`[draftlogic] ❌ Member ${discordId} not found`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     return { success: false, reason: "member_not_found" };
+  }
+
+  // ✅ FIXED: Check if they are leaving during an active draft
+  const hadActiveDraft = isDraftActive(member);
+  if (hadActiveDraft) {
+    console.log(`[draftlogic] ⚠️ Member ${discordId} is leaving during an ACTIVE DRAFT — marking as deserter`);
   }
   
   try {
@@ -366,7 +407,7 @@ async function archiveMember(discordId, reason, client) {
       console.log(`[draftlogic] 🆔 Deactivated Empire ID: ${empireId}`);
     }
     
-    // ✅ NEW: 2.5. Decrement clan resident count
+    // ✅ 2.5: Decrement clan resident count
     const clanName = member.JoinedClan;
     if (clanName) {
       const clanGuildId = getClanGuildId(clanName);
@@ -385,19 +426,45 @@ async function archiveMember(discordId, reason, client) {
     
     // 3. Move to archived_members.json
     const archived = readArchived();
+    const leftAt = new Date().toISOString();
     archived[discordId] = {
       discordId,
       empireId: member.EmpireID,
       discordUser: member.discordUser,
       minecraftUser: member.minecraftUser,
-      leftDate: new Date().toISOString(),
+      leftDate: leftAt,
       leftReason: reason,
+      // ✅ FIXED: Record if they deserted their draft
+      desertedDraft: hadActiveDraft,
+      draftDesertedAt: hadActiveDraft ? leftAt : null,
       originalClan: member.JoinedClan,
       originalData: { ...member }
     };
     
     writeArchived(archived);
     console.log(`[draftlogic] 📦 Moved to archived_members.json`);
+
+    // ✅ FIXED: If they deserted their draft, add to deserters list for punishment tracking
+    if (hadActiveDraft) {
+      const deserters = readDeserters();
+      deserters[discordId] = {
+        discordId,
+        discordUser: member.discordUser,
+        minecraftUser: member.minecraftUser,
+        empireId: member.EmpireID,
+        originalClan: member.JoinedClan,
+        draftStartDate: member.draftStartDate,
+        draftExpiryDate: member.draftExpiryDate,
+        desertedAt: leftAt,
+        reason: reason,
+        // Punishment fields - to be filled in when punishment is executed
+        punishmentServed: false,
+        punishmentType: null,
+        punishmentServedAt: null
+      };
+      writeDeserters(deserters);
+      console.log(`[draftlogic] ⚠️ Added ${discordId} to draft deserters list`);
+    }
     
     // 4. Remove from members.json
     delete members[discordId];
@@ -405,9 +472,12 @@ async function archiveMember(discordId, reason, client) {
     console.log(`[draftlogic] 🗑️ Removed from members.json`);
     
     console.log(`[draftlogic] ✅ Successfully archived member ${discordId}`);
+    if (hadActiveDraft) {
+      console.log(`[draftlogic] ⚔️ Member ${discordId} DESERTED their draft and has been flagged`);
+    }
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
-    return { success: true, empireId };
+    return { success: true, empireId, desertedDraft: hadActiveDraft };
     
   } catch (err) {
     console.error(`[draftlogic] ❌ Error archiving member:`, err);
@@ -449,7 +519,7 @@ async function removeAllYazanakiRoles(discordId, client) {
     if (yazanakiConfig?.rankRoles) {
       for (const roleId of Object.keys(yazanakiConfig.rankRoles)) {
         if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId);
+          await member.roles.remove(roleId).catch(err => console.warn(`[draftlogic] ⚠️ Could not remove rank role:`, err.message));
           removedCount++;
           console.log(`[draftlogic] 🎭 Removed rank role: ${yazanakiConfig.rankRoles[roleId].name}`);
         }
@@ -460,21 +530,21 @@ async function removeAllYazanakiRoles(discordId, client) {
     if (yazanakiConfig?.statusRoles) {
       for (const roleId of Object.keys(yazanakiConfig.statusRoles)) {
         if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId);
+          await member.roles.remove(roleId).catch(err => console.warn(`[draftlogic] ⚠️ Could not remove status role:`, err.message));
           removedCount++;
           console.log(`[draftlogic] 🎭 Removed status role: ${yazanakiConfig.statusRoles[roleId].name}`);
         }
       }
     }
     
-    // Remove clan role (if member has one)
+    // Remove clan role (yazanakiRoleId for each clan)
     try {
       const clansRaw = fs.readFileSync(clansPath, "utf8");
       const clans = JSON.parse(clansRaw);
       
       for (const clan of Object.values(clans)) {
         if (clan.yazanakiRoleId && member.roles.cache.has(clan.yazanakiRoleId)) {
-          await member.roles.remove(clan.yazanakiRoleId);
+          await member.roles.remove(clan.yazanakiRoleId).catch(err => console.warn(`[draftlogic] ⚠️ Could not remove clan role:`, err.message));
           removedCount++;
           console.log(`[draftlogic] 🎭 Removed clan role: ${clan.abbr}`);
         }
@@ -490,6 +560,56 @@ async function removeAllYazanakiRoles(discordId, client) {
     console.error(`[draftlogic] ❌ Error removing roles:`, err);
     return 0;
   }
+}
+
+// ============================================================
+// DRAFT DESERTER MANAGEMENT
+// ============================================================
+
+/**
+ * Get all draft deserters
+ * @returns {Object} Deserters data
+ */
+function getDeserters() {
+  return readDeserters();
+}
+
+/**
+ * Get deserter info for a specific user
+ * @param {string} discordId
+ * @returns {Object|null}
+ */
+function getDeserter(discordId) {
+  const deserters = readDeserters();
+  return deserters[discordId] || null;
+}
+
+/**
+ * Mark a deserter's punishment as served
+ * @param {string} discordId
+ * @param {string} punishmentType - e.g. "ban_from_clan", "extended_cooldown"
+ * @returns {boolean}
+ */
+function markPunishmentServed(discordId, punishmentType) {
+  const deserters = readDeserters();
+  if (!deserters[discordId]) {
+    console.warn(`[draftlogic] ⚠️ No deserter record for ${discordId}`);
+    return false;
+  }
+  deserters[discordId].punishmentServed = true;
+  deserters[discordId].punishmentType = punishmentType;
+  deserters[discordId].punishmentServedAt = new Date().toISOString();
+  return writeDeserters(deserters);
+}
+
+/**
+ * Check if a user is a draft deserter (left during active draft)
+ * @param {string} discordId
+ * @returns {boolean}
+ */
+function isDraftDeserter(discordId) {
+  const deserters = readDeserters();
+  return !!deserters[discordId];
 }
 
 // ============================================================
@@ -642,15 +762,39 @@ async function handleDraftChoice(interaction) {
     const result = await archiveMember(targetDiscordId, "draft_left_empire", interaction.client);
     
     if (result.success) {
-      const embed = createFarewellEmbed(result.empireId);
-      await interaction.editReply({ embeds: [embed], ephemeral: true });
+      const { EmbedBuilder } = require("discord.js");
+
+      // ✅ FIXED: Show deserter warning if they left during an active draft
+      let farewellEmbed;
+      if (result.desertedDraft) {
+        farewellEmbed = new EmbedBuilder()
+          .setTitle("⚔️ Draft Desertion - Yazanaki Empire")
+          .setDescription(
+            `You have chosen to leave the Yazanaki Empire **during your active draft period**.\n\n` +
+            `**Former Empire ID:** \`${result.empireId}\` *(deactivated)*\n\n` +
+            `**⚠️ You have been marked as a Draft Deserter.**\n` +
+            `Deserters face a permanent ban from re-joining any Yazanaki clan.\n\n` +
+            `All your roles have been removed.\n\n` +
+            `If you believe this is a mistake, please contact an Administrator.`
+          )
+          .setColor(0xFF0000)
+          .setFooter({ text: "Yazanaki Empire • Draft Deserter System" });
+      } else {
+        farewellEmbed = createFarewellEmbed(result.empireId);
+      }
+
+      await interaction.editReply({ embeds: [farewellEmbed], ephemeral: true });
       
       // Disable buttons in original message
       try {
         await interaction.message.edit({ components: [] });
       } catch {}
       
-      console.log(`[draftlogic] ✅ ${interaction.user.tag} left the empire`);
+      if (result.desertedDraft) {
+        console.log(`[draftlogic] ⚔️ ${interaction.user.tag} DESERTED their draft and left the empire`);
+      } else {
+        console.log(`[draftlogic] ✅ ${interaction.user.tag} left the empire`);
+      }
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       
     } else {
@@ -684,6 +828,12 @@ module.exports = {
   // Member management
   archiveMember,
   removeAllYazanakiRoles,
+  
+  // Deserter management
+  getDeserters,
+  getDeserter,
+  isDraftDeserter,
+  markPunishmentServed,
   
   // Button handler
   handleDraftChoice,

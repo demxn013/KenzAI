@@ -20,7 +20,7 @@ function getSlotManager() {
 }
 
 function getPatreonUrl() {
-  return process.env.PATREON_URL || "https://www.patreon.com";
+  return process.env.PATREON_URL || "https://www.patreon.com/cw/YazanakiEmpire/membership";
 }
 
 function tierBadge(tier) {

@@ -52,18 +52,34 @@ module.exports = {
       if (transcriptsChannel)
         await transcriptsChannel.send({ embeds: [embed], files: [attachment] });
 
-      // DM the applicant if possible
-      if (applicantData?.discordTag) {
-        const member = guild.members.cache.get(ticketData.openerId);
-        if (member) {
-          member
-            .send({
-              content: `Here is your ticket transcript from **${guild.name}**.`,
-              embeds: [embed],
-              files: [attachment]
-            })
-            .catch(() => console.warn("Could not DM transcript to applicant."));
+      // ✅ FIXED: DM the applicant if possible
+      // Check all possible field names for the discord user identifier
+      if (ticketData?.openerId) {
+        try {
+          const member = guild.members.cache.get(ticketData.openerId) 
+            || await guild.members.fetch(ticketData.openerId).catch(() => null);
+
+          if (member) {
+            await member.user
+              .send({
+                content: `Here is your ticket transcript from **${guild.name}**.`,
+                embeds: [embed],
+                files: [attachment]
+              })
+              .then(() => {
+                console.log(`[transcript] ✅ Sent transcript DM to ${member.user.tag}`);
+              })
+              .catch((err) => {
+                console.warn(`[transcript] ⚠️ Could not DM transcript to applicant (${member.user.tag}): ${err.message}`);
+              });
+          } else {
+            console.warn(`[transcript] ⚠️ Could not find member ${ticketData.openerId} in guild to DM transcript`);
+          }
+        } catch (dmErr) {
+          console.warn(`[transcript] ⚠️ Error attempting to DM transcript:`, dmErr.message);
         }
+      } else {
+        console.warn(`[transcript] ⚠️ No openerId in ticketData — cannot DM transcript`);
       }
 
       cache.delete(channel.id);

@@ -17,7 +17,59 @@ const cache = require("../data/cache");
 const { saveApplicant, getApplicant } = require("./applicants");
 const autolink = require("../linking/autolink");
 const { acceptApplicant } = require("./acceptedapplicants.js");
-const { checkApplicationEligibility } = require("../membertracking/memberkickban"); // ✅ NEW
+const { checkApplicationEligibility } = require("../membertracking/memberkickban");
+const { loadRolesConfig } = require("../roles/roledetector");
+const draftConfig = require("../empire/draftconfig");
+
+// Yazanaki Empire Guild ID (used for Royalty role check)
+const YAZANAKI_EMPIRE_GUILD_ID = draftConfig.YAZANAKI_EMPIRE_GUILD_ID;
+
+/**
+ * ✅ Check if the interaction user has the Royalty role in Yazanaki Empire
+ * Only Royalty members should be able to post the application embed
+ */
+async function hasRoyaltyRole(interaction) {
+  try {
+    const yazanakiGuild = await interaction.client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+    if (!yazanakiGuild) {
+      console.warn("[application] ⚠️ Could not fetch Yazanaki Empire guild for Royalty check");
+      return false;
+    }
+
+    const yazanakiMember = await yazanakiGuild.members.fetch(interaction.user.id).catch(() => null);
+    if (!yazanakiMember) {
+      console.warn(`[application] ⚠️ User ${interaction.user.tag} not in Yazanaki Empire — no Royalty role`);
+      return false;
+    }
+
+    // Load Royalty role ID from roles.json
+    const rolesConfig = loadRolesConfig();
+    const yazanakiConfig = rolesConfig?.guilds?.[YAZANAKI_EMPIRE_GUILD_ID];
+    let royaltyRoleId = null;
+
+    if (yazanakiConfig && yazanakiConfig.statusRoles) {
+      const royaltyEntry = Object.entries(yazanakiConfig.statusRoles).find(
+        ([, roleData]) => roleData?.name === "Royalty"
+      );
+      if (royaltyEntry) {
+        royaltyRoleId = royaltyEntry[0];
+      }
+    }
+
+    // Fallback to known Royalty role ID
+    if (!royaltyRoleId) {
+      royaltyRoleId = "1334642034472128654";
+    }
+
+    const hasRole = yazanakiMember.roles.cache.has(royaltyRoleId);
+    console.log(`[application] 👑 Royalty check for ${interaction.user.tag}: ${hasRole ? "✅ HAS Royalty" : "❌ NO Royalty"}`);
+    return hasRole;
+
+  } catch (err) {
+    console.error("[application] ❌ Error checking Royalty role:", err);
+    return false;
+  }
+}
 
 /**
  * Build permission overwrites for a new ticket channel.
@@ -77,6 +129,15 @@ module.exports = {
     .setDescription("Post the application starter embed for the Yazanaki Empire."),
 
   async execute(interaction) {
+    // ✅ FIXED: Only Yazanaki Royalty can post the application embed
+    const royalty = await hasRoyaltyRole(interaction);
+    if (!royalty) {
+      return interaction.reply({
+        content: "❌ You need the **Royalty** role in the Yazanaki Empire discord to use this command.",
+        ephemeral: true
+      });
+    }
+
     const guild = interaction.guild;
 
     const appEmbed = new EmbedBuilder()
@@ -488,7 +549,7 @@ module.exports = {
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")}-${ticketNumber}`;
 
-      // ✅ FIXED: Inherit category permissions so staff roles with category
+      // ✅ Inherit category permissions so staff roles with category
       // access can see the ticket, while still granting applicant personal access.
       const permissionOverwrites = buildTicketOverwrites(
         category,
@@ -503,7 +564,7 @@ module.exports = {
         permissionOverwrites
       });
 
-      // ✅ FIXED: Save applicant IMMEDIATELY with minecraftUser field
+      // ✅ Save applicant IMMEDIATELY with minecraftUser field
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[application] 💾 Saving applicant data for ${interaction.user.tag}`);
       console.log(`[application] 🎮 Minecraft: ${mcName}`);
@@ -527,7 +588,7 @@ module.exports = {
       console.log(`[application] ✅ Applicant data saved`);
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-      // ✅ FIXED: Run autolink AFTER saving, with async/await
+      // Run autolink AFTER saving, with async/await
       console.log(`[application] 🔗 Starting autolink process...`);
       
       autolink.processApplicant(interaction.user.id, 1000).then(result => {

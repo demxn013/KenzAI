@@ -53,24 +53,30 @@ function writeJSON(filePath, data) {
 }
 
 /**
- * Helper function to get clan guild ID from clan name
+ * Helper function to get clan entry from clan name
  */
-function getClanGuildId(clanName) {
+function getClanEntry(clanName) {
   try {
     if (!fs.existsSync(clansPath)) return null;
-    
     const raw = fs.readFileSync(clansPath, "utf8");
     const clans = JSON.parse(raw);
-    
     const guildId = Object.keys(clans).find(id =>
       clans[id].name === clanName || clans[id].abbr === clanName
     );
-    
-    return guildId || null;
+    if (!guildId) return null;
+    return { guildId, ...clans[guildId] };
   } catch (err) {
     console.error("[memberkickban] ❌ Error reading clans.json:", err);
     return null;
   }
+}
+
+/**
+ * Helper function to get clan guild ID from clan name
+ */
+function getClanGuildId(clanName) {
+  const entry = getClanEntry(clanName);
+  return entry ? entry.guildId : null;
 }
 
 /**
@@ -157,7 +163,7 @@ async function removeAllYazanakiRoles(discordId, client) {
     if (yazanakiConfig?.rankRoles) {
       for (const roleId of Object.keys(yazanakiConfig.rankRoles)) {
         if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId);
+          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove rank role ${roleId}:`, err.message));
           removedCount++;
           console.log(`[memberkickban] 🎭 Removed rank role: ${yazanakiConfig.rankRoles[roleId].name}`);
         }
@@ -168,34 +174,105 @@ async function removeAllYazanakiRoles(discordId, client) {
     if (yazanakiConfig?.statusRoles) {
       for (const roleId of Object.keys(yazanakiConfig.statusRoles)) {
         if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId);
+          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove status role ${roleId}:`, err.message));
           removedCount++;
           console.log(`[memberkickban] 🎭 Removed status role: ${yazanakiConfig.statusRoles[roleId].name}`);
         }
       }
     }
     
-    // Remove clan role
+    // Remove clan role in Yazanaki discord (yazanakiRoleId)
     try {
       const clansRaw = fs.readFileSync(clansPath, "utf8");
       const clans = JSON.parse(clansRaw);
       
       for (const clan of Object.values(clans)) {
         if (clan.yazanakiRoleId && member.roles.cache.has(clan.yazanakiRoleId)) {
-          await member.roles.remove(clan.yazanakiRoleId);
+          await member.roles.remove(clan.yazanakiRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan Yazanaki role ${clan.yazanakiRoleId}:`, err.message));
           removedCount++;
-          console.log(`[memberkickban] 🎭 Removed clan role: ${clan.abbr}`);
+          console.log(`[memberkickban] 🎭 Removed clan Yazanaki role: ${clan.abbr}`);
         }
       }
     } catch (err) {
       console.warn(`[memberkickban] ⚠️ Could not load clans.json:`, err.message);
     }
     
-    console.log(`[memberkickban] ✅ Removed ${removedCount} roles from ${discordId}`);
+    console.log(`[memberkickban] ✅ Removed ${removedCount} Yazanaki roles from ${discordId}`);
     return removedCount;
     
   } catch (err) {
-    console.error(`[memberkickban] ❌ Error removing roles:`, err);
+    console.error(`[memberkickban] ❌ Error removing Yazanaki roles:`, err);
+    return 0;
+  }
+}
+
+/**
+ * ✅ NEW: Remove all roles from the member's clan discord server
+ * This removes the clanRoleId and any clan-specific inner ranks
+ */
+async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
+  if (!clanGuildId) return 0;
+
+  try {
+    const clanGuild = await client.guilds.fetch(clanGuildId).catch(() => null);
+    if (!clanGuild) {
+      console.warn(`[memberkickban] ⚠️ Could not fetch clan guild ${clanGuildId}`);
+      return 0;
+    }
+
+    const member = await clanGuild.members.fetch(discordId).catch(() => null);
+    if (!member) {
+      console.warn(`[memberkickban] ⚠️ Member ${discordId} not in clan guild ${clanGuildId}`);
+      return 0;
+    }
+
+    let removedCount = 0;
+
+    // Load roles.json to check if clan guild has role config
+    let rolesConfig = {};
+    try {
+      const raw = fs.readFileSync(rolesConfigPath, "utf8");
+      rolesConfig = JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[memberkickban] ⚠️ Could not load roles.json for clan role removal:`, err.message);
+    }
+
+    const clanGuildConfig = rolesConfig.guilds?.[clanGuildId];
+
+    // Remove all rank roles in clan discord if configured
+    if (clanGuildConfig?.rankRoles) {
+      for (const roleId of Object.keys(clanGuildConfig.rankRoles)) {
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan rank role ${roleId}:`, err.message));
+          removedCount++;
+          console.log(`[memberkickban] 🎭 Removed clan rank role: ${clanGuildConfig.rankRoles[roleId].name} (${clanGuildId})`);
+        }
+      }
+    }
+
+    // Remove all status roles in clan discord if configured
+    if (clanGuildConfig?.statusRoles) {
+      for (const roleId of Object.keys(clanGuildConfig.statusRoles)) {
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan status role ${roleId}:`, err.message));
+          removedCount++;
+          console.log(`[memberkickban] 🎭 Removed clan status role: ${clanGuildConfig.statusRoles[roleId].name} (${clanGuildId})`);
+        }
+      }
+    }
+
+    // Also remove the clanRoleId specifically (the "member" role)
+    if (clanData?.clanRoleId && member.roles.cache.has(clanData.clanRoleId)) {
+      await member.roles.remove(clanData.clanRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clanRoleId:`, err.message));
+      removedCount++;
+      console.log(`[memberkickban] 🎭 Removed clan member role (clanRoleId) in clan discord`);
+    }
+
+    console.log(`[memberkickban] ✅ Removed ${removedCount} clan roles from ${discordId} in guild ${clanGuildId}`);
+    return removedCount;
+
+  } catch (err) {
+    console.error(`[memberkickban] ❌ Error removing clan roles for ${discordId} in ${clanGuildId}:`, err);
     return 0;
   }
 }
@@ -206,7 +283,8 @@ async function removeAllYazanakiRoles(discordId, client) {
 
 /**
  * Kick a member from the Yazanaki Empire
- * - Removes all roles
+ * - Removes all roles from Yazanaki discord
+ * - Removes all roles from clan discord
  * - Decrements clan resident count
  * - Deactivates Empire ID
  * - Adds 3-month reapply cooldown
@@ -231,23 +309,34 @@ async function kickMember(discordId, reason, client) {
   
   try {
     // 1. Remove all Yazanaki Empire roles
-    const rolesRemoved = await removeAllYazanakiRoles(discordId, client);
-    console.log(`[memberkickban] 🎭 Roles removed: ${rolesRemoved}`);
-    
-    // 2. Decrement clan resident count
+    const yazanakiRolesRemoved = await removeAllYazanakiRoles(discordId, client);
+    console.log(`[memberkickban] 🎭 Yazanaki roles removed: ${yazanakiRolesRemoved}`);
+
+    // 2. ✅ NEW: Remove all roles from clan discord
     const clanName = member.JoinedClan;
+    let clanGuildId = null;
+    let clanEntry = null;
+
     if (clanName) {
-      const clanGuildId = getClanGuildId(clanName);
-      
-      if (clanGuildId) {
-        const decremented = decrementClanResidents(clanGuildId);
-        if (decremented) {
-          console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
-        }
+      clanEntry = getClanEntry(clanName);
+      if (clanEntry) {
+        clanGuildId = clanEntry.guildId;
+        const clanRolesRemoved = await removeAllClanRoles(discordId, clanGuildId, clanEntry, client);
+        console.log(`[memberkickban] 🎭 Clan discord roles removed: ${clanRolesRemoved}`);
+      } else {
+        console.warn(`[memberkickban] ⚠️ Could not find clan entry for: ${clanName}`);
       }
     }
     
-    // 3. Deactivate Empire ID
+    // 3. Decrement clan resident count
+    if (clanGuildId) {
+      const decremented = decrementClanResidents(clanGuildId);
+      if (decremented) {
+        console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+      }
+    }
+    
+    // 4. Deactivate Empire ID
     const empireIds = readJSON(empireIdsPath);
     const empireId = member.EmpireID;
     
@@ -258,14 +347,14 @@ async function kickMember(discordId, reason, client) {
       console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
     }
     
-    // 4. Calculate reapply date (3 months from now)
+    // 5. Calculate reapply date (3 months from now)
     const kickedAt = new Date();
     const canReapplyAt = new Date(kickedAt.getTime() + (KICK_COOLDOWN_DAYS * 24 * 60 * 60 * 1000));
     
     console.log(`[memberkickban] ⏰ Kicked at: ${kickedAt.toISOString()}`);
     console.log(`[memberkickban] ⏰ Can reapply: ${canReapplyAt.toISOString()}`);
     
-    // 5. Move to kicked_members.json
+    // 6. Move to kicked_members.json
     const kickedMembers = readJSON(kickedMembersPath);
     kickedMembers[discordId] = {
       discordId,
@@ -282,7 +371,7 @@ async function kickMember(discordId, reason, client) {
     writeJSON(kickedMembersPath, kickedMembers);
     console.log(`[memberkickban] 📦 Moved to kicked_members.json`);
     
-    // 6. Remove from members.json
+    // 7. Remove from members.json
     delete members[discordId];
     writeJSON(membersPath, members);
     console.log(`[memberkickban] 🗑️ Removed from members.json`);
@@ -310,7 +399,8 @@ async function kickMember(discordId, reason, client) {
 
 /**
  * Permanently ban a member from all Yazanaki clans
- * - Removes all roles
+ * - Removes all roles from Yazanaki discord
+ * - Removes all roles from clan discord
  * - Decrements clan resident count
  * - Deactivates Empire ID
  * - Permanent ban from reapplying
@@ -334,29 +424,39 @@ async function banMember(discordId, reason, client) {
 
   try {
     // 1. Remove all Yazanaki Empire roles (if they are in the guild)
-    const rolesRemoved = await removeAllYazanakiRoles(discordId, client);
-    console.log(`[memberkickban] 🎭 Roles removed: ${rolesRemoved}`);
+    const yazanakiRolesRemoved = await removeAllYazanakiRoles(discordId, client);
+    console.log(`[memberkickban] 🎭 Yazanaki roles removed: ${yazanakiRolesRemoved}`);
 
     // 1b. Add "empire enemy" role in Yazanaki Discord (from roles.json)
     await addEmpireEnemyRole(discordId, client);
 
-    // 2. Decrement clan resident count (only if they were an existing member)
+    // 2. ✅ NEW: Remove all roles from clan discord (only if they were an existing member)
     let clanName = null;
+    let clanGuildId = null;
+
     if (isExistingMember) {
       clanName = member.JoinedClan;
       if (clanName) {
-        const clanGuildId = getClanGuildId(clanName);
-        
-        if (clanGuildId) {
-          const decremented = decrementClanResidents(clanGuildId);
-          if (decremented) {
-            console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
-          }
+        const clanEntry = getClanEntry(clanName);
+        if (clanEntry) {
+          clanGuildId = clanEntry.guildId;
+          const clanRolesRemoved = await removeAllClanRoles(discordId, clanGuildId, clanEntry, client);
+          console.log(`[memberkickban] 🎭 Clan discord roles removed: ${clanRolesRemoved}`);
+        } else {
+          console.warn(`[memberkickban] ⚠️ Could not find clan entry for: ${clanName}`);
         }
       }
     }
+
+    // 3. Decrement clan resident count (only if they were an existing member)
+    if (isExistingMember && clanGuildId) {
+      const decremented = decrementClanResidents(clanGuildId);
+      if (decremented) {
+        console.log(`[memberkickban] 📊 Decremented resident count for clan: ${clanName}`);
+      }
+    }
     
-    // 3. Deactivate Empire ID (only if they had one)
+    // 4. Deactivate Empire ID (only if they had one)
     let empireId = null;
     if (isExistingMember) {
       const empireIds = readJSON(empireIdsPath);
@@ -370,7 +470,7 @@ async function banMember(discordId, reason, client) {
       }
     }
     
-    // 4. Move to banned_members.json (works for both members and non-members)
+    // 5. Move to banned_members.json (works for both members and non-members)
     const bannedMembers = readJSON(bannedMembersPath);
     const bannedAt = new Date();
 
@@ -401,7 +501,7 @@ async function banMember(discordId, reason, client) {
     console.log(`[memberkickban] 📦 Moved to banned_members.json`);
     console.log(`[memberkickban] ⛔ PERMANENT BAN - Cannot reapply`);
 
-    // 5. Remove from members.json (only if they were an existing member)
+    // 6. Remove from members.json (only if they were an existing member)
     if (isExistingMember) {
       delete members[discordId];
       writeJSON(membersPath, members);

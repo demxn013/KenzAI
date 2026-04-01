@@ -1,11 +1,12 @@
 // modules/membertracking/memberlogic.js
 // ✅ UPDATED: Now uses new multi-guild role detection from modules/roles/
+// ✅ FIXED: Alt account lookup now displays the queried MC username, not the main account username
 
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const Jimp = require("jimp");
-const { getMCFromDiscord, getDiscordFromMC } = require("../linking/linklogic");
+const { getMCFromDiscord, getDiscordFromMC, getAllAccountsForDiscord } = require("../linking/linklogic");
 const { detectRolesFromDiscord, batchDetectRoles } = require("../roles/roledetector");
 const { getApplicant, getAllApplicants } = require("../applications/applicants");
 
@@ -109,8 +110,9 @@ function getMemberByMinecraftNameInsensitive(inputMC) {
 }
 
 /**
- * ✅ Search by Minecraft username with role detection and saving
- * Now uses multi-guild role detection
+ * ✅ FIXED: Search by Minecraft username with role detection and saving
+ * Now correctly displays the queried MC username even if it's an alt account.
+ * Empire data (rank, clan, points, etc.) still comes from members.json via the linked Discord ID.
  */
 async function getMemberByMinecraftUser(inputMC, client = null) {
   if (!inputMC) {
@@ -119,8 +121,23 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
 
   console.log(`[memberlogic] 🔍 Searching for MC username: ${inputMC}`);
 
+  // ✅ FIXED: The queried username is what should be DISPLAYED.
+  // We use it to find the Discord ID, then load empire data from members.json.
+  // But we keep `inputMC` as the display username.
+  const queriedUsername = inputMC; // preserve original casing for display
+
   let linkedDiscordId = getDiscordFromMC(inputMC);
-  let linkedMC = null; // set from applicants fallback or from getMCFromDiscord below
+  let isAltAccount = false;
+
+  // ✅ Check if it's an alt account — getDiscordFromMC checks both main and alternateAccounts
+  // If found via alt, linkedDiscordId is set but the main account username may be different
+  if (linkedDiscordId) {
+    const mainMC = getMCFromDiscord(linkedDiscordId);
+    if (mainMC && normalizeUsername(mainMC) !== normalizeUsername(inputMC)) {
+      isAltAccount = true;
+      console.log(`[memberlogic] 🔀 ${inputMC} is an ALT account for Discord ID ${linkedDiscordId} (main: ${mainMC})`);
+    }
+  }
 
   // ✅ Fallback: resolve MC -> Discord from applicants.json (case-insensitive)
   if (!linkedDiscordId) {
@@ -131,7 +148,6 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
       const applicantKey = a.minecraftUserKey || (a.minecraftUser || "").toString().toLowerCase();
       if (applicantKey && applicantKey === inputKey) {
         linkedDiscordId = id;
-        linkedMC = a.minecraftUser || a.minecraftName;
         console.log(`[memberlogic] ℹ️ Found link via applicants.json: ${inputMC} -> Discord ID ${linkedDiscordId}`);
         break;
       }
@@ -146,9 +162,6 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     };
   }
 
-  if (!linkedMC) {
-    linkedMC = getMCFromDiscord(linkedDiscordId) || inputMC;
-  }
   console.log(`[memberlogic] ✅ Found link: ${inputMC} -> Discord ID ${linkedDiscordId}`);
 
   const members = readMembers();
@@ -158,10 +171,22 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     console.log(`[memberlogic] ✅ Found empire data by Discord ID`);
     empireData = members[linkedDiscordId];
   } else {
-    const mcMatch = getMemberByMinecraftNameInsensitive(linkedMC);
-    if (mcMatch) {
-      console.log(`[memberlogic] ✅ Found empire data by MC username`);
-      empireData = mcMatch;
+    // Try to find by the main MC username in members.json
+    const mainMC = getMCFromDiscord(linkedDiscordId);
+    if (mainMC) {
+      const mcMatch = getMemberByMinecraftNameInsensitive(mainMC);
+      if (mcMatch) {
+        console.log(`[memberlogic] ✅ Found empire data by main MC username`);
+        empireData = mcMatch;
+      }
+    }
+    if (!empireData) {
+      // Final fallback: try the queried username directly
+      const mcMatch = getMemberByMinecraftNameInsensitive(inputMC);
+      if (mcMatch) {
+        console.log(`[memberlogic] ✅ Found empire data by queried MC username`);
+        empireData = mcMatch;
+      }
     }
   }
   
@@ -191,10 +216,15 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     }
   }
 
-  // ✅ FIXED: Include points from empireData so /member view displays correct balance
+  // ✅ FIXED: Use the QUERIED username for display, but empire data from members.json
+  // This ensures alt accounts show their own skin/name but share the empire data
   const memberData = {
     discordId: linkedDiscordId,
-    minecraftUser: linkedMC,
+    // ✅ FIXED: Display the queried MC username, NOT the main account username
+    minecraftUser: queriedUsername,
+    isAltAccount,
+    // Include the main account info for reference if it's an alt
+    mainMinecraftUser: isAltAccount ? getMCFromDiscord(linkedDiscordId) : queriedUsername,
     minecraftVersion: empireData?.minecraftVersion || "",
     JoinedClan: empireData?.JoinedClan || "",
     JoinDate: empireData?.JoinDate || "",
@@ -204,11 +234,17 @@ async function getMemberByMinecraftUser(inputMC, client = null) {
     points: typeof empireData?.points === "number" ? empireData.points : 0
   };
   
-  console.log(`[memberlogic] 📊 Returning data:`, memberData);
+  console.log(`[memberlogic] 📊 Returning data (queried: ${queriedUsername}, alt: ${isAltAccount}):`, {
+    minecraftUser: memberData.minecraftUser,
+    rank: memberData.YazanakiRank,
+    status: memberData.Status,
+    clan: memberData.JoinedClan
+  });
   
   return {
     member: memberData,
-    exactUsername: linkedMC
+    // ✅ FIXED: exactUsername is the queried username, not the main
+    exactUsername: queriedUsername
   };
 }
 
@@ -282,10 +318,12 @@ async function getMemberByDiscordId(discordId, client = null) {
     }
   }
 
-  // ✅ FIXED: Include points from empireData so /member view displays correct balance
+  // When looking up by Discord ID, always use the main account username
   const memberData = {
     discordId,
     minecraftUser: linkedMC,
+    isAltAccount: false,
+    mainMinecraftUser: linkedMC,
     minecraftVersion: empireData?.minecraftVersion || "",
     JoinedClan: empireData?.JoinedClan || "",
     JoinDate: empireData?.JoinDate || "",
@@ -295,7 +333,12 @@ async function getMemberByDiscordId(discordId, client = null) {
     points: typeof empireData?.points === "number" ? empireData.points : 0
   };
   
-  console.log(`[memberlogic] 📊 Returning data:`, memberData);
+  console.log(`[memberlogic] 📊 Returning data:`, {
+    minecraftUser: memberData.minecraftUser,
+    rank: memberData.YazanakiRank,
+    status: memberData.Status,
+    clan: memberData.JoinedClan
+  });
   
   return { member: memberData };
 }
@@ -432,6 +475,7 @@ async function resolveCommandTarget(
     if (byMC && byMC.member) {
       memberData = byMC.member;
       discordUser = await client.users.fetch(byMC.discordId).catch(() => null);
+      // ✅ FIXED: Use the queried MC username from the result, not the main
       mcUsername = byMC.member.minecraftUser || mcOption;
     } else {
       const linkedDiscordId = getDiscordFromMC(mcOption);

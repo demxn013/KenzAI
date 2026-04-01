@@ -1,6 +1,5 @@
 /* AFK Core main entrypoint
  * Lightweight HTTP API around minecraft-protocol sessions.
- * ✅ NEW: ElementalMC profile added
  */
 
 "use strict";
@@ -21,6 +20,7 @@ const fastify = Fastify({
   logger: true,
 });
 
+// Where to look for existing Microsoft auth cache / tokens.
 const DEFAULT_TOKENS_DIR = path.join(__dirname, "..", "..", "tokens");
 
 const authProvider = new FileTokenAuthProvider({
@@ -32,11 +32,12 @@ const profiles = {
   donutsmp: new DonutSmpProfile(),
   freshsmp: new FreshSmpProfile(),
   hypixel: new HypixelProfile(),
-  elementalmc: new ElementalMCProfile(),  // ✅ NEW
+  elementalmc: new ElementalMCProfile(),
 };
 
 const sessionManager = new SessionManager({ authProvider, profiles });
 
+// Simple body validation helper
 function requireFields(obj, fields) {
   const missing = [];
   for (const field of fields) {
@@ -68,7 +69,7 @@ fastify.post("/session/start", async (request, reply) => {
       success: false,
       reason: "unknown_profile",
       profile: profileKey,
-      availableProfiles: Object.keys(profiles),
+      available: Object.keys(profiles),
     });
   }
 
@@ -152,20 +153,17 @@ fastify.get("/session", async (_request, reply) => {
   });
 });
 
+// Simple JSON metrics endpoint
+fastify.get("/metrics", async (_request, reply) => {
+  return reply.send(buildMetricsSnapshot());
+});
+
 // GET /profiles — list available profiles
 fastify.get("/profiles", async (_request, reply) => {
   return reply.send({
     success: true,
-    profiles: Object.entries(profiles).map(([key, profile]) => ({
-      id: key,
-      supportedVersions: profile.supportedVersions || []
-    }))
+    profiles: Object.keys(profiles),
   });
-});
-
-// Simple JSON metrics endpoint
-fastify.get("/metrics", async (_request, reply) => {
-  return reply.send(buildMetricsSnapshot());
 });
 
 const PORT = Number(process.env.AFK_CORE_PORT || 4001);
@@ -175,12 +173,8 @@ fastify
   .listen({ port: PORT, host: HOST })
   .then(() => {
     fastify.log.info(
-      { port: PORT, host: HOST },
+      { port: PORT, host: HOST, profiles: Object.keys(profiles) },
       "AFK core service listening",
-    );
-    fastify.log.info(
-      { profiles: Object.keys(profiles) },
-      "Available profiles"
     );
   })
   .catch((err) => {

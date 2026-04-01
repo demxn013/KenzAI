@@ -30,6 +30,7 @@ const {
   getBotsForUser,
   listAllBots,
   getBotCount,
+  getAndClearRecentlyEnded,
 } = require("./botmanager");
 
 const app = express();
@@ -46,18 +47,11 @@ if (!API_KEY || API_KEY.trim() === "" || API_KEY === "REPLACE_WITH_A_LONG_RANDOM
 // ============================================================
 // PENDING DEVICE CODES
 // Map<botId, { userCode, verificationUri, expiresAt }>
-//
-// botId = `${discordId}:${minecraftUser.toLowerCase()}`
-//
-// Always stores the LATEST code — if prismarine-auth's retry loop
-// generates a new code after the first one, we overwrite so the
-// Discord bot picks up the fresh code on its next poll.
 // ============================================================
 const pendingDeviceCodes = new Map();
 
 // ============================================================
 // PENDING LINK VERIFICATION
-// Map<discordId, { mcUsername, createdAt }>
 // ============================================================
 const pendingLinkVerified = new Map();
 const LINK_VERIFIED_EXPIRY_MS = 5 * 60 * 1000;
@@ -120,13 +114,6 @@ app.post("/start", (req, res) => {
     pendingDeviceCodes.delete(botId);
   }
 
-  // Device code callback.
-  //
-  // IMPORTANT: We always overwrite with the latest code. prismarine-auth's
-  // retry loop may generate multiple codes when a cached refresh token is
-  // expired. The Discord bot needs to show the LATEST valid code — the earlier
-  // codes will have been consumed/invalidated by Microsoft by the time the
-  // user tries to enter them.
   const onDeviceCode = (userCode, verificationUri, expiresIn) => {
     const ENFORCED_DEVICE_CODE_TTL_SEC = 5 * 60;
     const effectiveExpiresIn = Math.min(
@@ -316,6 +303,22 @@ app.post("/stopall", (req, res) => {
 });
 
 // ============================================================
+// ROUTE: Get Recently Ended Bots (for Discord DM notifications)
+// GET /ended
+//
+// Returns bots that went offline unexpectedly since the last poll,
+// then clears the list. The Discord bot polls this every ~2 minutes
+// and DMs users whose bots have gone offline.
+//
+// Note: manual stops (user ran /mcbot stop) are excluded from this list.
+// ============================================================
+
+app.get("/ended", (req, res) => {
+  const ended = getAndClearRecentlyEnded();
+  return res.status(200).json({ ok: true, count: ended.length, bots: ended });
+});
+
+// ============================================================
 // START SERVER
 // ============================================================
 
@@ -326,6 +329,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[server] 🔑 Auth mode: Microsoft (online mode)`);
   console.log(`[server] 🤖 Max bots: ${process.env.MAX_BOTS || "unlimited"}`);
   console.log(`[server] 🔄 Auto-reconnect: ${process.env.AUTO_RECONNECT || "false"}`);
+  console.log(`[server] 📡 Bot monitor endpoint: GET /ended`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 });
 

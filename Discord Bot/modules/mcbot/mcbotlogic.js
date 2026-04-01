@@ -262,6 +262,15 @@ async function clearDeviceCodeOnVps(discordId, minecraftUser) {
   return vpsRequest("DELETE", `/devicecode/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
 }
 
+/**
+ * Get bots that ended unexpectedly since the last poll.
+ * Used by botmonitor.js to DM users when their bots go offline.
+ * Returns: { ok, data: { bots: [...] } }
+ */
+async function getEndedBotsFromVps() {
+  return vpsRequest("GET", "/ended");
+}
+
 module.exports = {
   validateMember,
   findOwnerByMinecraftUser,
@@ -274,4 +283,5 @@ module.exports = {
   stopAllBotsOnVps,
   getDeviceCodeFromVps,
   clearDeviceCodeOnVps,
+  getEndedBotsFromVps,
 };

@@ -13,6 +13,7 @@ const crypto = require('crypto');
 // ============================================================
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
+const { startBotMonitor } = require('./modules/mcbot/botmonitor');
 
 // ============================================================
 // CLIENT SETUP
@@ -232,6 +233,9 @@ client.once('ready', async () => {
   startScheduler(client);
 
   setupPointsEvents(client);
+
+  console.log("🤖 Starting bot offline monitor...");
+  startBotMonitor(client);
 });
 
 // ============================================================

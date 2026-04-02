@@ -52,8 +52,6 @@ const { getAllAccountsForDiscord } = require("../linking/linklogic");
 
 // ============================================================
 // ✅ MONETIZATION IMPORTS
-// Set REQUIRE_SUBSCRIPTION=true in .env to enforce subscriptions.
-// When false (default), /mcbot start/stop work exactly as before.
 // ============================================================
 const {
   requestSlot,
@@ -79,8 +77,11 @@ const YAZANAKI_EMPIRE_GUILD_ID  = "1220847061797179524";
 const CONFIRMATION_TIMEOUT_MS   = 3 * 60 * 1000;  // 3 minutes
 const BOT_START_POLL_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
+// Server address → version hint sent to the VPS.
+// "auto" = VPS will try multiple versions until one works.
 const SERVER_VERSION_MAP = {
-  "donutsmp.net": "auto",
+  "donutsmp.net":       "auto",
+  "elementalmc.live":   "auto",
 };
 const DEFAULT_VERSION = "1.21.4";
 
@@ -165,10 +166,6 @@ function infoEmbed(title, description) {
   return new EmbedBuilder().setTitle(`ℹ️ ${title}`).setDescription(description).setColor(0x2196f3).setTimestamp();
 }
 
-/**
- * Rich upsell embed shown when a user tries to use /mcbot start without a subscription.
- * Much more inviting than a plain error message.
- */
 function buildUpsellEmbed() {
   const patreonUrl = getPatreonUrl();
   const tierConfig = getTierConfig();
@@ -183,7 +180,7 @@ function buildUpsellEmbed() {
 
   return new EmbedBuilder()
     .setTitle("🤖 Unlock Minecraft Bot Slots")
-    .setColor(0xf96854) // Patreon orange-red
+    .setColor(0xf96854)
     .setDescription(
       [
         "**KenzAI bot slots** let you run a Minecraft AFK bot on the empire VPS — stay online in-game without keeping your game open.",
@@ -208,9 +205,6 @@ function buildUpsellEmbed() {
     .setTimestamp();
 }
 
-/**
- * Build the upsell action row with a Patreon link button.
- */
 function buildUpsellRow() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -241,7 +235,6 @@ function buildConfirmRow(userId, disabled = false) {
   );
 }
 
-// Slot-specific embed helpers
 function tierBadge(tier) {
   const badges = { standard: "🔵 Standard", premium: "🟣 Premium", vip: "👑 VIP", none: "⚫ None" };
   return badges[tier] || tier;
@@ -273,7 +266,7 @@ module.exports = {
         .setDescription("Start a Minecraft bot on a server")
         .addStringOption(opt =>
           opt.setName("server")
-             .setDescription("Server address (e.g. play.example.net or 123.45.67.89:25565)")
+             .setDescription("Server address (e.g. play.elementalmc.live or donutsmp.net)")
              .setRequired(true)
         )
         .addStringOption(opt =>
@@ -343,7 +336,6 @@ module.exports = {
                  .setRequired(false)
             )
         )
-        // Admin subcommands
         .addSubcommand(sub =>
           sub
             .setName("grant")
@@ -422,7 +414,7 @@ module.exports = {
       return _handleSlot(interaction, sub, userId);
     }
 
-    // ── Admin bot subcommands (no member validation needed) ───
+    // ── Admin bot subcommands ─────────────────────────────────
     if (sub === "ping") {
       await interaction.deferReply({ ephemeral: true });
       const response = await pingVps();
@@ -483,13 +475,12 @@ module.exports = {
       });
     }
 
-    // ── /mcbot info — public, no member validation needed ─────
+    // ── /mcbot info ───────────────────────────────────────────
     if (sub === "info") {
       const patreonUrl = getPatreonUrl();
       const tierConfig = getTierConfig();
       const availability = getSlotAvailability();
 
-      // Check caller's own subscription status for a personalised touch
       const callerRecord = db.getUser(userId);
       const callerActive = callerRecord?.active && callerRecord?.subscription_tier !== "none";
       const callerTier   = callerActive ? callerRecord.subscription_tier : null;
@@ -539,11 +530,22 @@ module.exports = {
           {
             name: "⚡ Features",
             value: [
-              "• Supports DonutSMP, FreshSMP, Hypixel & vanilla servers",
+              "• Supports **DonutSMP**, **ElementalMC**, FreshSMP, Hypixel & vanilla servers",
               "• Auto-reconnects if kicked",
               "• Automatically eats food — bot won't starve",
               "• Microsoft account auth — fully secure",
               "• Version auto-detection for most servers",
+              "• DM notification when your bot goes offline",
+            ].join("\n"),
+            inline: false,
+          },
+          {
+            name: "🌐 Supported Servers",
+            value: [
+              "• `play.elementalmc.live` — ElementalMC",
+              "• `donutsmp.net` — DonutSMP",
+              "• `hypixel.net` — Hypixel",
+              "• Any vanilla Java server",
             ].join("\n"),
             inline: false,
           }
@@ -587,7 +589,7 @@ module.exports = {
 
       if (!serverAddress || serverAddress.length < 3) {
         return interaction.editReply({
-          embeds: [errorEmbed("Invalid Server Address", "Please provide a valid server address.\nExample: `play.example.net` or `123.45.67.89:25565`")],
+          embeds: [errorEmbed("Invalid Server Address", "Please provide a valid server address.\nExample: `play.elementalmc.live` or `donutsmp.net`")],
         });
       }
 
@@ -612,7 +614,6 @@ module.exports = {
         const slotResult = requestSlot(userId, chosenAccount, { server_address: serverAddress });
 
         if (slotResult.status === "error") {
-          // ── Rich upsell embed instead of plain error ────────
           console.log(`[/mcbot] 💸 No subscription for ${userId} — showing upsell embed`);
           console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
           return interaction.editReply({
@@ -772,7 +773,6 @@ module.exports = {
         });
       }
 
-      // ✅ MONETIZATION: Release slot on successful stop
       if (REQUIRE_SUBSCRIPTION) {
         const releaseResult = releaseSlotByUser(userId, targetAccount);
         console.log(`[/mcbot] 🎫 Slot released for ${userId}/${targetAccount}: ${releaseResult.message}`);
@@ -836,14 +836,13 @@ module.exports = {
   },
 
   // ============================================================
-  // BUTTON HANDLER — DM confirmation buttons + patreon info
+  // BUTTON HANDLER
   // ============================================================
 
   async buttonHandler(interaction) {
     const { customId, user } = interaction;
     const userId = user.id;
 
-    // ── Patreon info button (from upsell embed) ───────────────
     if (customId === "mcbot_patreon_info") {
       const patreonCmd = interaction.client.commands.get("patreon");
       if (patreonCmd) {
@@ -894,7 +893,7 @@ module.exports = {
       return;
     }
 
-    // ── Confirmed — start the bot ─────────────────────────────
+    // ── Confirmed — start the bot
     console.log(`[/mcbot] ✅ Bot start confirmed by ${userId} — starting ${pending.minecraftUser} on ${pending.serverAddress}`);
 
     await interaction.update({
@@ -952,7 +951,6 @@ module.exports = {
 // ============================================================
 
 async function _handleSlot(interaction, sub, userId) {
-  // Admin gate for grant / revoke / info
   const adminSubs = ["grant", "revoke", "info"];
   if (adminSubs.includes(sub)) {
     if (!interaction.member?.permissions?.has(PermissionsBitField.Flags.Administrator)) {
@@ -973,7 +971,6 @@ async function _handleSlot(interaction, sub, userId) {
   if (sub === "release")   return _slotRelease(interaction, userId);
 }
 
-// ── /mcbot slot status ────────────────────────────────────────
 async function _slotStatus(interaction, userId) {
   const user  = db.getOrCreateUser(userId);
   const slots = db.getSlotsForUser(userId);
@@ -1018,7 +1015,6 @@ async function _slotStatus(interaction, userId) {
   return interaction.editReply({ embeds: [embed] });
 }
 
-// ── /mcbot slot available ─────────────────────────────────────
 async function _slotAvailable(interaction) {
   const avail      = getSlotAvailability();
   const { total: queueTotal } = getQueueStats();
@@ -1042,7 +1038,6 @@ async function _slotAvailable(interaction) {
   return interaction.editReply({ embeds: [embed] });
 }
 
-// ── /mcbot slot queue ─────────────────────────────────────────
 async function _slotQueue(interaction, userId) {
   const entry = db.getQueueForUser(userId);
 
@@ -1071,7 +1066,6 @@ async function _slotQueue(interaction, userId) {
   });
 }
 
-// ── /mcbot slot release ───────────────────────────────────────
 async function _slotRelease(interaction, userId) {
   const slotIdOpt = interaction.options.getString("slot_id");
   const slots     = db.getSlotsForUser(userId);
@@ -1119,7 +1113,6 @@ async function _slotRelease(interaction, userId) {
   return interaction.editReply({ embeds: [embed] });
 }
 
-// ── /mcbot slot grant|revoke|info ────────────────────────────
 async function _handleSlotAdmin(interaction, sub) {
   const targetUser = interaction.options.getUser("user");
   const tier       = interaction.options.getString("tier");
@@ -1192,7 +1185,6 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, pollInterval));
 
-    // ── Poll device code ───────────────────────────────────────
     try {
       const codeRes = await getDeviceCodeFromVps(discordId, minecraftUser);
       if (codeRes.ok && codeRes.data?.pending) {
@@ -1227,7 +1219,6 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
       console.error(`[/mcbot] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
     }
 
-    // ── Poll bot status ────────────────────────────────────────
     try {
       const statusRes = await getBotStatusFromVps(discordId, minecraftUser);
       if (!statusRes.ok) continue;
@@ -1277,7 +1268,6 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
     }
   }
 
-  // Deadline reached
   console.warn(`[/mcbot] ⏰ Poll timed out for ${discordId}/${minecraftUser}`);
   try {
     await confirmMessage.edit({

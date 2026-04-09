@@ -85,6 +85,27 @@ const SERVER_VERSION_MAP = {
 };
 const DEFAULT_VERSION = "1.21.4";
 
+// ============================================================
+// DONUTSMP DETECTION
+// DonutSMP has a security/verification screen on new logins.
+// The VPS botmanager handles silent reconnects, but we need
+// to know when to show a "verifying..." status vs "online" in
+// the Discord poll loop, and show appropriate error messages.
+// ============================================================
+const DONUTSMP_HOST_PATTERNS = ["donutsmp.net", "donutsmp"];
+
+function isDonutSmpServer(serverAddress) {
+  if (!serverAddress) return false;
+  const lower = serverAddress.toLowerCase();
+  return DONUTSMP_HOST_PATTERNS.some(p => lower.includes(p));
+}
+
+// How long to consider a DonutSMP bot "pending verification" after first login
+// before treating a reconnect as a genuine stable connection.
+// The VPS retries up to 5 times with 8s delay each = ~40s max.
+// We give the poll loop 60s extra patience for DonutSMP.
+const DONUTSMP_VERIFICATION_GRACE_MS = 60 * 1000;
+
 // Pending DM confirmations: userId -> confirmation data
 const pendingConfirmations = new Map();
 
@@ -142,6 +163,12 @@ function buildStatusHints(bot) {
   if (cat === "server_rejected" || cat === "protocol_mismatch") {
     hints.push("Server rejected the client or there's a protocol mismatch.");
     hints.push("Contact an admin — the server version mapping may need to be updated.");
+  }
+  if (cat === "donutsmp_verification") {
+    hints.push(
+      "DonutSMP requires account verification for new logins. " +
+      "Please log into DonutSMP manually once and complete the security verification, then try `/mcbot start` again."
+    );
   }
   return hints;
 }
@@ -896,13 +923,24 @@ module.exports = {
     // ── Confirmed — start the bot
     console.log(`[/mcbot] ✅ Bot start confirmed by ${userId} — starting ${pending.minecraftUser} on ${pending.serverAddress}`);
 
+    // Show appropriate starting message — note DonutSMP needs extra patience
+    const isDonutSmp = isDonutSmpServer(pending.serverAddress);
+    const startingDesc = isDonutSmp
+      ? (
+          `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
+          "⚠️ **DonutSMP Note:** Due to DonutSMP's security features, the bot may need to reconnect 1-2 times before fully joining. " +
+          "This is normal and automatic — please wait up to 60 seconds.\n\n" +
+          "If Microsoft authentication is required, you'll receive a sign-in code here shortly."
+        )
+      : (
+          `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
+          "If Microsoft authentication is required, you'll receive a sign-in code here shortly."
+        );
+
     await interaction.update({
       embeds: [new EmbedBuilder()
         .setTitle("⏳ Starting Bot...")
-        .setDescription(
-          `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
-          "If Microsoft authentication is required, you'll receive a sign-in code here shortly."
-        )
+        .setDescription(startingDesc)
         .setColor(0x2196f3)
         .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
         .setTimestamp()],
@@ -913,7 +951,10 @@ module.exports = {
       await pending.interaction.editReply({
         embeds: [new EmbedBuilder()
           .setTitle("🚀 Bot Starting")
-          .setDescription(`Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\nCheck your DMs for updates.`)
+          .setDescription(
+            `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\nCheck your DMs for updates.` +
+            (isDonutSmp ? "\n\n⚠️ DonutSMP may require an extra moment to verify — this is automatic." : "")
+          )
           .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
           .setTimestamp()],
@@ -942,7 +983,7 @@ module.exports = {
       return;
     }
 
-    await pollBotStartOutcome(userId, pending.minecraftUser, pending.dmChannel, interaction.message);
+    await pollBotStartOutcome(userId, pending.minecraftUser, pending.serverAddress, pending.dmChannel, interaction.message);
   },
 };
 
@@ -1175,23 +1216,40 @@ async function _handleSlotAdmin(interaction, sub) {
 
 // ============================================================
 // BOT START OUTCOME POLLING
+//
+// Key change for DonutSMP: the bot may go online → reconnecting
+// several times as it works through the verification screen.
+// We treat "reconnecting" as a non-failure for DonutSMP during
+// the verification grace period, and only report "online" once
+// the bot has been stable for at least STABLE_ONLINE_THRESHOLD_MS.
 // ============================================================
 
-async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmMessage) {
+const STABLE_ONLINE_THRESHOLD_MS = 10 * 1000; // bot must stay online 10s to be "confirmed"
+
+async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmChannel, confirmMessage) {
   const deadline     = Date.now() + BOT_START_POLL_DURATION_MS;
   const pollInterval = 3000;
   let lastCodeShown  = null;
+  const isDonutSmp   = isDonutSmpServer(serverAddress);
+
+  // Track when bot first went online so we can apply stability check
+  let firstOnlineAt  = null;
+  let reportedOnline = false;
+  const verificationGraceEnd = isDonutSmp ? Date.now() + DONUTSMP_VERIFICATION_GRACE_MS : 0;
+
+  console.log(`[/mcbot poll] 🔄 Starting poll for ${discordId}/${minecraftUser} — DonutSMP: ${isDonutSmp}`);
 
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, pollInterval));
 
+    // ── Device code polling ────────────────────────────────────
     try {
       const codeRes = await getDeviceCodeFromVps(discordId, minecraftUser);
       if (codeRes.ok && codeRes.data?.pending) {
         const { userCode, verificationUri } = codeRes.data;
         if (userCode !== lastCodeShown) {
           const isUpdate = lastCodeShown !== null;
-          console.log(`[/mcbot] 🔐 ${isUpdate ? "Updated" : "New"} device code for ${discordId}/${minecraftUser}: ${userCode}`);
+          console.log(`[/mcbot poll] 🔐 ${isUpdate ? "Updated" : "New"} device code for ${discordId}/${minecraftUser}: ${userCode}`);
           try {
             await dmChannel.send({
               embeds: [new EmbedBuilder()
@@ -1211,24 +1269,73 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
             lastCodeShown = userCode;
             await clearDeviceCodeOnVps(discordId, minecraftUser);
           } catch (dmErr) {
-            console.error(`[/mcbot] ❌ Failed to DM device code to ${discordId}:`, dmErr.message);
+            console.error(`[/mcbot poll] ❌ Failed to DM device code to ${discordId}:`, dmErr.message);
           }
         }
       }
     } catch (err) {
-      console.error(`[/mcbot] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
+      console.error(`[/mcbot poll] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
     }
 
+    // ── Status polling ─────────────────────────────────────────
     try {
       const statusRes = await getBotStatusFromVps(discordId, minecraftUser);
-      if (!statusRes.ok) continue;
+
+      // If the bot no longer exists on the VPS at all and we've already
+      // reported it as online, stop polling — it will be caught by botmonitor.
+      if (!statusRes.ok) {
+        if (reportedOnline) {
+          console.log(`[/mcbot poll] ℹ️ Bot gone from VPS after being online — stopping poll for ${discordId}/${minecraftUser}`);
+          return;
+        }
+        continue;
+      }
 
       const bot    = statusRes.data?.bot;
       if (!bot) continue;
       const status = bot.status;
 
+      // ── DonutSMP: treat "reconnecting" during grace period as pending ──
+      if (isDonutSmp && status === "reconnecting" && Date.now() < verificationGraceEnd) {
+        console.log(`[/mcbot poll] 🟠 DonutSMP reconnecting during grace period for ${minecraftUser} — waiting...`);
+        // Update the DM message to show verification in progress (only once)
+        if (!reportedOnline) {
+          try {
+            await confirmMessage.edit({
+              embeds: [new EmbedBuilder()
+                .setTitle("🟠 DonutSMP Verification in Progress...")
+                .setDescription(
+                  `The bot connected to DonutSMP and is working through the security verification screen.\n\n` +
+                  `**Account:** \`${bot.minecraftUser}\`\n` +
+                  `**Server:** \`${bot.serverHost}\`\n\n` +
+                  "This is automatic — please wait up to 60 seconds."
+                )
+                .setColor(0xff9800)
+                .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+                .setTimestamp()],
+            });
+          } catch {}
+          reportedOnline = true; // prevent repeated edits
+        }
+        continue;
+      }
+
+      // ── Bot is online — apply stability check ─────────────────
       if (status === "online") {
-        console.log(`[/mcbot] 🟢 Bot online for ${discordId}/${minecraftUser}`);
+        if (!firstOnlineAt) {
+          firstOnlineAt = Date.now();
+          console.log(`[/mcbot poll] 🟢 Bot online for ${discordId}/${minecraftUser} — waiting ${STABLE_ONLINE_THRESHOLD_MS}ms for stability`);
+          continue; // wait for next poll to confirm stability
+        }
+
+        const onlineDuration = Date.now() - firstOnlineAt;
+        if (onlineDuration < STABLE_ONLINE_THRESHOLD_MS) {
+          // Not stable yet — keep waiting
+          continue;
+        }
+
+        // Stable online — report success
+        console.log(`[/mcbot poll] ✅ Bot confirmed stable online for ${discordId}/${minecraftUser}`);
         try {
           await confirmMessage.edit({
             embeds: [new EmbedBuilder()
@@ -1247,8 +1354,15 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
         return;
       }
 
+      // ── Reset stability counter if bot drops offline during check ──
+      if (status !== "online" && firstOnlineAt && !isDonutSmp) {
+        console.log(`[/mcbot poll] ⚠️ Bot dropped from online to ${status} during stability check for ${discordId}/${minecraftUser}`);
+        firstOnlineAt = null;
+      }
+
+      // ── Error state ────────────────────────────────────────────
       if (status === "error") {
-        console.log(`[/mcbot] 🔴 Bot error for ${discordId}/${minecraftUser}`);
+        console.log(`[/mcbot poll] 🔴 Bot error for ${discordId}/${minecraftUser}`);
         const hints    = buildStatusHints(bot);
         const hintText = hints.length > 0 ? `\n\n💡 ${hints.join("\n💡 ")}` : "";
         try {
@@ -1263,12 +1377,13 @@ async function pollBotStartOutcome(discordId, minecraftUser, dmChannel, confirmM
         } catch {}
         return;
       }
+
     } catch (err) {
-      console.error(`[/mcbot] ❌ Status poll error for ${discordId}/${minecraftUser}:`, err.message);
+      console.error(`[/mcbot poll] ❌ Status poll error for ${discordId}/${minecraftUser}:`, err.message);
     }
   }
 
-  console.warn(`[/mcbot] ⏰ Poll timed out for ${discordId}/${minecraftUser}`);
+  console.warn(`[/mcbot poll] ⏰ Poll timed out for ${discordId}/${minecraftUser}`);
   try {
     await confirmMessage.edit({
       embeds: [warningEmbed("Timed Out", "The bot start timed out. Use `/mcbot status` to check if the bot is running.")],

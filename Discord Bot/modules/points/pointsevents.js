@@ -1,5 +1,6 @@
 // modules/points/pointsevents.js
 // Message and voice point awards (only for Yazanaki members in allowed channels)
+// All awarded points are now categorized.
 
 const cache = require("../data/cache");
 const { readMembers, writeMembers, addPoints, isMember } = require("./pointslogic");
@@ -30,9 +31,9 @@ function handleMessageCreate(message) {
   const count = typeof current === "number" ? current : 0;
   if (count >= DAILY_MESSAGE_CAP) return;
 
-  const newCount = count + 1;
-  cache.set(key, newCount);
-  addPoints(message.author.id, POINTS_PER_MESSAGE, "message");
+  cache.set(key, count + 1);
+  // Message activity → activity category
+  addPoints(message.author.id, POINTS_PER_MESSAGE, "message", "activity");
 }
 
 function handleVoiceStateUpdate(oldState, newState) {
@@ -57,7 +58,8 @@ function handleVoiceStateUpdate(oldState, newState) {
         const remaining = Math.max(0, DAILY_VOICE_CAP - dailyData.total);
         const add = Math.min(pointsToAdd, remaining);
         if (add > 0) {
-          addPoints(userId, add, "voice");
+          // Voice activity → activity category
+          addPoints(userId, add, "voice", "activity");
           dailyData.total = (dailyData.total || 0) + add;
           cache.set(dailyKey, dailyData);
         }
@@ -122,9 +124,7 @@ async function handleGuildMemberAdd(member) {
       ) {
         let storedCode = value.trim();
         const match = storedCode.match(/discord(?:\.gg|\.com\/invite)\/([^/]+)/i);
-        if (match && match[1]) {
-          storedCode = match[1];
-        }
+        if (match && match[1]) storedCode = match[1];
         if (storedCode === usedCode) {
           inviterId = discordId;
           inviterAbbrev = key.replace("PointsInviteLink", "");
@@ -146,7 +146,8 @@ async function handleGuildMemberAdd(member) {
     writeMembers(members);
   }
 
-  addPoints(inviterId, POINTS_PER_INVITE, "invite");
+  // Invite → contribution category
+  addPoints(inviterId, POINTS_PER_INVITE, "invite", "contribution");
 }
 
 async function primeInviteCache(client) {

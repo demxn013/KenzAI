@@ -131,7 +131,7 @@ function createTeamEmbed(serverDisplayName, clanAbbr, clanName, fields, options 
     allFields.push({
       name: fieldName("leaderboard", "Leaderboard highlights", statEmojis),
       value: highlights.map((h) => `**${escapeDiscord(h.username)}** — ${h.value} (rank ${h.rank})`).join("\n"),
-      inline: false
+      inline: true
     });
   }
   const embed = new EmbedBuilder()

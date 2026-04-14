@@ -24,6 +24,17 @@ let _discordClient = null;
 function _buildDescription(bot) {
   const { endReason, spawnError, lastKickReason, errorCategory } = bot;
 
+  // DonutSMP verification failure — special friendly message
+  if (endReason === "donutsmp_verification_failed" || errorCategory === "donutsmp_verification") {
+    return (
+      "Your bot was unable to join **DonutSMP** because their security system is requiring account verification.\n\n" +
+      "**What to do:**\n" +
+      "1. Log into DonutSMP manually using your Minecraft client\n" +
+      "2. Complete the security/verification prompt that appears\n" +
+      "3. Once verified, run `/mcbot start donutsmp.net` again"
+    );
+  }
+
   if (endReason === "kicked" || lastKickReason) {
     const reason = lastKickReason || spawnError || "No reason provided.";
     return (
@@ -88,25 +99,27 @@ function buildBotOfflineEmbed(bot) {
   const { minecraftUser, serverHost, serverPort, endReason, version } = bot;
 
   const TITLE_MAP = {
-    kicked:             "🦵 Bot Kicked from Server",
-    auth_error:         "🔐 Bot Authentication Failed",
-    auth_second_code:   "🔐 Bot Authentication Failed",
-    fatal_network_error:"🌐 Bot Connection Failed",
-    spawn_timeout:      "⏰ Bot Connection Timed Out",
-    error:              "❌ Bot Encountered an Error",
-    end:                "🔌 Bot Disconnected",
-    create_error:       "❌ Bot Failed to Start",
+    kicked:                       "🦵 Bot Kicked from Server",
+    auth_error:                   "🔐 Bot Authentication Failed",
+    auth_second_code:             "🔐 Bot Authentication Failed",
+    fatal_network_error:          "🌐 Bot Connection Failed",
+    spawn_timeout:                "⏰ Bot Connection Timed Out",
+    error:                        "❌ Bot Encountered an Error",
+    end:                          "🔌 Bot Disconnected",
+    create_error:                 "❌ Bot Failed to Start",
+    donutsmp_verification_failed: "🟠 DonutSMP Verification Required",
   };
 
   const COLOR_MAP = {
-    kicked:             0xffd600,
-    auth_error:         0xf44336,
-    auth_second_code:   0xf44336,
-    fatal_network_error:0xf44336,
-    spawn_timeout:      0xff9800,
-    error:              0xf44336,
-    end:                0xff9800,
-    create_error:       0xf44336,
+    kicked:                       0xffd600,
+    auth_error:                   0xf44336,
+    auth_second_code:             0xf44336,
+    fatal_network_error:          0xf44336,
+    spawn_timeout:                0xff9800,
+    error:                        0xf44336,
+    end:                          0xff9800,
+    create_error:                 0xf44336,
+    donutsmp_verification_failed: 0xff9800,
   };
 
   return new EmbedBuilder()

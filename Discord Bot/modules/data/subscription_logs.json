@@ -1,0 +1,20 @@
+{
+  "LOG-MN8JAPNE-VSGY": {
+    "log_id": "LOG-MN8JAPNE-VSGY",
+    "user_id": "1429561606060380421",
+    "action": "subscribed",
+    "tier": "standard",
+    "platform": "manual",
+    "timestamp": "2026-03-27T06:42:25.754Z",
+    "payment_id": null
+  },
+  "LOG-MNEDWWUN-AXUF": {
+    "log_id": "LOG-MNEDWWUN-AXUF",
+    "user_id": "811255871472140328",
+    "action": "subscribed",
+    "tier": "vip",
+    "platform": "manual",
+    "timestamp": "2026-03-31T08:58:20.879Z",
+    "payment_id": null
+  }
+}

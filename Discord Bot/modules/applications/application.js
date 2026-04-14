@@ -223,14 +223,14 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId("minecraft_name")
-              .setLabel("Minecraft Username")
+              .setLabel("Minecraft Username (no spaces)")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId("minecraft_version")
-              .setLabel("Minecraft Version (Bedrock/Java)")
+              .setLabel("Minecraft Version (Java or Bedrock only)")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
@@ -532,6 +532,39 @@ module.exports = {
       const prevGroups = interaction.fields.getTextInputValue("previous_groups");
       const reason = interaction.fields.getTextInputValue("reason");
 
+      // ============================================================
+      // ✅ TASK 1: VALIDATE MINECRAFT USERNAME AND VERSION
+      // ============================================================
+
+      // 1. No spaces allowed in Minecraft username
+      if (mcName.includes(" ")) {
+        return interaction.editReply({
+          content: "❌ Your Minecraft username cannot contain spaces. Please open a new application and enter your username without any spaces.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // 2. No spaces allowed in Minecraft version field
+      if (mcVersion.trim().includes(" ")) {
+        return interaction.editReply({
+          content: "❌ The Minecraft version field cannot contain spaces. Please open a new application and enter either **Java** or **Bedrock**.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // 3. Minecraft version must be exactly "java" or "bedrock" (case-insensitive)
+      const mcVersionNorm = mcVersion.trim().toLowerCase();
+      if (mcVersionNorm !== "java" && mcVersionNorm !== "bedrock") {
+        return interaction.editReply({
+          content: "❌ Invalid Minecraft version. You must enter either **Java** or **Bedrock** — nothing else is accepted. Please open a new application.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // ============================================================
+      // CONTINUE WITH TICKET CREATION
+      // ============================================================
+
       const category = guild.channels.cache.find((c) =>
         c.name.toLowerCase().includes("applications")
       );
@@ -575,7 +608,7 @@ module.exports = {
         minecraftUser: mcName,
         ticketChannel: channel.id,
         ticketNumber,
-        minecraftVersion: mcVersion,
+        minecraftVersion: mcVersion.trim(),
         timezone: tZone,
         previousGroups: prevGroups,
         reason,
@@ -615,7 +648,7 @@ module.exports = {
         .addFields(
           { name: "Applicant", value: `<@${interaction.user.id}>` },
           { name: "Minecraft Username", value: mcName },
-          { name: "Minecraft Version", value: mcVersion },
+          { name: "Minecraft Version", value: mcVersion.trim() },
           { name: "Timezone", value: tZone },
           { name: "Previous Groups", value: prevGroups },
           { name: "Reason", value: reason },

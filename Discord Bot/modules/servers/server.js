@@ -368,34 +368,91 @@ async function handleClanDonutSMP(interaction, guildId) {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 }
 
-async function handleMemberDonutSMP(interaction, mcUsername) {
-  console.log(`[/server buttons] 📥 handleMemberDonutSMP: MC username=${mcUsername}`);
-  await interaction.deferReply();
-  console.log("[/server buttons] 🌐 Fetching DonutSMP stats + lookup for", mcUsername);
+/**
+ * Resolve the correct DonutSMP username for a player.
+ * Bedrock players on DonutSMP (via Geyser) have a "." prefix.
+ * If the initial lookup fails and the username doesn't already start with ".",
+ * we automatically retry with "." prepended.
+ *
+ * @param {string} mcUsername - The MC username to look up
+ * @returns {Promise<{ statsRes: object, lookupRes: object, resolvedUsername: string }>}
+ */
+async function resolveDonutSmpPlayer(mcUsername) {
+  console.log(`[/server] 🔍 Resolving DonutSMP player: ${mcUsername}`);
+
+  // First attempt with the username as-is
   const [statsRes, lookupRes] = await Promise.all([
     donutsmp.getPlayerStats(mcUsername),
     donutsmp.getPlayerLookup(mcUsername)
   ]);
+
+  // If found, return immediately
+  if (statsRes.ok || lookupRes.ok) {
+    console.log(`[/server] ✅ Found player with original username: ${mcUsername}`);
+    return { statsRes, lookupRes, resolvedUsername: mcUsername };
+  }
+
+  // If not found and username doesn't already start with ".", retry with "." prefix
+  // This handles Bedrock players on DonutSMP via Geyser
+  if (!mcUsername.startsWith(".")) {
+    const bedrockUsername = `.${mcUsername}`;
+    console.log(`[/server] 🔄 Not found, retrying with Bedrock prefix: ${bedrockUsername}`);
+
+    const [statsResRetry, lookupResRetry] = await Promise.all([
+      donutsmp.getPlayerStats(bedrockUsername),
+      donutsmp.getPlayerLookup(bedrockUsername)
+    ]);
+
+    if (statsResRetry.ok || lookupResRetry.ok) {
+      console.log(`[/server] ✅ Found player with Bedrock prefix: ${bedrockUsername}`);
+      return { statsRes: statsResRetry, lookupRes: lookupResRetry, resolvedUsername: bedrockUsername };
+    }
+
+    console.log(`[/server] ❌ Player not found with either username: ${mcUsername} or ${bedrockUsername}`);
+    // Return the retry results (both failed) with the bedrock username for better error context
+    return { statsRes: statsResRetry, lookupRes: lookupResRetry, resolvedUsername: bedrockUsername };
+  }
+
+  // Username already starts with ".", nothing more to try
+  console.log(`[/server] ❌ Player not found: ${mcUsername}`);
+  return { statsRes, lookupRes, resolvedUsername: mcUsername };
+}
+
+async function handleMemberDonutSMP(interaction, mcUsername) {
+  console.log(`[/server buttons] 📥 handleMemberDonutSMP: MC username=${mcUsername}`);
+  await interaction.deferReply();
+  console.log("[/server buttons] 🌐 Fetching DonutSMP stats + lookup for", mcUsername);
+
+  // Use the resolver that automatically handles Bedrock "." prefix
+  const { statsRes, lookupRes, resolvedUsername } = await resolveDonutSmpPlayer(mcUsername);
+
   if (!statsRes.ok && !lookupRes.ok) {
     const msg = statsRes.message || lookupRes.message || "No DonutSMP data for this player.";
-    console.log(`[/server buttons] ❌ No DonutSMP data for ${mcUsername}: ${msg}`);
+    console.log(`[/server buttons] ❌ No DonutSMP data for ${mcUsername} (tried: ${resolvedUsername}): ${msg}`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     return interaction.editReply({
       content: `DonutSMP: ${msg}`,
       ephemeral: true
     });
   }
+
+  if (resolvedUsername !== mcUsername) {
+    console.log(`[/server buttons] ℹ️ Resolved Bedrock username: ${mcUsername} → ${resolvedUsername}`);
+  }
+
   const stats = statsRes.ok ? statsRes.stats : {};
   const lookup = lookupRes.ok ? lookupRes.lookup : null;
   console.log(`[/server buttons] 📊 Stats: ${statsRes.ok ? "ok" : "missing"}, Lookup: ${lookupRes.ok ? "ok" : "missing"}`);
   const statEmojis = getStatEmojis("donutsmp");
   const fields = donutsmp.getPlayerEmbedFields(stats, lookup, statEmojis);
-  const embed = createPlayerEmbed("DonutSMP", mcUsername, fields, {
-    thumbnailUrl: `https://mc-heads.net/avatar/${encodeURIComponent(mcUsername)}/100`,
+
+  // Use the resolved username for the embed title and avatar
+  const embed = createPlayerEmbed("DonutSMP", resolvedUsername, fields, {
+    thumbnailUrl: `https://mc-heads.net/avatar/${encodeURIComponent(resolvedUsername)}/100`,
     embedColor: donutsmp.defaultEmbedColor,
     footer: "DonutSMP player stats"
   });
-  console.log(`[/server buttons] 📤 Sending DonutSMP player stats embed for ${mcUsername}`);
+  console.log(`[/server buttons] 📤 Sending DonutSMP player stats embed for ${resolvedUsername}`);
   await interaction.editReply({ embeds: [embed] });
   console.log("[/server buttons] ✅ Player stats embed sent");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");

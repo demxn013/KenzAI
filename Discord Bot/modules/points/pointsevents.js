@@ -1,6 +1,7 @@
 // modules/points/pointsevents.js
 // Message and voice point awards (only for Yazanaki members in allowed channels)
 // All awarded points are now categorized.
+// Invite tracking: tracks ALL invites (not just /points invite links) using the Discord invite.inviter field.
 
 const cache = require("../data/cache");
 const { readMembers, writeMembers, addPoints, isMember } = require("./pointslogic");
@@ -82,6 +83,20 @@ function isInviteGuild(guildId) {
   }
 }
 
+/**
+ * Get the clan abbreviation for a guild (used to build the invite count key).
+ * Returns the abbreviation (e.g. "ONF") or null if not a registered clan.
+ */
+function getClanAbbrevForGuild(guildId) {
+  if (guildId === YAZANAKI_GUILD_ID) return "YZNK";
+  try {
+    const clans = readClans();
+    return clans[guildId]?.abbr || null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleGuildMemberAdd(member) {
   const guild = member.guild;
   if (!guild || !isInviteGuild(guild.id)) return;
@@ -93,6 +108,7 @@ async function handleGuildMemberAdd(member) {
     return;
   }
 
+  // Find which invite was used by comparing current uses vs cached uses
   let usedInvite = null;
 
   for (const invite of invites.values()) {
@@ -108,43 +124,25 @@ async function handleGuildMemberAdd(member) {
 
   if (!usedInvite) return;
 
-  const usedCode = usedInvite.code;
-  const members = readMembers();
-
-  let inviterId = null;
-  let inviterAbbrev = null;
-  for (const [discordId, data] of Object.entries(members)) {
-    if (!data || typeof data !== "object") continue;
-    for (const [key, value] of Object.entries(data)) {
-      if (
-        typeof key === "string" &&
-        key.endsWith("PointsInviteLink") &&
-        typeof value === "string" &&
-        value.trim().length > 0
-      ) {
-        let storedCode = value.trim();
-        const match = storedCode.match(/discord(?:\.gg|\.com\/invite)\/([^/]+)/i);
-        if (match && match[1]) storedCode = match[1];
-        if (storedCode === usedCode) {
-          inviterId = discordId;
-          inviterAbbrev = key.replace("PointsInviteLink", "");
-          break;
-        }
-      }
-    }
-    if (inviterId) break;
-  }
-
+  // ✅ Use the invite's inviter field directly — works for ALL invites, not just /points invite ones
+  const inviterId = usedInvite.inviter?.id;
   if (!inviterId) return;
   if (!isMember(inviterId)) return;
 
+  const clanAbbrev = getClanAbbrevForGuild(guild.id);
+  if (!clanAbbrev) return;
+
+  const members = readMembers();
   const memberEntry = members[inviterId];
-  if (memberEntry && inviterAbbrev) {
-    const countKey = `${inviterAbbrev}InviteCount`;
-    const currentCount = typeof memberEntry[countKey] === "number" ? memberEntry[countKey] : 0;
-    memberEntry[countKey] = currentCount + 1;
-    writeMembers(members);
-  }
+  if (!memberEntry) return;
+
+  // Increment the invite count for this clan
+  const countKey = `${clanAbbrev}InviteCount`;
+  const currentCount = typeof memberEntry[countKey] === "number" ? memberEntry[countKey] : 0;
+  memberEntry[countKey] = currentCount + 1;
+  writeMembers(members);
+
+  console.log(`[pointsevents] 📨 Invite credited to ${inviterId} in ${clanAbbrev} (total: ${memberEntry[countKey]})`);
 
   // Invite → contribution category
   addPoints(inviterId, POINTS_PER_INVITE, "invite", "contribution");

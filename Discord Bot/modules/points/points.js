@@ -2,10 +2,13 @@
 // Yazanaki Points System: balance, checkin, add, invite.
 // Shop functionality moved to /shop command (modules/points/shop.js).
 
+const fs = require("fs");
+const path = require("path");
 const {
   SlashCommandBuilder,
   EmbedBuilder,
   PermissionsBitField,
+  AttachmentBuilder,
 } = require("discord.js");
 const {
   readMembers,
@@ -27,6 +30,60 @@ const {
 const channels = require("../data/channels");
 const { readClans } = require("../clantracking/clanlogic");
 
+// Path to clan flag images
+const flagsDir = path.join(__dirname, "../images/clanflags");
+
+/**
+ * Get the flag file path for a clan abbreviation, if it exists.
+ * @param {string} abbr - Clan abbreviation (e.g. "ONF")
+ * @returns {string|null}
+ */
+function getClanFlagPath(abbr) {
+  if (!abbr) return null;
+  const filePath = path.join(flagsDir, `${abbr.toUpperCase()}.png`);
+  return fs.existsSync(filePath) ? filePath : null;
+}
+
+/**
+ * Build the invite counts display for a member.
+ * Returns an array of { abbr, name, count } for all clans where the member has an InviteCount key.
+ * Also includes clans where count is 0 if the member has the countKey set.
+ * @param {object} memberEntry - The member's data from members.json
+ * @returns {Array<{abbr: string, name: string, guildId: string, count: number}>}
+ */
+function buildInviteCounts(memberEntry) {
+  const clans = readClans();
+  const results = [];
+
+  // Build a map of abbr -> { name, guildId }
+  const clanMap = {};
+  for (const [guildId, clan] of Object.entries(clans)) {
+    if (clan.abbr) {
+      clanMap[clan.abbr.toUpperCase()] = { name: clan.name, guildId };
+    }
+  }
+  // Also include YZNK for the Yazanaki Empire main server
+  clanMap["YZNK"] = { name: "Yazanaki Empire", guildId: YAZANAKI_GUILD_ID };
+
+  // Find all InviteCount keys on the member
+  for (const [key, value] of Object.entries(memberEntry)) {
+    if (typeof key === "string" && key.endsWith("InviteCount") && typeof value === "number" && value > 0) {
+      const abbr = key.replace("InviteCount", "").toUpperCase();
+      const clanInfo = clanMap[abbr];
+      results.push({
+        abbr,
+        name: clanInfo?.name || abbr,
+        guildId: clanInfo?.guildId || null,
+        count: value,
+      });
+    }
+  }
+
+  // Sort by count descending
+  results.sort((a, b) => b.count - a.count);
+  return results;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("points")
@@ -40,11 +97,11 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName("invite")
-        .setDescription("Get your personal invite link to earn points")
+        .setDescription("View your invite counts per clan")
         .addUserOption((opt) =>
           opt
             .setName("user")
-            .setDescription("View another member's invite links (admin only)")
+            .setDescription("View another member's invite counts (admin only)")
             .setRequired(false)
         )
     )
@@ -179,7 +236,7 @@ module.exports = {
       if (!isSelf) {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
           return interaction.reply({
-            content: "❌ Only administrators can view other members' invite links.",
+            content: "❌ Only administrators can view other members' invite counts.",
             ephemeral: true,
           });
         }
@@ -188,6 +245,7 @@ module.exports = {
       const members = readMembers();
       const lookupId = isSelf ? interaction.user.id : targetUser.id;
       const memberEntry = members[lookupId];
+
       if (!memberEntry) {
         return interaction.reply({
           content: isSelf
@@ -197,127 +255,59 @@ module.exports = {
         });
       }
 
-      const empireId = memberEntry.EmpireID || "";
-      let clanAbbrev = "YZNK";
-      let clanName = memberEntry.JoinedClan || "Yazanaki Empire";
+      // Build invite counts
+      const inviteCounts = buildInviteCounts(memberEntry);
+      const totalInvites = inviteCounts.reduce((sum, c) => sum + c.count, 0);
 
-      let guild = interaction.guild || null;
-      try {
-        const clans = readClans();
-        if (guild && clans[guild.id]) {
-          const clanConfig = clans[guild.id];
-          if (clanConfig.abbr) clanAbbrev = clanConfig.abbr;
-          if (clanConfig.name) clanName = clanConfig.name;
-        } else if (typeof empireId === "string") {
-          const match = empireId.match(/^([A-Z]+)-/);
-          if (match) clanAbbrev = match[1];
-        }
-      } catch {
-        if (typeof empireId === "string") {
-          const match = empireId.match(/^([A-Z]+)-/);
-          if (match) clanAbbrev = match[1];
+      // Find the member's own clan to use as thumbnail
+      const memberClanName = memberEntry.JoinedClan || "";
+      const clans = readClans();
+      let memberClanAbbr = null;
+      for (const [, clan] of Object.entries(clans)) {
+        if (clan.name === memberClanName || clan.abbr === memberClanName) {
+          memberClanAbbr = clan.abbr;
+          break;
         }
       }
 
-      const inviteKey = `${clanAbbrev}PointsInviteLink`;
-
-      if (!guild) {
-        guild = await interaction.client.guilds.fetch(YAZANAKI_GUILD_ID);
-      }
-
-      let inviteCode = null;
-      const storedInvite = memberEntry[inviteKey];
-      if (storedInvite) {
-        let code = storedInvite;
-        const urlMatch =
-          typeof storedInvite === "string"
-            ? storedInvite.match(/discord(?:\.gg|\.com\/invite)\/([^/]+)/i)
-            : null;
-        if (urlMatch && urlMatch[1]) code = urlMatch[1];
-        try {
-          const invite = await interaction.client.fetchInvite(code);
-          if (invite && invite.guild && invite.guild.id === guild.id) {
-            inviteCode = invite.code;
-          }
-        } catch {
-          // Stale invite — will create new one below
-        }
-      }
-
-      if (!inviteCode && isSelf) {
-        const { ChannelType } = require("discord.js");
-        let channelId = guild.systemChannelId || guild.rulesChannelId || null;
-        if (!channelId) {
-          const textChannel = guild.channels.cache
-            .filter((ch) => ch.type === ChannelType.GuildText)
-            .first();
-          channelId = textChannel ? textChannel.id : null;
-        }
-
-        if (!channelId) {
-          return interaction.reply({
-            content: "❌ Could not find a channel to create an invite in. Please contact staff.",
-            ephemeral: true,
-          });
-        }
-
-        try {
-          const invite = await guild.invites.create(channelId, {
-            maxAge: 0,
-            maxUses: 0,
-            unique: true,
-          });
-          inviteCode = invite.code;
-          memberEntry[inviteKey] = `https://discord.gg/${invite.code}`;
-          writeMembers(members);
-        } catch (err) {
-          console.error("[points] Failed to create invite link:", err);
-          return interaction.reply({
-            content: "❌ I couldn't create an invite link. Please contact staff.",
-            ephemeral: true,
-          });
-        }
-      }
-
-      const inviteUrl = memberEntry[inviteKey] || (inviteCode ? `https://discord.gg/${inviteCode}` : "n/d");
-
-      let totalInvites = 0;
-      const allInviteLines = Object.entries(memberEntry)
-        .filter(
-          ([key, value]) =>
-            typeof key === "string" &&
-            key.endsWith("PointsInviteLink") &&
-            typeof value === "string" &&
-            value.trim().length > 0
-        )
-        .map(([key, value]) => {
-          const abbrev = key.replace("PointsInviteLink", "");
-          const countKey = `${abbrev}InviteCount`;
-          const count = typeof memberEntry[countKey] === "number" ? memberEntry[countKey] : 0;
-          totalInvites += count;
-          return `**${abbrev}**: ${value} — Invites: **${count}**`;
+      // Build description lines — one per clan with invite count
+      let descLines;
+      if (inviteCounts.length === 0) {
+        descLines = ["No invites recorded yet."];
+      } else {
+        descLines = inviteCounts.map(({ abbr, name, count }) => {
+          return `**${name}** (\`${abbr}\`): **${count}** invite${count !== 1 ? "s" : ""}`;
         });
-
-      const headerLine = isSelf
-        ? `This is your invite link. Recruiting earns you **Contribution** points.`
-        : `These are ${targetUser.tag}'s invite links.`;
-
-      const descriptionLines = [
-        headerLine,
-        "",
-        allInviteLines.length ? allInviteLines.join("\n") : inviteUrl,
-      ];
-
-      if (totalInvites > 0) {
-        descriptionLines.push("", `Total recruits (all clans): **${totalInvites}**`);
       }
+
+      const displayName = isSelf
+        ? (interaction.member?.displayName || interaction.user.username)
+        : (targetUser.username);
 
       const embed = new EmbedBuilder()
-        .setTitle(isSelf ? "Your Invite Link" : `${targetUser.tag}'s Invite Links`)
-        .setDescription(descriptionLines.join("\n"))
-        .setColor(0x339eff);
+        .setTitle(`${isSelf ? "Your" : `${displayName}'s`} Invite Counts`)
+        .setDescription(
+          `**INVITES:**\n\n${descLines.join("\n")}` +
+          (totalInvites > 0 ? `\n\n**Total:** ${totalInvites} invite${totalInvites !== 1 ? "s" : ""}` : "")
+        )
+        .setColor(0x339eff)
+        .setFooter({ text: "Invites earned across all Yazanaki clans" });
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      // Attach the member's clan flag as thumbnail if it exists
+      const flagPath = memberClanAbbr ? getClanFlagPath(memberClanAbbr) : null;
+      const files = [];
+
+      if (flagPath) {
+        const flagFileName = `${memberClanAbbr.toUpperCase()}.png`;
+        files.push(new AttachmentBuilder(flagPath, { name: flagFileName }));
+        embed.setThumbnail(`attachment://${flagFileName}`);
+      }
+
+      return interaction.reply({
+        embeds: [embed],
+        files,
+        ephemeral: true,
+      });
     }
 
     // ── add (admin) ───────────────────────────────────────────

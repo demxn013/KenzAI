@@ -291,7 +291,7 @@ module.exports = {
       const embed = new EmbedBuilder()
         .setTitle(`${isSelf ? "Your" : `${displayName}'s`} Invite Counts`)
         .setDescription(
-          `**INVITES:**\n\n${descLines.join("\n")}` +
+          `${descLines.join("\n")}` +
           (totalInvites > 0 ? `\n\n**Total:** ${totalInvites} invite${totalInvites !== 1 ? "s" : ""}` : "")
         )
         .setColor(0x339eff)

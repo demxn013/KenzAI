@@ -289,7 +289,7 @@ module.exports = {
         : (targetUser.username);
 
       const embed = new EmbedBuilder()
-        .setTitle(`${isSelf ? "Your" : `${displayName}'s`} Invite Counts`)
+        .setTitle(`${isSelf ? "Your" : `${displayName}'s`} Invites`)
         .setDescription(
           `${descLines.join("\n")}` +
           (totalInvites > 0 ? `\n\n**Total:** ${totalInvites} invite${totalInvites !== 1 ? "s" : ""}` : "")

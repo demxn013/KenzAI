@@ -30,18 +30,32 @@ const {
 const channels = require("../data/channels");
 const { readClans } = require("../clantracking/clanlogic");
 
-// Path to clan flag images
-const flagsDir = path.join(__dirname, "../images/clanflags");
+// Path to clan emblems
+const clemsDir = path.join(__dirname, "../images/clanemblems");
+const YZNK_EMBLEM_PATH = path.join(clemsDir, "YZNK.png");
+
+// Clan abbreviation → Discord emoji ID mapping (from Yazanaki Empire server)
+const CLAN_EMOJI_IDS = {
+  ANO:  "1335362902953037884",
+  SNU:  "1225251585983119400",
+  ONA:  "1334862597798891602",
+  ONF:  "1334862640392044616",
+  YZNK: "1334529701527683225",
+  KSII: "1334862565812994109",
+};
 
 /**
- * Get the flag file path for a clan abbreviation, if it exists.
- * @param {string} abbr - Clan abbreviation (e.g. "ONF")
- * @returns {string|null}
+ * Returns a Discord custom emoji string for a clan abbreviation, if mapped.
+ * Falls back to an empty string if no emoji is configured for that clan.
+ * @param {string} abbr - Clan abbreviation (e.g. "SNU")
+ * @returns {string} e.g. "<:SNU:1225251585983119400> " or ""
  */
-function getClanFlagPath(abbr) {
-  if (!abbr) return null;
-  const filePath = path.join(flagsDir, `${abbr.toUpperCase()}.png`);
-  return fs.existsSync(filePath) ? filePath : null;
+function getClanEmoji(abbr) {
+  if (!abbr) return "";
+  const upper = abbr.toUpperCase();
+  const emojiId = CLAN_EMOJI_IDS[upper];
+  if (!emojiId) return "";
+  return `<:${upper}:${emojiId}> `;
 }
 
 /**
@@ -259,24 +273,14 @@ module.exports = {
       const inviteCounts = buildInviteCounts(memberEntry);
       const totalInvites = inviteCounts.reduce((sum, c) => sum + c.count, 0);
 
-      // Find the member's own clan to use as thumbnail
-      const memberClanName = memberEntry.JoinedClan || "";
-      const clans = readClans();
-      let memberClanAbbr = null;
-      for (const [, clan] of Object.entries(clans)) {
-        if (clan.name === memberClanName || clan.abbr === memberClanName) {
-          memberClanAbbr = clan.abbr;
-          break;
-        }
-      }
-
-      // Build description lines — one per clan with invite count
+      // Build description lines — one per clan with emoji + name + count
       let descLines;
       if (inviteCounts.length === 0) {
         descLines = ["No invites recorded yet."];
       } else {
         descLines = inviteCounts.map(({ abbr, name, count }) => {
-          return `**${name}** (\`${abbr}\`): **${count}** invite${count !== 1 ? "s" : ""}`;
+          const emoji = getClanEmoji(abbr);
+          return `${emoji}**${name}**: **${count}** invite${count !== 1 ? "s" : ""}`;
         });
       }
 
@@ -293,14 +297,12 @@ module.exports = {
         .setColor(0x339eff)
         .setFooter({ text: "Invites earned across all Yazanaki clans" });
 
-      // Attach the member's clan flag as thumbnail if it exists
-      const flagPath = memberClanAbbr ? getClanFlagPath(memberClanAbbr) : null;
+      // Use YZNK.png from clanemblems as the thumbnail
       const files = [];
-
-      if (flagPath) {
-        const flagFileName = `${memberClanAbbr.toUpperCase()}.png`;
-        files.push(new AttachmentBuilder(flagPath, { name: flagFileName }));
-        embed.setThumbnail(`attachment://${flagFileName}`);
+      if (fs.existsSync(YZNK_EMBLEM_PATH)) {
+        const yznkFileName = "YZNK.png";
+        files.push(new AttachmentBuilder(YZNK_EMBLEM_PATH, { name: yznkFileName }));
+        embed.setThumbnail(`attachment://${yznkFileName}`);
       }
 
       return interaction.reply({

@@ -47,32 +47,31 @@ module.exports = {
 
       // ============================================================
       // STEP 3: PREPARE EMBLEM AND FLAG
+      // Updated paths: emblem is now /images/clanemblems/YZNK.png
+      //                flag remains  /images/clanflags/YAZANAKI.png
       // ============================================================
-      const emblemPath = path.join(__dirname, "../images/clanflags/YZNKI.png");
-      const flagPath = path.join(__dirname, "../images/clanflags/YAZANAKI.png");
+      const emblemPath = path.join(__dirname, "../images/clanemblems/YZNK.png");
+      const flagPath   = path.join(__dirname, "../images/clanflags/YAZANAKI.png");
 
       console.log(`[/yazanaki] 🖼️ Checking for emblem at: ${emblemPath}`);
       console.log(`[/yazanaki] 🏳️ Checking for flag at: ${flagPath}`);
 
       const emblemExists = fs.existsSync(emblemPath);
-      const flagExists = fs.existsSync(flagPath);
+      const flagExists   = fs.existsSync(flagPath);
 
       console.log(`[/yazanaki] 🖼️ Emblem exists: ${emblemExists}`);
       console.log(`[/yazanaki] 🏳️ Flag exists: ${flagExists}`);
 
-      let emblemUrl = null;
-      let flagAttachment = null;
-      let flagFileName = null;
+      // The emblem is sent as an attachment and referenced via attachment:// URI
+      // so Discord renders it as the embed thumbnail.
+      const EMBLEM_ATTACHMENT_NAME = "YZNK.png";
+      const emblemUrl = emblemExists ? `attachment://${EMBLEM_ATTACHMENT_NAME}` : null;
 
-      // If emblem exists, use it as thumbnail
-      if (emblemExists) {
-        // We'll attach it and reference it
-        emblemUrl = "attachment://YZNKI.png";
-      }
+      let flagAttachment   = null;
+      let flagFileName     = null;
 
-      // If flag exists, attach it
       if (flagExists) {
-        flagFileName = "YAZANAKI.png";
+        flagFileName  = "YAZANAKI.png";
         flagAttachment = new AttachmentBuilder(flagPath, { name: flagFileName });
       }
 
@@ -83,35 +82,30 @@ module.exports = {
 
       const embed = createYazanakiEmbed(
         empireEmbedData,
-        empireData.emperor,    // ✅ From combined fetch
-        empireData.empress,    // ✅ From combined fetch
-        emblemUrl,
-        flagFileName,
-        0x000000 // Black color
+        empireData.emperor,
+        empireData.empress,
+        emblemUrl,      // thumbnail — attachment:// URI or null
+        flagFileName,   // image — attachment filename or null
+        0x000000        // Black color
       );
 
       // ============================================================
-      // STEP 5: SEND EMBED
+      // STEP 5: SEND EMBED WITH ATTACHMENTS
       // ============================================================
       console.log(`[/yazanaki] 📤 Sending embed...`);
 
       const attachments = [];
 
-      // Add emblem attachment if it exists
       if (emblemExists) {
-        attachments.push(new AttachmentBuilder(emblemPath, { name: "YZNKI.png" }));
+        attachments.push(new AttachmentBuilder(emblemPath, { name: EMBLEM_ATTACHMENT_NAME }));
       }
 
-      // Add flag attachment if it exists
       if (flagAttachment) {
         attachments.push(flagAttachment);
       }
 
       if (attachments.length > 0) {
-        await interaction.editReply({ 
-          embeds: [embed], 
-          files: attachments 
-        });
+        await interaction.editReply({ embeds: [embed], files: attachments });
       } else {
         await interaction.editReply({ embeds: [embed] });
       }

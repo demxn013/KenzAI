@@ -51,11 +51,6 @@ function createYazanakiEmbed(
         inline: false 
       },
       { 
-        name: "‎", 
-        value: "‎", 
-        inline: false 
-      },
-      { 
         name: "🔗 Join the Empire", 
         value: empireData.inviteLink || "``n/d``", 
         inline: false 

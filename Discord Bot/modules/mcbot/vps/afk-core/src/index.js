@@ -13,7 +13,6 @@ const { DefaultProfile } = require("./profile/DefaultProfile");
 const { DonutSmpProfile } = require("./profile/DonutSmpProfile");
 const { FreshSmpProfile } = require("./profile/FreshSmpProfile");
 const { HypixelProfile } = require("./profile/HypixelProfile");
-const { ElementalMCProfile } = require("./profile/ElementalMCProfile");
 const { buildMetricsSnapshot } = require("./metrics/metrics");
 
 const fastify = Fastify({
@@ -32,7 +31,6 @@ const profiles = {
   donutsmp: new DonutSmpProfile(),
   freshsmp: new FreshSmpProfile(),
   hypixel: new HypixelProfile(),
-  elementalmc: new ElementalMCProfile(),
 };
 
 const sessionManager = new SessionManager({ authProvider, profiles });
@@ -69,7 +67,6 @@ fastify.post("/session/start", async (request, reply) => {
       success: false,
       reason: "unknown_profile",
       profile: profileKey,
-      available: Object.keys(profiles),
     });
   }
 
@@ -158,14 +155,6 @@ fastify.get("/metrics", async (_request, reply) => {
   return reply.send(buildMetricsSnapshot());
 });
 
-// GET /profiles — list available profiles
-fastify.get("/profiles", async (_request, reply) => {
-  return reply.send({
-    success: true,
-    profiles: Object.keys(profiles),
-  });
-});
-
 const PORT = Number(process.env.AFK_CORE_PORT || 4001);
 const HOST = process.env.AFK_CORE_HOST || "127.0.0.1";
 
@@ -173,7 +162,7 @@ fastify
   .listen({ port: PORT, host: HOST })
   .then(() => {
     fastify.log.info(
-      { port: PORT, host: HOST, profiles: Object.keys(profiles) },
+      { port: PORT, host: HOST },
       "AFK core service listening",
     );
   })
@@ -181,3 +170,4 @@ fastify
     fastify.log.error(err, "Failed to start AFK core service");
     process.exit(1);
   });
+

@@ -1,16 +1,152 @@
 // modules/empire/empireid-command.js
-// ✅ Command to manage Empire IDs (reserve, view, update)
+// Command to manage Empire IDs (reserve, update, list, stats)
 
-const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  PermissionsBitField,
+  MessageFlags,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+} = require("discord.js");
 const {
   reserveEmpireId,
   updateReservedId,
   getAllEmpireIds,
-  getEmpireIdInfo,
-  getEmpireId,
-  EMPIRE_ABBR,
-  RESERVED_COUNT
+  RESERVED_COUNT,
 } = require("./empireid");
+
+const LIST_PREFIX = "empireid_list";
+const LINES_PER_PAGE = 20;
+const MAX_SELECT_OPTIONS = 25;
+const STATIC_FILTER_OPTIONS = 3;
+
+function applyListFilter(entries, filterKey) {
+  if (filterKey === "all") return entries;
+  if (filterKey === "reserved") return entries.filter(([, info]) => info.reserved);
+  if (filterKey === "regular") return entries.filter(([, info]) => !info.reserved);
+  if (filterKey.startsWith("c:")) {
+    const abbr = filterKey.slice(2).toUpperCase();
+    return entries.filter(([, info]) => (info.clanAbbr || "").toUpperCase() === abbr);
+  }
+  return entries;
+}
+
+function formatListLine(empireId, info) {
+  let line = `\`${empireId}\``;
+  if (info.minecraftUser) line += ` — ${info.minecraftUser}`;
+  else if (info.discordId) line += ` — <@${info.discordId}>`;
+  else line += ` — *Unassigned*`;
+  if (info.active === false) line += ` *(deactivated)*`;
+  return line;
+}
+
+function distinctClanAbbrs(entries) {
+  const set = new Set();
+  for (const [, info] of entries) {
+    if (info.clanAbbr) set.add(String(info.clanAbbr).toUpperCase());
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function filterLabel(filterKey) {
+  if (filterKey === "all") return "All";
+  if (filterKey === "reserved") return "Reserved (YZNK)";
+  if (filterKey === "regular") return "Regular";
+  if (filterKey.startsWith("c:")) return `Clan ${filterKey.slice(2)}`;
+  return filterKey;
+}
+
+/**
+ * @param {Array<[string, object]>} allEntries — full registry for clan option list
+ */
+function buildFilterSelect(allEntries, ownerId) {
+  const maxClanOpts = MAX_SELECT_OPTIONS - STATIC_FILTER_OPTIONS;
+  const clans = distinctClanAbbrs(allEntries);
+  const truncatedClans = clans.length > maxClanOpts;
+  const clanSlice = truncatedClans ? clans.slice(0, maxClanOpts) : clans;
+
+  /** @type {import("discord.js").APISelectMenuOption[]} */
+  const options = [
+    { label: "All", value: "all" },
+    { label: "Reserved (YZNK)", value: "reserved" },
+    { label: "Regular (non-reserved)", value: "regular" },
+    ...clanSlice.map((abbr) => ({
+      label: `Clan: ${abbr}`,
+      value: `c:${abbr}`,
+    })),
+  ];
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`${LIST_PREFIX}|filter|${ownerId}`)
+    .setPlaceholder("Filter by type or clan")
+    .addOptions(options);
+
+  return { select, truncatedClans };
+}
+
+/**
+ * @returns {{ embed: EmbedBuilder, components: ActionRowBuilder[] }}
+ */
+function buildEmpireListUI(data, ownerId, page, filter) {
+  const allEntries = Object.entries(data.ids);
+  const filtered = applyListFilter(allEntries, filter);
+  filtered.sort((a, b) => a[0].localeCompare(b[0]));
+
+  const lines = filtered.map(([id, info]) => formatListLine(id, info));
+  const totalPages = Math.max(1, Math.ceil(lines.length / LINES_PER_PAGE));
+  const safePage = Math.min(Math.max(0, page), totalPages - 1);
+  const start = safePage * LINES_PER_PAGE;
+  const pageLines = lines.slice(start, start + LINES_PER_PAGE);
+  const description = pageLines.length ? pageLines.join("\n") : "*No entries on this page.*";
+
+  const { select, truncatedClans } = buildFilterSelect(allEntries, ownerId);
+
+  let footer = `Page ${safePage + 1}/${totalPages} · ${filterLabel(filter)} · Next #: ${data.nextNumber}`;
+  if (truncatedClans) footer += " · Clan menu capped (use slash filter + browse)";
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Empire IDs — ${filtered.length} match(es)`)
+    .setColor(0x000000)
+    .setDescription(description)
+    .setFooter({ text: footer });
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${LIST_PREFIX}|nav|${ownerId}|${safePage - 1}|${filter}`)
+      .setLabel("Previous")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(safePage <= 0),
+    new ButtonBuilder()
+      .setCustomId(`${LIST_PREFIX}|nav|${ownerId}|${safePage + 1}|${filter}`)
+      .setLabel("Next")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(safePage >= totalPages - 1)
+  );
+
+  const filterRow = new ActionRowBuilder().addComponents(select);
+
+  return { embed, components: [navRow, filterRow] };
+}
+
+function parseNavCustomId(customId) {
+  const parts = customId.split("|");
+  if (parts.length !== 5 || parts[0] !== LIST_PREFIX || parts[1] !== "nav") return null;
+  const ownerId = parts[2];
+  const page = parseInt(parts[3], 10);
+  const filter = parts[4];
+  if (!ownerId || Number.isNaN(page)) return null;
+  return { ownerId, page, filter };
+}
+
+function parseFilterCustomId(customId) {
+  const prefix = `${LIST_PREFIX}|filter|`;
+  if (!customId.startsWith(prefix)) return null;
+  const ownerId = customId.slice(prefix.length);
+  return ownerId || null;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -66,40 +202,12 @@ module.exports = {
     )
     .addSubcommand(sub =>
       sub
-        .setName("view")
-        .setDescription("View Empire ID info")
-        .addStringOption(opt =>
-          opt
-            .setName("empireid")
-            .setDescription("Empire ID (e.g., SNU-000014)")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("lookup")
-        .setDescription("Look up a user's Empire ID")
-        .addUserOption(opt =>
-          opt
-            .setName("discord")
-            .setDescription("Discord user")
-            .setRequired(false)
-        )
-        .addStringOption(opt =>
-          opt
-            .setName("minecraft")
-            .setDescription("Minecraft username")
-            .setRequired(false)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
         .setName("list")
-        .setDescription("List all Empire IDs")
+        .setDescription("List all Empire IDs (paginated; use buttons and menu to browse)")
         .addStringOption(opt =>
           opt
             .setName("filter")
-            .setDescription("Filter by type")
+            .setDescription("Initial filter (refine with the menu after sending)")
             .setRequired(false)
             .addChoices(
               { name: "All", value: "all" },
@@ -115,42 +223,32 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    // Check permissions (requires Kick Members or Administrator)
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
       return interaction.reply({
         content: "❌ You need the **Kick Members** permission to use this command.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral,
       });
     }
 
     const sub = interaction.options.getSubcommand();
 
-    // ============================================================
-    // RESERVE
-    // ============================================================
     if (sub === "reserve") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const num = interaction.options.getInteger("number");
       const discordUser = interaction.options.getUser("discord");
       const mcName = interaction.options.getString("minecraft");
 
-      const result = reserveEmpireId(
-        num,
-        discordUser?.id || null,
-        mcName || null
-      );
+      const result = reserveEmpireId(num, discordUser?.id || null, mcName || null);
 
       if (!result.success) {
         if (result.reason === "already_reserved") {
           return interaction.editReply({
             content: `⚠️ **${result.empireId}** is already reserved.`,
-            ephemeral: true
           });
         }
         return interaction.editReply({
           content: `❌ Failed to reserve ID: ${result.reason}`,
-          ephemeral: true
         });
       }
 
@@ -158,17 +256,11 @@ module.exports = {
       if (discordUser) msg += `\n👤 Discord: ${discordUser.tag}`;
       if (mcName) msg += `\n🎮 Minecraft: \`${mcName}\``;
 
-      return interaction.editReply({
-        content: msg,
-        ephemeral: true
-      });
+      return interaction.editReply({ content: msg });
     }
 
-    // ============================================================
-    // UPDATE
-    // ============================================================
     if (sub === "update") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const empireId = interaction.options.getString("empireid").toUpperCase();
       const discordUser = interaction.options.getUser("discord");
@@ -177,20 +269,14 @@ module.exports = {
       if (!discordUser && !mcName) {
         return interaction.editReply({
           content: "❌ You must provide at least one of: Discord user or Minecraft username",
-          ephemeral: true
         });
       }
 
-      const result = updateReservedId(
-        empireId,
-        discordUser?.id || null,
-        mcName || null
-      );
+      const result = updateReservedId(empireId, discordUser?.id || null, mcName || null);
 
       if (!result.success) {
         return interaction.editReply({
           content: `❌ Failed to update: ${result.reason}`,
-          ephemeral: true
         });
       }
 
@@ -198,165 +284,30 @@ module.exports = {
       if (discordUser) msg += `\n👤 Discord: ${discordUser.tag}`;
       if (mcName) msg += `\n🎮 Minecraft: \`${mcName}\``;
 
-      return interaction.editReply({
-        content: msg,
-        ephemeral: true
-      });
+      return interaction.editReply({ content: msg });
     }
 
-    // ============================================================
-    // VIEW
-    // ============================================================
-    if (sub === "view") {
-      await interaction.deferReply({ ephemeral: true });
-
-      const empireId = interaction.options.getString("empireid").toUpperCase();
-      const info = getEmpireIdInfo(empireId);
-
-      if (!info) {
-        return interaction.editReply({
-          content: `❌ Empire ID **${empireId}** not found.`,
-          ephemeral: true
-        });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🆔 ${empireId}`)
-        .setColor(info.reserved ? 0xFFD700 : 0x000000)
-        .addFields(
-          { name: "Type", value: info.reserved ? "Reserved (YZNK)" : "Regular", inline: true },
-          { name: "Clan", value: info.clanAbbr || "n/d", inline: true },
-          { name: "Discord ID", value: info.discordId ? `<@${info.discordId}>` : "Not assigned", inline: false },
-          { name: "Minecraft", value: info.minecraftUser ? `\`${info.minecraftUser}\`` : "Not assigned", inline: false },
-          { name: "Assigned At", value: `<t:${Math.floor(new Date(info.assignedAt).getTime() / 1000)}:F>`, inline: false }
-        );
-
-      if (info.updatedAt) {
-        embed.addFields({
-          name: "Last Updated",
-          value: `<t:${Math.floor(new Date(info.updatedAt).getTime() / 1000)}:R>`,
-          inline: false
-        });
-      }
-
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
-    }
-
-    // ============================================================
-    // LOOKUP
-    // ============================================================
-    if (sub === "lookup") {
-      await interaction.deferReply({ ephemeral: true });
-
-      const discordUser = interaction.options.getUser("discord");
-      const mcName = interaction.options.getString("minecraft");
-
-      if (!discordUser && !mcName) {
-        return interaction.editReply({
-          content: "❌ You must provide at least one of: Discord user or Minecraft username",
-          ephemeral: true
-        });
-      }
-
-      const empireId = getEmpireId(discordUser?.id, mcName);
-
-      if (!empireId) {
-        let msg = "❌ No Empire ID found for ";
-        if (discordUser) msg += `**${discordUser.tag}**`;
-        if (mcName) msg += ` (MC: \`${mcName}\`)`;
-        
-        return interaction.editReply({
-          content: msg,
-          ephemeral: true
-        });
-      }
-
-      const info = getEmpireIdInfo(empireId);
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🆔 ${empireId}`)
-        .setColor(info.reserved ? 0xFFD700 : 0x000000)
-        .addFields(
-          { name: "Type", value: info.reserved ? "Reserved (YZNK)" : "Regular", inline: true },
-          { name: "Clan", value: info.clanAbbr || "n/d", inline: true },
-          { name: "Discord", value: info.discordId ? `<@${info.discordId}>` : "n/d", inline: false },
-          { name: "Minecraft", value: info.minecraftUser ? `\`${info.minecraftUser}\`` : "n/d", inline: false },
-          { name: "Assigned At", value: `<t:${Math.floor(new Date(info.assignedAt).getTime() / 1000)}:F>`, inline: false }
-        );
-
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
-    }
-
-    // ============================================================
-    // LIST
-    // ============================================================
     if (sub === "list") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const filter = interaction.options.getString("filter") || "all";
       const data = getAllEmpireIds();
+      const allEntries = Object.entries(data.ids);
 
-      let ids = Object.entries(data.ids);
-
-      // Apply filter
-      if (filter === "reserved") {
-        ids = ids.filter(([, info]) => info.reserved);
-      } else if (filter === "regular") {
-        ids = ids.filter(([, info]) => !info.reserved);
-      }
-
-      if (ids.length === 0) {
+      const filtered = applyListFilter(allEntries, filter);
+      if (filtered.length === 0) {
         return interaction.editReply({
           content: `📋 No Empire IDs found (filter: ${filter})`,
-          ephemeral: true
         });
       }
 
-      // Sort by Empire ID
-      ids.sort((a, b) => a[0].localeCompare(b[0]));
-
-      // Group by clan abbreviation
-      const grouped = {};
-      for (const [empireId, info] of ids) {
-        const abbr = info.clanAbbr || "Unknown";
-        if (!grouped[abbr]) grouped[abbr] = [];
-        grouped[abbr].push({ empireId, info });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🆔 Empire IDs (${ids.length})`)
-        .setColor(0x000000)
-        .setFooter({ text: `Filter: ${filter} | Next: ${data.nextNumber}` });
-
-      for (const [abbr, entries] of Object.entries(grouped)) {
-        const list = entries
-          .slice(0, 10) // Limit to 10 per field
-          .map(({ empireId, info }) => {
-            let line = `\`${empireId}\``;
-            if (info.minecraftUser) line += ` - ${info.minecraftUser}`;
-            else if (info.discordId) line += ` - <@${info.discordId}>`;
-            else line += ` - *Unassigned*`;
-            return line;
-          })
-          .join("\n");
-
-        const more = entries.length > 10 ? `\n*...and ${entries.length - 10} more*` : "";
-
-        embed.addFields({
-          name: `${abbr} (${entries.length})`,
-          value: list + more,
-          inline: false
-        });
-      }
-
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      const ownerId = interaction.user.id;
+      const { embed, components } = buildEmpireListUI(data, ownerId, 0, filter);
+      return interaction.editReply({ embeds: [embed], components });
     }
 
-    // ============================================================
-    // STATS
-    // ============================================================
     if (sub === "stats") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const data = getAllEmpireIds();
       const ids = Object.entries(data.ids);
@@ -365,8 +316,9 @@ module.exports = {
       const regular = ids.length - reserved;
       const assigned = ids.filter(([, info]) => info.discordId || info.minecraftUser).length;
       const unassigned = ids.length - assigned;
+      const deactivated = ids.filter(([, info]) => info.active === false).length;
+      const activeRegistry = ids.length - deactivated;
 
-      // Group by clan
       const byClan = {};
       for (const [, info] of ids) {
         const abbr = info.clanAbbr || "Unknown";
@@ -385,6 +337,9 @@ module.exports = {
           { name: "Total IDs", value: `\`${ids.length}\``, inline: true },
           { name: "Next Number", value: `\`${data.nextNumber}\``, inline: true },
           { name: "‎", value: "‎", inline: true },
+          { name: "Deactivated", value: `\`${deactivated}\``, inline: true },
+          { name: "Active registry", value: `\`${activeRegistry}\``, inline: true },
+          { name: "‎", value: "‎", inline: true },
           { name: "Reserved (YZNK)", value: `\`${reserved}\``, inline: true },
           { name: "Regular", value: `\`${regular}\``, inline: true },
           { name: "‎", value: "‎", inline: true },
@@ -394,7 +349,59 @@ module.exports = {
           { name: "By Clan", value: clanStats || "None", inline: false }
         );
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
-  }
+  },
+
+  async buttonHandler(interaction) {
+    const parsed = parseNavCustomId(interaction.customId);
+    if (!parsed) return;
+
+    if (interaction.user.id !== parsed.ownerId) {
+      return interaction.reply({
+        content: "❌ Only the staff member who ran `/empireid list` can use these controls.",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    const data = getAllEmpireIds();
+    const filtered = applyListFilter(Object.entries(data.ids), parsed.filter);
+    if (filtered.length === 0) {
+      return interaction.update({
+        content: `📋 No Empire IDs found (filter: ${parsed.filter})`,
+        embeds: [],
+        components: [],
+      });
+    }
+
+    const { embed, components } = buildEmpireListUI(data, parsed.ownerId, parsed.page, parsed.filter);
+    return interaction.update({ embeds: [embed], components });
+  },
+
+  async selectMenuHandler(interaction) {
+    const ownerId = parseFilterCustomId(interaction.customId);
+    if (!ownerId) return;
+
+    if (interaction.user.id !== ownerId) {
+      return interaction.reply({
+        content: "❌ Only the staff member who ran `/empireid list` can use this menu.",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    const filter = interaction.values[0] || "all";
+    const data = getAllEmpireIds();
+    const filtered = applyListFilter(Object.entries(data.ids), filter);
+
+    if (filtered.length === 0) {
+      return interaction.update({
+        content: `📋 No Empire IDs found (filter: ${filter})`,
+        embeds: [],
+        components: [],
+      });
+    }
+
+    const { embed, components } = buildEmpireListUI(data, ownerId, 0, filter);
+    return interaction.update({ embeds: [embed], components });
+  },
 };

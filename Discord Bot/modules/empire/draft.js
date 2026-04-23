@@ -1,7 +1,7 @@
 // modules/empire/draft-command.js
 // ✅ Admin command for managing drafts
 
-const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, MessageFlags } = require("discord.js");
 const {
   getDraftStatus,
   getActiveDrafts,
@@ -85,7 +85,7 @@ module.exports = {
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
       return interaction.reply({
         content: "❌ You need the **Kick Members** permission to use this command.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -95,15 +95,14 @@ module.exports = {
     // VIEW DRAFT STATUS
     // ============================================================
     if (sub === "view") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const user = interaction.options.getUser("user");
       const status = getDraftStatus(user.id);
 
       if (!status) {
         return interaction.editReply({
-          content: `❌ No draft information found for ${user.tag}`,
-          ephemeral: true
+          content: `❌ No draft information found for ${user.tag}`
         });
       }
 
@@ -137,21 +136,20 @@ module.exports = {
           );
       }
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     // ============================================================
     // LIST ALL ACTIVE DRAFTS
     // ============================================================
     if (sub === "list") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const activeDrafts = getActiveDrafts();
 
       if (activeDrafts.length === 0) {
         return interaction.editReply({
-          content: "📋 No active drafts found.",
-          ephemeral: true
+          content: "📋 No active drafts found."
         });
       }
 
@@ -166,7 +164,9 @@ module.exports = {
 
       const timeframe = config.TESTING_MODE ? "min" : "days";
 
-      activeDrafts.slice(0, 25).forEach(draft => {
+      // Discord allows at most 25 embed fields total — reserve one for truncation notice when needed
+      const maxDraftFields = activeDrafts.length > 25 ? 24 : 25;
+      activeDrafts.slice(0, maxDraftFields).forEach(draft => {
         const user = `<@${draft.discordId}>`;
         const empireId = draft.EmpireID || "n/d";
         const clan = draft.JoinedClan || "n/d";
@@ -182,19 +182,19 @@ module.exports = {
       if (activeDrafts.length > 25) {
         embed.addFields({
           name: "⚠️ Too Many Drafts",
-          value: `Showing first 25 of ${activeDrafts.length} active drafts.`,
+          value: `Showing first ${maxDraftFields} of ${activeDrafts.length} active drafts.`,
           inline: false
         });
       }
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     // ============================================================
     // CANCEL DRAFT (PROMOTE TO CITIZEN)
     // ============================================================
     if (sub === "cancel") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const user = interaction.options.getUser("user");
       const result = await cancelDraft(user.id, interaction.client);
@@ -207,14 +207,12 @@ module.exports = {
         };
 
         return interaction.editReply({
-          content: `❌ Cannot cancel draft: ${reasons[result.reason] || result.reason}`,
-          ephemeral: true
+          content: `❌ Cannot cancel draft: ${reasons[result.reason] || result.reason}`
         });
       }
 
       return interaction.editReply({
-        content: `✅ Draft cancelled for ${user.tag}. They have been promoted to **Citizen**.`,
-        ephemeral: true
+        content: `✅ Draft cancelled for ${user.tag}. They have been promoted to **Citizen**.`
       });
     }
 
@@ -222,7 +220,7 @@ module.exports = {
     // FORCE COMPLETE DRAFT
     // ============================================================
     if (sub === "complete") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const user = interaction.options.getUser("user");
       const outcome = interaction.options.getString("outcome");
@@ -236,16 +234,14 @@ module.exports = {
         };
 
         return interaction.editReply({
-          content: `❌ Cannot complete draft: ${reasons[result.reason] || result.reason}`,
-          ephemeral: true
+          content: `❌ Cannot complete draft: ${reasons[result.reason] || result.reason}`
         });
       }
 
       const outcomeText = outcome === "army" ? "Imperial Army" : "Citizen";
 
       return interaction.editReply({
-        content: `✅ Draft completed for ${user.tag}. They are now: **${outcomeText}**`,
-        ephemeral: true
+        content: `✅ Draft completed for ${user.tag}. They are now: **${outcomeText}**`
       });
     }
 
@@ -253,7 +249,7 @@ module.exports = {
     // STATISTICS
     // ============================================================
     if (sub === "stats") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const members = readMembers();
       const allMembers = Object.values(members);
@@ -282,14 +278,14 @@ module.exports = {
         )
         .setFooter({ text: `Mode: ${config.TESTING_MODE ? "TESTING" : "Production"}` });
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     // ============================================================
     // CONFIGURATION
     // ============================================================
     if (sub === "config") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const mode = config.TESTING_MODE ? "🧪 TESTING MODE" : "🚀 PRODUCTION MODE";
       
@@ -320,14 +316,14 @@ module.exports = {
         )
         .setFooter({ text: "Use /draft toggle-testing to switch modes" });
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     // ============================================================
     // TOGGLE TESTING MODE
     // ============================================================
     if (sub === "toggle-testing") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       config.TESTING_MODE = !config.TESTING_MODE;
 
@@ -349,7 +345,7 @@ module.exports = {
         )
         .setColor(config.TESTING_MODE ? 0xFFAA00 : 0x00AA00);
 
-      return interaction.editReply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
   }
 };

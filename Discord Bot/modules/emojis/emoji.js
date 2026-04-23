@@ -6,6 +6,7 @@ const {
   EmbedBuilder,
   PermissionsBitField,
 } = require("discord.js");
+const { fetch } = require("undici");
 
 /** Max emojis processed per invocation (slash string allows up to 6000 chars). */
 const EMOJI_BATCH_CAP = 30;
@@ -14,6 +15,9 @@ const EMOJI_BATCH_CAP = 30;
 const OP_DELAY_MS = 350;
 
 const CUSTOM_EMOJI_RE = /<a?:([^:<>]+):(\d+)>/g;
+/** Direct CDN links (e.g. from “Copy image address”) — id + extension hints animated/static. */
+const CDN_EMOJI_RE =
+  /https:\/\/cdn\.discordapp\.com\/emojis\/(\d+)\.(png|gif|webp)(?:\?[^\s]*)?/gi;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,7 +39,70 @@ function parseCustomEmojiTags(raw) {
     const animated = m[0].startsWith("<a:");
     if (!byId.has(id)) byId.set(id, { id, name, animated });
   }
+  CDN_EMOJI_RE.lastIndex = 0;
+  while ((m = CDN_EMOJI_RE.exec(raw)) !== null) {
+    const id = m[1];
+    const ext = (m[2] || "").toLowerCase();
+    const animated = ext === "gif";
+    if (!byId.has(id)) {
+      byId.set(id, { id, name: `e_${id.slice(-8)}`, animated });
+    }
+  }
   return [...byId.values()];
+}
+
+/**
+ * Discord hosts emoji assets at predictable CDN URLs; snowflake + static/animated hint is enough
+ * to download bytes without the bot being in the source guild (when CDN allows the fetch).
+ * @param {string} id
+ * @param {boolean} animatedHint from <: vs <a: tag
+ * @returns {string[]}
+ */
+function cdnEmojiUrlCandidates(id, animatedHint) {
+  const base = `https://cdn.discordapp.com/emojis/${id}`;
+  if (animatedHint) {
+    return [`${base}.gif`, `${base}.png`, `${base}.webp`];
+  }
+  return [`${base}.png`, `${base}.webp`, `${base}.gif`];
+}
+
+/**
+ * @param {string} url
+ * @returns {Promise<Buffer|null>}
+ */
+async function fetchCdnImageBuffer(url) {
+  const token = process.env.TOKEN;
+  const ua = { "User-Agent": "DiscordBot (https://github.com/discordjs)" };
+  let res = await fetch(url, { headers: ua });
+  if ((res.status === 401 || res.status === 403) && token) {
+    res = await fetch(url, {
+      headers: { ...ua, Authorization: `Bot ${token}` },
+    });
+  }
+  if (!res.ok) return null;
+  const buf = Buffer.from(await res.arrayBuffer());
+  return buf.length > 0 ? buf : null;
+}
+
+/**
+ * Image for guild.emojis.create: prefer cached guild emoji URL; else try CDN bytes.
+ * @param {import('discord.js').Client} client
+ * @param {string} id
+ * @param {boolean} animatedFromTag
+ * @returns {Promise<{ attachment: string|Buffer, fromCache: boolean } | { error: 'managed'; emoji: import('discord.js').GuildEmoji } | { error: 'cdn' }>}
+ */
+async function resolveStealAttachment(client, id, animatedFromTag) {
+  const cached = client.emojis.cache.get(id);
+  if (cached) {
+    if (cached.managed) return { error: "managed", emoji: cached };
+    return { attachment: cached.url, fromCache: true };
+  }
+  for (const url of cdnEmojiUrlCandidates(id, animatedFromTag)) {
+    const buf = await fetchCdnImageBuffer(url);
+    if (buf) return { attachment: buf, fromCache: false };
+    await sleep(40);
+  }
+  return { error: "cdn" };
 }
 
 /**
@@ -94,7 +161,7 @@ const emojisOption = (sub) =>
       opt
         .setName("emojis")
         .setDescription(
-          `Paste custom emojis (<:name:id> or <a:name:id>). Up to ${EMOJI_BATCH_CAP} per run.`
+          `Emoji tags or cdn.discordapp.com/emojis/… links. Max ${EMOJI_BATCH_CAP} per run; bot need not be in source guild.`
         )
         .setRequired(true)
         .setMaxLength(6000)
@@ -108,7 +175,9 @@ module.exports = {
       emojisOption(
         sub
           .setName("steal")
-          .setDescription("Copy emojis from other servers the bot is in into this server")
+          .setDescription(
+            "Copy custom emojis into this server (uses CDN when the bot is not in the source server)"
+          )
       )
     )
     .addSubcommand((sub) =>
@@ -152,7 +221,7 @@ module.exports = {
     if (parsedAll.length === 0) {
       return interaction.reply({
         content:
-          "❌ No custom emoji tags found. Paste tags like `<:name:123456789>` or `<a:name:123456789>` (from emoji picker or another message).",
+          "❌ No custom emojis found. Paste `<:name:id>` / `<a:name:id>` (from the emoji picker), or `https://cdn.discordapp.com/emojis/{id}.png` / `.gif` links.",
         ephemeral: true,
       });
     }
@@ -186,16 +255,18 @@ async function runSteal(interaction, parsed, truncated) {
   const failLines = [];
 
   let i = 0;
-  for (const { id, name } of parsed) {
+  for (const { id, name, animated } of parsed) {
     if (i++ > 0) await sleep(OP_DELAY_MS);
 
-    const src = client.emojis.cache.get(id);
-    if (!src) {
-      skipLines.push(`\`${id}\` — not visible to the bot (wrong id or bot not in that server)`);
+    const resolved = await resolveStealAttachment(client, id, animated);
+    if (resolved.error === "managed") {
+      skipLines.push(`${resolved.emoji} — managed (integration); cannot copy`);
       continue;
     }
-    if (src.managed) {
-      skipLines.push(`${src} — managed (integration); cannot copy`);
+    if (resolved.error === "cdn") {
+      skipLines.push(
+        `\`${id}\` — could not download image (invalid id, CDN blocked, or try the other static/animated format)`
+      );
       continue;
     }
 
@@ -208,7 +279,7 @@ async function runSteal(interaction, parsed, truncated) {
         attempt === 0 ? baseName : sanitizeEmojiName(`${baseName}_${attempt + 1}`);
       try {
         created = await guild.emojis.create({
-          attachment: src.url,
+          attachment: resolved.attachment,
           name: tryName,
           reason: `Emoji steal by ${interaction.user.tag} (${interaction.user.id})`,
         });

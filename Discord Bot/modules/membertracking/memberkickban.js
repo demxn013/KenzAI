@@ -378,7 +378,9 @@ async function kickMember(discordId, reason, client) {
       eventType: "kicked",
       payload: { reason, clan: clanName, empireId },
       actorDiscordId: null,
-    }).catch(() => {});
+    }).catch((e) =>
+      console.error("[memberkickban] member_events (kicked):", e.message)
+    );
 
     console.log(`[memberkickban] ✅ Successfully kicked member ${discordId}`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -522,7 +524,9 @@ async function banMember(discordId, reason, client) {
         existingMember: isExistingMember,
       },
       actorDiscordId: null,
-    }).catch(() => {});
+    }).catch((e) =>
+      console.error("[memberkickban] member_events (banned):", e.message)
+    );
     
     console.log(`[memberkickban] ✅ Successfully banned member ${discordId} (${isExistingMember ? 'existing member' : 'non-member'})`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");

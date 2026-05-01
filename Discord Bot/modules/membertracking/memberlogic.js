@@ -9,6 +9,7 @@ const Jimp = require("jimp");
 const { getMCFromDiscord, getDiscordFromMC, getAllAccountsForDiscord } = require("../linking/linklogic");
 const { detectRolesFromDiscord, batchDetectRoles } = require("../roles/roledetector");
 const { getApplicant, getAllApplicants } = require("../applications/applicants");
+const { getEmpireIdInfo, getAllEmpireIds } = require("../empire/empireid");
 
 const membersPath = path.join(__dirname, "../data/members.json");
 
@@ -364,6 +365,54 @@ async function getMemberByDiscordOrMC(discordId = null, mcUser = null, client = 
   return null;
 }
 
+/**
+ * Resolve an active linked member from an Empire ID (registry + members.json fallback).
+ * @returns {Promise<{ member: object, discordId: string, empireId: string } | { member: null, reason: string, discordId?: string, empireId?: string } | null>}
+ */
+async function getMemberByEmpireId(empireId, client = null) {
+  const normalized = (empireId || "").trim().toUpperCase();
+  if (!normalized) return null;
+
+  let info = getEmpireIdInfo(normalized);
+  if (!info) {
+    const registry = getAllEmpireIds();
+    const foundKey = Object.keys(registry.ids || {}).find(
+      (k) => k.toUpperCase() === normalized
+    );
+    if (foundKey) info = registry.ids[foundKey];
+  }
+
+  let discordId = info?.discordId || null;
+
+  if (!discordId) {
+    const members = readMembers();
+    const found = Object.entries(members).find(
+      ([, m]) => m.EmpireID && String(m.EmpireID).trim().toUpperCase() === normalized
+    );
+    if (found) discordId = found[0];
+  }
+
+  if (!info && !discordId) {
+    return { member: null, reason: "id_not_found", empireId: normalized };
+  }
+
+  if (!discordId) {
+    return { member: null, reason: "registry_no_discord", empireId: normalized };
+  }
+
+  const result = await getMemberByDiscordId(discordId, client);
+  if (!result || !result.member) {
+    return {
+      member: null,
+      reason: "not_linked_or_not_member",
+      discordId,
+      empireId: normalized,
+    };
+  }
+
+  return { member: result.member, discordId, empireId: normalized };
+}
+
 // ----------- IMAGE / COLOR FUNCTIONS -----------
 function fetchImageBuffer(url) {
   return new Promise((resolve, reject) => {
@@ -619,6 +668,7 @@ module.exports = {
   getMemberByMinecraftNameInsensitive,
   getMemberByMinecraftUser,
   getMemberByDiscordOrMC,
+  getMemberByEmpireId,
   fetchImageBuffer,
   getProperMinecraftName,
   getDominantColor,

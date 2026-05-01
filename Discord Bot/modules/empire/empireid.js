@@ -164,6 +164,13 @@ function assignEmpireId(discordId, minecraftUser, clanGuildId) {
   
   if (existingId) {
     console.log(`[empireid] ♻️ Member is returning! Restoring ID: ${existingId}`);
+    const data = loadEmpireIds();
+    if (data.ids[existingId]) {
+      data.ids[existingId].active = true;
+      delete data.ids[existingId].kickedAt;
+      delete data.ids[existingId].bannedAt;
+      saveEmpireIds(data);
+    }
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     return {
       success: true,
@@ -205,7 +212,8 @@ function assignEmpireId(discordId, minecraftUser, clanGuildId) {
     minecraftUser,
     clanAbbr,
     assignedAt: new Date().toISOString(),
-    reserved: false
+    reserved: false,
+    active: true
   };
 
   // Increment next number

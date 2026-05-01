@@ -7,10 +7,19 @@
 const {
   getMemberByDiscordId,
   getMemberByMinecraftUser,
+  getMemberByEmpireId,
   getDominantColor,
   getProperMinecraftName,
 } = require("./memberlogic");
-const { SlashCommandBuilder, PermissionsBitField, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  PermissionsBitField,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+} = require("discord.js");
 const { createMemberEmbed } = require("./memberembed");
 const { kickMember, banMember } = require("./memberkickban");
 
@@ -32,6 +41,12 @@ module.exports = {
           option
             .setName("discord")
             .setDescription("Discord user")
+            .setRequired(false)
+        )
+        .addStringOption(option =>
+          option
+            .setName("empireid")
+            .setDescription("Empire ID (e.g. SNU-000014)")
             .setRequired(false)
         )
     )
@@ -210,6 +225,7 @@ module.exports = {
     // VIEW SUBCOMMAND (Everyone)
     // ============================================================
     if (sub === "view") {
+      const empireArg = interaction.options.getString("empireid");
       const mcArg = interaction.options.getString("minecraft");
       const discordArg = interaction.options.getUser("discord");
 
@@ -219,64 +235,64 @@ module.exports = {
 
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[/member view] 🎯 Command invoked by: ${interaction.user.tag}`);
-      
-      // ============================================================
-      // DETERMINE TARGET USER (defaults to command invoker)
-      // ============================================================
+
       const targetDiscordUser = discordArg || interaction.user;
-      
+
+      console.log(`[/member view] 🆔 Empire ID arg: ${empireArg || "none"}`);
       console.log(`[/member view] 👤 Target Discord User: ${targetDiscordUser.tag} (${targetDiscordUser.id})`);
-      console.log(`[/member view] 🎮 MC Arg: ${mcArg || 'none'}`);
-      console.log(`[/member view] 🤖 Client provided: ${interaction.client ? 'YES ✅' : 'NO ❌'}`);
+      console.log(`[/member view] 🎮 MC Arg: ${mcArg || "none"}`);
+      console.log(`[/member view] 🤖 Client provided: ${interaction.client ? "YES ✅" : "NO ❌"}`);
 
-      // ============================================================
-      // SEARCH BY DISCORD ID (unless MC username explicitly provided)
-      // ============================================================
-      if (!mcArg) {
-        console.log(`[/member view] 🔍 No MC arg, searching by Discord ID...`);
-        
-        // ✅ ALWAYS PASS CLIENT FOR ROLE DETECTION
-        const result = await getMemberByDiscordId(targetDiscordUser.id, interaction.client);
-        console.log(`[/member view] 📊 getMemberByDiscordId result:`, result ? 'Found' : 'Not found');
+      // Priority: empireid > minecraft > discord (default invoker when no MC/empire)
+      if (empireArg) {
+        console.log(`[/member view] 🔍 Searching by Empire ID: ${empireArg}`);
+        const empireResult = await getMemberByEmpireId(empireArg, interaction.client);
+        console.log(
+          `[/member view] 📊 getMemberByEmpireId result:`,
+          empireResult?.member ? "Found" : empireResult?.reason || "none"
+        );
 
-        if (result && result.member) {
-          finalMemberData = result.member;
-          finalMCUsername = result.member.minecraftUser;
-          discordDisplay = targetDiscordUser;
-          
-          console.log(`[/member view] ✅ Found via Discord ID - MC: ${finalMCUsername}`);
-          console.log(`[/member view] 🎭 Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`);
-        } else {
-          // Not found in linking.json
-          console.log(`[/member view] ❌ No link found for Discord ID: ${targetDiscordUser.id}`);
+        if (!empireResult || !empireResult.member) {
+          console.log(`[/member view] ❌ Empire ID lookup failed (${empireResult?.reason || "unknown"})`);
           console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-          return interaction.reply({
-            content: discordArg 
-              ? `❌ <@${discordArg.id}> is not linked. They need to use \`/link <minecraft_username>\` first.`
-              : `❌ You are not linked. Use \`/link <minecraft_username>\` to link your account.`,
-            ephemeral: true,
-          });
+          const id = empireArg.trim().toUpperCase();
+          let msg = `❌ No active member could be resolved for Empire ID \`${id}\`.`;
+          if (empireResult?.reason === "id_not_found") {
+            msg = `❌ Empire ID \`${id}\` was not found in the registry.`;
+          } else if (empireResult?.reason === "registry_no_discord") {
+            msg = `❌ Empire ID \`${id}\` exists but has no Discord assignment yet.`;
+          } else if (empireResult?.reason === "not_linked_or_not_member") {
+            msg =
+              `❌ Empire ID \`${id}\` is not linked to an active empire member ` +
+              `(user may have left, been kicked, or needs \`/link\`).`;
+          }
+          return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
         }
-      }
 
-      // ============================================================
-      // SEARCH BY MINECRAFT USERNAME (if explicitly provided)
-      // ============================================================
-      if (mcArg) {
+        finalMemberData = empireResult.member;
+        finalMCUsername = empireResult.member.minecraftUser;
+        try {
+          discordDisplay = await interaction.client.users.fetch(empireResult.discordId);
+          console.log(`[/member view] ✅ Found via Empire ID — Discord: ${discordDisplay.tag}`);
+        } catch (err) {
+          console.warn("[/member view] ⚠️ Could not fetch discord user:", err.message);
+        }
+        console.log(
+          `[/member view] 🎭 Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`
+        );
+      } else if (mcArg) {
         console.log(`[/member view] 🔍 Searching by MC username: ${mcArg}`);
-        
-        // ✅ ALWAYS PASS CLIENT FOR ROLE DETECTION
+
         const mcResult = await getMemberByMinecraftUser(mcArg, interaction.client);
-        console.log(`[/member view] 📊 getMemberByMinecraftUser result:`, mcResult?.member ? 'Found' : 'Not found');
+        console.log(`[/member view] 📊 getMemberByMinecraftUser result:`, mcResult?.member ? "Found" : "Not found");
 
         if (mcResult && mcResult.member) {
           finalMemberData = mcResult.member;
           finalMCUsername = mcResult.member.minecraftUser || mcResult.exactUsername || mcArg;
-          
+
           console.log(`[/member view] ✅ Found via MC username`);
           console.log(`[/member view] 🎭 Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`);
-          
-          // Try to get discord user from member data
+
           if (mcResult.member.discordId) {
             try {
               discordDisplay = await interaction.client.users.fetch(mcResult.member.discordId);
@@ -286,9 +302,31 @@ module.exports = {
             }
           }
         } else {
-          // MC username not found in linking or members
           finalMCUsername = mcResult?.exactUsername || mcArg;
           console.log(`[/member view] ℹ️ MC username not linked, showing basic info for: ${finalMCUsername}`);
+        }
+      } else {
+        console.log(`[/member view] 🔍 Searching by Discord ID...`);
+
+        const result = await getMemberByDiscordId(targetDiscordUser.id, interaction.client);
+        console.log(`[/member view] 📊 getMemberByDiscordId result:`, result ? "Found" : "Not found");
+
+        if (result && result.member) {
+          finalMemberData = result.member;
+          finalMCUsername = result.member.minecraftUser;
+          discordDisplay = targetDiscordUser;
+
+          console.log(`[/member view] ✅ Found via Discord ID - MC: ${finalMCUsername}`);
+          console.log(`[/member view] 🎭 Rank: ${finalMemberData.YazanakiRank}, Status: ${finalMemberData.Status}`);
+        } else {
+          console.log(`[/member view] ❌ No link found for Discord ID: ${targetDiscordUser.id}`);
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+          return interaction.reply({
+            content: discordArg
+              ? `❌ <@${discordArg.id}> is not linked. They need to use \`/link <minecraft_username>\` first.`
+              : `❌ You are not linked. Use \`/link <minecraft_username>\` to link your account.`,
+            flags: MessageFlags.Ephemeral,
+          });
         }
       }
 
@@ -300,7 +338,7 @@ module.exports = {
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         return interaction.reply({
           content: "❌ Could not find Minecraft username. Please provide a valid username or link your account.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 

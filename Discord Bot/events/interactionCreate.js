@@ -86,6 +86,13 @@ module.exports = {
           return await handleDraftChoice(interaction);
         }
 
+        // /empireid list — pagination
+        if (interaction.customId.startsWith("empireid_list|nav|")) {
+          const cmd = client.commands.get("empireid");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "empireid");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // Court request buttons
         if (
           interaction.customId === "start_court_request" ||
@@ -199,6 +206,13 @@ module.exports = {
             value: interaction.values.map(v => v.replace("points_redeem_", "shop_redeem_"))
           });
           return await cmd.selectMenuHandler(patchedInteraction);
+        }
+
+        // /empireid list — filter menu
+        if (interaction.customId.startsWith("empireid_list|filter|")) {
+          const cmd = client.commands.get("empireid");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "empireid");
+          return await cmd.selectMenuHandler(interaction);
         }
 
         console.warn(`[interactionCreate] ⚠️ Unhandled select menu ID: ${interaction.customId}`);

@@ -11,6 +11,7 @@ const crypto = require('crypto');
 // ============================================================
 // IMPORTS
 // ============================================================
+const { initDatabase } = require('./modules/database/bootstrap');
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
 const { startBotMonitor } = require('./modules/mcbot/botmonitor');
@@ -228,6 +229,8 @@ client.once('ready', async () => {
   } else {
     await deployCommands();
   }
+
+  await initDatabase();
 
   console.log("🎖️ Starting draft system...");
   startScheduler(client);

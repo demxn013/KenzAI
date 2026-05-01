@@ -5,13 +5,11 @@
 // - IDs 14+: Sequential, empire-wide, with clan abbreviation
 // - IDs are PERMANENT and stick to the member forever
 
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = path.join(__dirname, "..", "data");
-const empireIdsPath = path.join(dataDir, "empireids.json");
-const membersPath = path.join(dataDir, "members.json");
-const clansPath = path.join(dataDir, "clans.json");
+const {
+  loadEmpireRegistry,
+  saveEmpireRegistry,
+} = require("../database/empireRegistryPersistence");
+const { readClans } = require("../database/clansPersistence");
 
 // Constants
 const EMPIRE_ABBR = "YZNK";
@@ -19,60 +17,17 @@ const RESERVED_COUNT = 13;
 const ID_LENGTH = 6; // Total digits in the number part (e.g., 000014)
 
 /**
- * Ensure empireids.json exists
- */
-function ensureEmpireIdsFile() {
-  try {
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    if (!fs.existsSync(empireIdsPath)) {
-      const defaultData = {
-        nextNumber: 14, // Next available number (starts at 14, 1-13 reserved)
-        ids: {
-          // Structure:
-          // "YZNK-000001": { discordId: "...", minecraftUser: "...", assignedAt: "...", reserved: true },
-          // "SNU-000014": { discordId: "...", minecraftUser: "...", assignedAt: "...", clanAbbr: "SNU" }
-        }
-      };
-      fs.writeFileSync(empireIdsPath, JSON.stringify(defaultData, null, 2));
-      console.log("[empireid] ✅ Created empireids.json");
-      return defaultData;
-    }
-
-    const raw = fs.readFileSync(empireIdsPath, "utf8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("[empireid] ❌ Error ensuring empireids.json:", err);
-    return { nextNumber: 14, ids: {} };
-  }
-}
-
-/**
- * Load Empire IDs data
+ * Load Empire IDs data (JSON and/or MySQL per env).
  */
 function loadEmpireIds() {
-  return ensureEmpireIdsFile();
+  return loadEmpireRegistry();
 }
 
 /**
  * Save Empire IDs data
  */
 function saveEmpireIds(data) {
-  try {
-    // Create backup
-    if (fs.existsSync(empireIdsPath)) {
-      const backupPath = empireIdsPath.replace('.json', '.backup.json');
-      fs.copyFileSync(empireIdsPath, backupPath);
-    }
-
-    fs.writeFileSync(empireIdsPath, JSON.stringify(data, null, 2));
-    return true;
-  } catch (err) {
-    console.error("[empireid] ❌ Failed to save empireids.json:", err);
-    return false;
-  }
+  return saveEmpireRegistry(data);
 }
 
 /**
@@ -80,15 +35,9 @@ function saveEmpireIds(data) {
  */
 function loadClans() {
   try {
-    if (!fs.existsSync(clansPath)) {
-      console.warn("[empireid] ⚠️ clans.json not found");
-      return {};
-    }
-    
-    const raw = fs.readFileSync(clansPath, "utf8");
-    return JSON.parse(raw);
+    return readClans();
   } catch (err) {
-    console.error("[empireid] ❌ Error loading clans.json:", err);
+    console.error("[empireid] ❌ Error loading clans:", err);
     return {};
   }
 }

@@ -10,8 +10,8 @@ const path = require("path");
 const http = require("http");
 
 const dataDir = path.join(__dirname, "..", "data");
-const membersPath = path.join(dataDir, "members.json");
-const empireIdsPath = path.join(dataDir, "empireids.json");
+const { readMembers } = require("../database/membersPersistence");
+const { loadEmpireRegistry } = require("../database/empireRegistryPersistence");
 const kickedMembersPath = path.join(dataDir, "kicked_members.json");
 const bannedMembersPath = path.join(dataDir, "banned_members.json");
 
@@ -55,7 +55,7 @@ function readJSON(filePath) {
 function validateMember(discordId) {
   console.log(`[mcbotlogic] 🔍 Validating member: ${discordId}`);
 
-  const members = readJSON(membersPath);
+  const members = readMembers();
   const member = members[discordId];
 
   if (!member) {
@@ -97,7 +97,7 @@ function validateMember(discordId) {
     }
   }
 
-  const empireIds = readJSON(empireIdsPath);
+  const empireIds = loadEmpireRegistry();
   const empireId = member.EmpireID;
 
   if (!empireId) {
@@ -138,7 +138,7 @@ function validateMember(discordId) {
 // ============================================================
 
 function findOwnerByMinecraftUser(minecraftUser) {
-  const members = readJSON(membersPath);
+  const members = readMembers();
   const lower = minecraftUser.toLowerCase();
   for (const [discordId, data] of Object.entries(members)) {
     if (data?.minecraftUser?.toLowerCase() === lower) return discordId;

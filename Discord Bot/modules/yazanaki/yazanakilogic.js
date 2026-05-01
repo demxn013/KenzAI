@@ -1,49 +1,14 @@
 // modules/yazanaki/yazanakilogic.js
 const fs = require("fs");
 const path = require("path");
+const { readMembers } = require("../database/membersPersistence");
+const { readClans } = require("../database/clansPersistence");
 
-const membersPath = path.join(__dirname, "../data/members.json");
-const clansPath = path.join(__dirname, "../data/clans.json");
 const rolesPath = path.join(__dirname, "../data/roles.json");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
-/**
- * Read members.json
- */
-function readMembers() {
-  try {
-    if (!fs.existsSync(membersPath)) {
-      console.warn("[yazanakilogic] ⚠️ members.json not found");
-      return {};
-    }
-    
-    const raw = fs.readFileSync(membersPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[yazanakilogic] ❌ Error reading members.json:", err);
-    return {};
-  }
-}
-
-/**
- * Read clans.json
- */
-function readClans() {
-  try {
-    if (!fs.existsSync(clansPath)) {
-      console.warn("[yazanakilogic] ⚠️ clans.json not found");
-      return {};
-    }
-    
-    const raw = fs.readFileSync(clansPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[yazanakilogic] ❌ Error reading clans.json:", err);
-    return {};
-  }
-}
 
 /**
  * Read roles.json

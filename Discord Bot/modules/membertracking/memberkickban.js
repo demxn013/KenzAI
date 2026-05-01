@@ -6,13 +6,14 @@
 const fs = require("fs");
 const path = require("path");
 const { decrementClanResidents } = require("../clantracking/clanlogic");
+const { readMembers, writeMembers } = require("../database/membersPersistence");
+const { readClans } = require("../database/clansPersistence");
+const { appendEvent } = require("../database/repositories/memberEventsRepository");
+const { loadEmpireRegistry, saveEmpireRegistry } = require("../database/empireRegistryPersistence");
 
 const dataDir = path.join(__dirname, "..", "data");
-const membersPath = path.join(dataDir, "members.json");
 const kickedMembersPath = path.join(dataDir, "kicked_members.json");
 const bannedMembersPath = path.join(dataDir, "banned_members.json");
-const empireIdsPath = path.join(dataDir, "empireids.json");
-const clansPath = path.join(dataDir, "clans.json");
 const rolesConfigPath = path.join(dataDir, "roles.json");
 
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -57,16 +58,14 @@ function writeJSON(filePath, data) {
  */
 function getClanEntry(clanName) {
   try {
-    if (!fs.existsSync(clansPath)) return null;
-    const raw = fs.readFileSync(clansPath, "utf8");
-    const clans = JSON.parse(raw);
-    const guildId = Object.keys(clans).find(id =>
-      clans[id].name === clanName || clans[id].abbr === clanName
+    const clans = readClans();
+    const guildId = Object.keys(clans).find(
+      (id) => clans[id].name === clanName || clans[id].abbr === clanName
     );
     if (!guildId) return null;
     return { guildId, ...clans[guildId] };
   } catch (err) {
-    console.error("[memberkickban] ❌ Error reading clans.json:", err);
+    console.error("[memberkickban] ❌ Error reading clans:", err);
     return null;
   }
 }
@@ -183,9 +182,7 @@ async function removeAllYazanakiRoles(discordId, client) {
     
     // Remove clan role in Yazanaki discord (yazanakiRoleId)
     try {
-      const clansRaw = fs.readFileSync(clansPath, "utf8");
-      const clans = JSON.parse(clansRaw);
-      
+      const clans = readClans();
       for (const clan of Object.values(clans)) {
         if (clan.yazanakiRoleId && member.roles.cache.has(clan.yazanakiRoleId)) {
           await member.roles.remove(clan.yazanakiRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan Yazanaki role ${clan.yazanakiRoleId}:`, err.message));
@@ -194,7 +191,7 @@ async function removeAllYazanakiRoles(discordId, client) {
         }
       }
     } catch (err) {
-      console.warn(`[memberkickban] ⚠️ Could not load clans.json:`, err.message);
+      console.warn(`[memberkickban] ⚠️ Could not load clans:`, err.message);
     }
     
     console.log(`[memberkickban] ✅ Removed ${removedCount} Yazanaki roles from ${discordId}`);
@@ -298,7 +295,7 @@ async function kickMember(discordId, reason, client) {
   console.log(`[memberkickban] 🚨 Kicking member ${discordId}`);
   console.log(`[memberkickban] 📋 Reason: ${reason}`);
   
-  const members = readJSON(membersPath);
+  const members = readMembers();
   const member = members[discordId];
   
   if (!member) {
@@ -337,13 +334,13 @@ async function kickMember(discordId, reason, client) {
     }
     
     // 4. Deactivate Empire ID
-    const empireIds = readJSON(empireIdsPath);
+    const empireIds = loadEmpireRegistry();
     const empireId = member.EmpireID;
     
     if (empireId && empireIds.ids && empireIds.ids[empireId]) {
       empireIds.ids[empireId].active = false;
       empireIds.ids[empireId].kickedAt = new Date().toISOString();
-      writeJSON(empireIdsPath, empireIds);
+      saveEmpireRegistry(empireIds);
       console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
     }
     
@@ -373,9 +370,16 @@ async function kickMember(discordId, reason, client) {
     
     // 7. Remove from members.json
     delete members[discordId];
-    writeJSON(membersPath, members);
+    writeMembers(members);
     console.log(`[memberkickban] 🗑️ Removed from members.json`);
     
+    void appendEvent({
+      discordId,
+      eventType: "kicked",
+      payload: { reason, clan: clanName, empireId },
+      actorDiscordId: null,
+    }).catch(() => {});
+
     console.log(`[memberkickban] ✅ Successfully kicked member ${discordId}`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
@@ -414,7 +418,7 @@ async function banMember(discordId, reason, client) {
   console.log(`[memberkickban] 🔨 Banning member ${discordId}`);
   console.log(`[memberkickban] 📋 Reason: ${reason}`);
   
-  const members = readJSON(membersPath);
+  const members = readMembers();
   const member = members[discordId];
   const isExistingMember = !!member;
 
@@ -459,13 +463,13 @@ async function banMember(discordId, reason, client) {
     // 4. Deactivate Empire ID (only if they had one)
     let empireId = null;
     if (isExistingMember) {
-      const empireIds = readJSON(empireIdsPath);
+      const empireIds = loadEmpireRegistry();
       empireId = member.EmpireID;
       
       if (empireId && empireIds.ids && empireIds.ids[empireId]) {
         empireIds.ids[empireId].active = false;
         empireIds.ids[empireId].bannedAt = new Date().toISOString();
-        writeJSON(empireIdsPath, empireIds);
+        saveEmpireRegistry(empireIds);
         console.log(`[memberkickban] 🆔 Deactivated Empire ID: ${empireId}`);
       }
     }
@@ -504,9 +508,21 @@ async function banMember(discordId, reason, client) {
     // 6. Remove from members.json (only if they were an existing member)
     if (isExistingMember) {
       delete members[discordId];
-      writeJSON(membersPath, members);
+      writeMembers(members);
       console.log(`[memberkickban] 🗑️ Removed from members.json`);
     }
+
+    void appendEvent({
+      discordId,
+      eventType: "banned",
+      payload: {
+        reason,
+        clan: clanName,
+        empireId,
+        existingMember: isExistingMember,
+      },
+      actorDiscordId: null,
+    }).catch(() => {});
     
     console.log(`[memberkickban] ✅ Successfully banned member ${discordId} (${isExistingMember ? 'existing member' : 'non-member'})`);
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");

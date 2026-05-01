@@ -3,8 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const Jimp = require("jimp");
+const clansPersistence = require("../database/clansPersistence");
 
-const dataPath = path.join(__dirname, "../data/clans.json");
+const dataPath = clansPersistence.getClansPath();
 const flagsDir = path.join(__dirname, "../images/clanflags");
 
 // Ensure data file and directories exist
@@ -19,30 +20,15 @@ function ensureDataFile() {
   }
 }
 
-// Read/write clans.json
+// Read/write clans (JSON and/or MySQL per env).
 function readClans() {
   ensureDataFile();
-  try {
-    const raw = fs.readFileSync(dataPath, "utf8");
-    if (!raw || !raw.trim()) {
-      fs.writeFileSync(dataPath, JSON.stringify({}, null, 2));
-      return {};
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("Error reading clans.json:", err);
-    try { fs.writeFileSync(dataPath, JSON.stringify({}, null, 2)); } catch {}
-    return {};
-  }
+  return clansPersistence.readClans();
 }
 
 function writeClans(data) {
   ensureDataFile();
-  try {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Error writing clans.json:", err);
-  }
+  clansPersistence.writeClans(data);
 }
 
 /**

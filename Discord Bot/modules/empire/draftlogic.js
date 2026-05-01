@@ -15,44 +15,20 @@ const {
 
 // ✅ Import clan resident management
 const { decrementClanResidents } = require("../clantracking/clanlogic");
+const { readMembers, writeMembers } = require("../database/membersPersistence");
+const {
+  loadEmpireRegistry,
+  saveEmpireRegistry,
+} = require("../database/empireRegistryPersistence");
+const { readClans } = require("../database/clansPersistence");
 
 const dataDir = path.join(__dirname, "..", "data");
-const membersPath = path.join(dataDir, "members.json");
 const archivedPath = path.join(dataDir, "archived_members.json");
-const empireIdsPath = path.join(dataDir, "empireids.json");
-const clansPath = path.join(dataDir, "clans.json");
 const desertersPath = path.join(dataDir, "draft_deserters.json");
 
 // ============================================================
 // DATA ACCESS
 // ============================================================
-
-function readMembers() {
-  try {
-    if (!fs.existsSync(membersPath)) return {};
-    const raw = fs.readFileSync(membersPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error reading members.json:", err);
-    return {};
-  }
-}
-
-function writeMembers(data) {
-  try {
-    // Create backup
-    if (fs.existsSync(membersPath)) {
-      const backupPath = membersPath.replace('.json', '.backup.json');
-      fs.copyFileSync(membersPath, backupPath);
-    }
-    
-    fs.writeFileSync(membersPath, JSON.stringify(data, null, 4));
-    return true;
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error writing members.json:", err);
-    return false;
-  }
-}
 
 function readArchived() {
   try {
@@ -80,29 +56,15 @@ function writeArchived(data) {
 
 function readEmpireIds() {
   try {
-    if (!fs.existsSync(empireIdsPath)) return { nextNumber: 14, ids: {} };
-    const raw = fs.readFileSync(empireIdsPath, "utf8");
-    return JSON.parse(raw);
+    return loadEmpireRegistry();
   } catch (err) {
-    console.error("[draftlogic] ❌ Error reading empireids.json:", err);
+    console.error("[draftlogic] ❌ Error reading empire registry:", err);
     return { nextNumber: 14, ids: {} };
   }
 }
 
 function writeEmpireIds(data) {
-  try {
-    // Create backup
-    if (fs.existsSync(empireIdsPath)) {
-      const backupPath = empireIdsPath.replace('.json', '.backup.json');
-      fs.copyFileSync(empireIdsPath, backupPath);
-    }
-    
-    fs.writeFileSync(empireIdsPath, JSON.stringify(data, null, 2));
-    return true;
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error writing empireids.json:", err);
-    return false;
-  }
+  return saveEmpireRegistry(data);
 }
 
 /**
@@ -141,19 +103,13 @@ function writeDeserters(data) {
  */
 function getClanGuildId(clanName) {
   try {
-    if (!fs.existsSync(clansPath)) return null;
-    
-    const raw = fs.readFileSync(clansPath, "utf8");
-    const clans = JSON.parse(raw);
-    
-    // Find clan by name or abbreviation
-    const guildId = Object.keys(clans).find(id =>
-      clans[id].name === clanName || clans[id].abbr === clanName
+    const clans = readClans();
+    const guildId = Object.keys(clans).find(
+      (id) => clans[id].name === clanName || clans[id].abbr === clanName
     );
-    
     return guildId || null;
   } catch (err) {
-    console.error("[draftlogic] ❌ Error reading clans.json:", err);
+    console.error("[draftlogic] ❌ Error reading clans:", err);
     return null;
   }
 }

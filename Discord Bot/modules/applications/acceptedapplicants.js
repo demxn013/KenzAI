@@ -10,8 +10,8 @@ const path = require("path");
 
 const dataDir = path.join(__dirname, "..", "data");
 const applicantsPath = path.join(dataDir, "applicants.json");
-const membersPath = path.join(dataDir, "members.json");
-const clansPath = path.join(dataDir, "clans.json");
+const { readMembers, writeMembers } = require("../database/membersPersistence");
+const { readClans } = require("../database/clansPersistence");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -32,10 +32,6 @@ const { incrementClanResidents } = require("../clantracking/clanlogic");
 // Ensure data files
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
-}
-
-if (!fs.existsSync(membersPath)) {
-  fs.writeFileSync(membersPath, JSON.stringify({}, null, 4));
 }
 
 function loadJSON(filePath) {
@@ -108,7 +104,7 @@ async function assignYazanakiRoles(client, discordId, clanGuildId) {
   console.log(`[acceptedapps] 🎭 STEP 2: Assigning Yazanaki Empire roles...`);
   
   try {
-    const clans = loadJSON(clansPath);
+    const clans = readClans();
     const clan = clans[clanGuildId];
     
     if (!clan) {
@@ -306,7 +302,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   }
 
   const applicants = loadJSON(applicantsPath);
-  const members = loadJSON(membersPath);
+  const members = readMembers();
   const data = applicants[discordId];
 
   if (!data) {
@@ -433,7 +429,7 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   };
   
   // Save the complete member entry
-  saveJSON(membersPath, members);
+  writeMembers(members);
   
   const mode = config.TESTING_MODE ? "TESTING" : "PRODUCTION";
   const duration = config.TESTING_MODE 

@@ -11,6 +11,7 @@ const { addGuildRoles, removeGuildRoles } = require("../roles/roledetector");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
+const { readMembers } = require("../database/membersPersistence");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -589,19 +590,15 @@ module.exports = {
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log("[clan sync-residents] 🔄 Starting resident count sync...");
 
-      const membersPath = path.join(__dirname, "../data/members.json");
-      
-      if (!fs.existsSync(membersPath)) {
-        console.log("[clan sync-residents] ❌ members.json not found");
+      const members = readMembers();
+      if (!members || typeof members !== "object" || Object.keys(members).length === 0) {
+        console.log("[clan sync-residents] ❌ No members loaded");
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         return interaction.editReply({
-          content: "❌ members.json not found. No members to sync.",
+          content: "❌ No members data available to sync.",
           ephemeral: true
         });
       }
-
-      const membersRaw = fs.readFileSync(membersPath, "utf8");
-      const members = JSON.parse(membersRaw);
 
       // Count members per clan
       const clanCounts = {};

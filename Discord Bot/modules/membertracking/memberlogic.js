@@ -2,58 +2,17 @@
 // ✅ UPDATED: Now uses new multi-guild role detection from modules/roles/
 // ✅ FIXED: Alt account lookup now displays the queried MC username, not the main account username
 
-const fs = require("fs");
-const path = require("path");
 const https = require("https");
 const Jimp = require("jimp");
 const { getMCFromDiscord, getDiscordFromMC, getAllAccountsForDiscord } = require("../linking/linklogic");
 const { detectRolesFromDiscord, batchDetectRoles } = require("../roles/roledetector");
 const { getApplicant, getAllApplicants } = require("../applications/applicants");
 const { getEmpireIdInfo, getAllEmpireIds } = require("../empire/empireid");
-
-const membersPath = path.join(__dirname, "../data/members.json");
+const { readMembers, writeMembers } = require("../database/membersPersistence");
 
 // ============================================================
 // DATA ACCESS FUNCTIONS
 // ============================================================
-
-function readMembers() {
-  try {
-    if (!fs.existsSync(membersPath)) {
-      console.error("[memberlogic] ❌ members.json does not exist. Creating empty file.");
-      fs.writeFileSync(membersPath, JSON.stringify({}, null, 4));
-      return {};
-    }
-
-    const raw = fs.readFileSync(membersPath, "utf8");
-    if (!raw || !raw.trim()) return {};
-
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("[memberlogic] ❌ Error reading members.json:", err);
-    return {};
-  }
-}
-
-/**
- * ✅ Write members.json to disk with backup
- */
-function writeMembers(data) {
-  try {
-    // Create backup before writing
-    if (fs.existsSync(membersPath)) {
-      const backupPath = membersPath.replace('.json', '.backup.json');
-      fs.copyFileSync(membersPath, backupPath);
-    }
-
-    fs.writeFileSync(membersPath, JSON.stringify(data, null, 4));
-    console.log("[memberlogic] ✅ Saved members.json");
-    return true;
-  } catch (err) {
-    console.error("[memberlogic] ❌ Failed to write members.json:", err);
-    return false;
-  }
-}
 
 /**
  * ✅ Update a member's rank and status in members.json.

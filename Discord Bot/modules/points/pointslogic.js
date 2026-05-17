@@ -2,40 +2,10 @@
 // Points balance stored on each member in members.json
 // (points, pointsByCategory, lastDailyCheckin, lastWeeklyCheckin)
 
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = path.join(__dirname, "..", "data");
-const membersPath = path.join(dataDir, "members.json");
+const { readMembers, writeMembers } = require("../database/membersPersistence");
 
 // Valid categories
 const VALID_CATEGORIES = ["activity", "development", "contribution", "skill", "leadership", "special"];
-
-function readMembers() {
-  try {
-    if (!fs.existsSync(membersPath)) return {};
-    const raw = fs.readFileSync(membersPath, "utf8");
-    return raw && raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[pointslogic] Error reading members.json:", err);
-    return {};
-  }
-}
-
-function writeMembers(data) {
-  try {
-    if (fs.existsSync(membersPath)) {
-      const backupPath = membersPath.replace(".json", ".backup.json");
-      fs.copyFileSync(membersPath, backupPath);
-    }
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(membersPath, JSON.stringify(data, null, 4));
-    return true;
-  } catch (err) {
-    console.error("[pointslogic] Error writing members.json:", err);
-    return false;
-  }
-}
 
 /**
  * Ensure a member entry has the pointsByCategory structure.

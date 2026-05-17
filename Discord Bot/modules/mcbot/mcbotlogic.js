@@ -271,6 +271,25 @@ async function getEndedBotsFromVps() {
   return vpsRequest("GET", "/ended");
 }
 
+/**
+ * Check if the FreshSMP bot has spawned in the lobby and is awaiting
+ * a gamemode selection. This is consume-once on the VPS side.
+ * Returns: { ok, data: { pending: bool, discordId, minecraftUser, serverHost } }
+ */
+async function getFreshSmpSpawnedFromVps(discordId, minecraftUser) {
+  return vpsRequest("GET", `/freshsmp/spawned/${encodeURIComponent(discordId)}/${encodeURIComponent(minecraftUser)}`);
+}
+
+/**
+ * Send the selected FreshSMP gamemode to the VPS so the bot sends /queue.
+ * @param {string} discordId
+ * @param {string} minecraftUser
+ * @param {string} gamemode — "survival" | "lifesteal" | "skywars"
+ */
+async function sendFreshSmpGamemodeToVps(discordId, minecraftUser, gamemode) {
+  return vpsRequest("POST", "/freshsmp/gamemode", { discordId, minecraftUser, gamemode });
+}
+
 module.exports = {
   validateMember,
   findOwnerByMinecraftUser,
@@ -284,4 +303,6 @@ module.exports = {
   getDeviceCodeFromVps,
   clearDeviceCodeOnVps,
   getEndedBotsFromVps,
+  getFreshSmpSpawnedFromVps,
+  sendFreshSmpGamemodeToVps,
 };

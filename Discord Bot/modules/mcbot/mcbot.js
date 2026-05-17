@@ -45,6 +45,8 @@ const {
   stopAllBotsOnVps,
   getDeviceCodeFromVps,
   clearDeviceCodeOnVps,
+  getFreshSmpSpawnedFromVps,
+  sendFreshSmpGamemodeToVps,
 } = require("./mcbotlogic");
 
 const { readClans } = require("../clantracking/clanlogic");
@@ -82,15 +84,28 @@ const BOT_START_POLL_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const SERVER_VERSION_MAP = {
   "donutsmp.net":       "auto",
   "elementalmc.live":   "auto",
+  "freshsmp.fun":       "1.21.11",
+  "freshsmp.net":       "1.21.11",
 };
 const DEFAULT_VERSION = "1.21.4";
 
 // ============================================================
+// FRESHSMP DETECTION
+// ============================================================
+const FRESHSMP_HOST_PATTERNS = ["freshsmp.fun", "freshsmp.net", "freshsmp", "elementalmc.live", "play.elementalmc.live"];
+
+function isFreshSmpServer(serverAddress) {
+  if (!serverAddress) return false;
+  const lower = serverAddress.toLowerCase();
+  return FRESHSMP_HOST_PATTERNS.some(p => lower.includes(p));
+}
+
+// Valid FreshSMP gamemodes shown in the selector DM
+const FRESHSMP_GAMEMODES = ["survival", "lifesteal", "skywars"];
+
+// ============================================================
 // DONUTSMP DETECTION
 // DonutSMP has a security/verification screen on new logins.
-// The VPS botmanager handles silent reconnects, but we need
-// to know when to show a "verifying..." status vs "online" in
-// the Discord poll loop, and show appropriate error messages.
 // ============================================================
 const DONUTSMP_HOST_PATTERNS = ["donutsmp.net", "donutsmp"];
 
@@ -101,9 +116,6 @@ function isDonutSmpServer(serverAddress) {
 }
 
 // How long to consider a DonutSMP bot "pending verification" after first login
-// before treating a reconnect as a genuine stable connection.
-// The VPS retries up to 5 times with 8s delay each = ~40s max.
-// We give the poll loop 60s extra patience for DonutSMP.
 const DONUTSMP_VERIFICATION_GRACE_MS = 60 * 1000;
 
 // Pending DM confirmations: userId -> confirmation data
@@ -262,6 +274,30 @@ function buildConfirmRow(userId, disabled = false) {
   );
 }
 
+/**
+ * Build the FreshSMP gamemode selector action row sent via DM.
+ * customId format: freshsmp_gm_<userId>_<gamemode>
+ */
+function buildFreshSmpGamemodeRow(userId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`freshsmp_gm_${userId}_survival`)
+      .setLabel("⚔️ Survival")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`freshsmp_gm_${userId}_lifesteal`)
+      .setLabel("❤️ Lifesteal")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`freshsmp_gm_${userId}_skywars`)
+      .setLabel("🌤️ SkyWars")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled)
+  );
+}
+
 function tierBadge(tier) {
   const badges = { standard: "🔵 Standard", premium: "🟣 Premium", vip: "👑 VIP", none: "⚫ None" };
   return badges[tier] || tier;
@@ -293,7 +329,7 @@ module.exports = {
         .setDescription("Start a Minecraft bot on a server")
         .addStringOption(opt =>
           opt.setName("server")
-             .setDescription("Server address (e.g. play.elementalmc.live or donutsmp.net)")
+             .setDescription("Server address (e.g. play.freshsmp.fun, play.elementalmc.live or donutsmp.net)")
              .setRequired(true)
         )
         .addStringOption(opt =>
@@ -557,7 +593,7 @@ module.exports = {
           {
             name: "⚡ Features",
             value: [
-              "• Supports **DonutSMP**, **ElementalMC**, FreshSMP, Hypixel & vanilla servers",
+              "• Supports **FreshSMP**, **DonutSMP**, **ElementalMC**, Hypixel & vanilla servers",
               "• Auto-reconnects if kicked",
               "• Automatically eats food — bot won't starve",
               "• Microsoft account auth — fully secure",
@@ -569,6 +605,7 @@ module.exports = {
           {
             name: "🌐 Supported Servers",
             value: [
+              "• `play.freshsmp.fun` — FreshSMP",
               "• `play.elementalmc.live` — ElementalMC",
               "• `donutsmp.net` — DonutSMP",
               "• `hypixel.net` — Hypixel",
@@ -616,7 +653,7 @@ module.exports = {
 
       if (!serverAddress || serverAddress.length < 3) {
         return interaction.editReply({
-          embeds: [errorEmbed("Invalid Server Address", "Please provide a valid server address.\nExample: `play.elementalmc.live` or `donutsmp.net`")],
+          embeds: [errorEmbed("Invalid Server Address", "Please provide a valid server address.\nExample: `play.freshsmp.fun`, `play.elementalmc.live` or `donutsmp.net`")],
         });
       }
 
@@ -881,6 +918,72 @@ module.exports = {
       });
     }
 
+    // ── FreshSMP gamemode selection buttons ───────────────────
+    // customId: freshsmp_gm_<userId>_<gamemode>
+    if (customId.startsWith("freshsmp_gm_")) {
+      const parts = customId.split("_");
+      // format: freshsmp_gm_<userId>_<gamemode>
+      // parts: ["freshsmp", "gm", ...userId parts..., gamemode]
+      // userId may contain underscores? No — Discord IDs are numeric only.
+      // So: parts[2] = userId, parts[3] = gamemode
+      const buttonUserId = parts[2];
+      const gamemode = parts[3];
+
+      if (buttonUserId !== userId) {
+        return interaction.reply({ content: "❌ This button is not for you.", ephemeral: true });
+      }
+
+      const pending = pendingFreshSmpGamemode.get(userId);
+      if (!pending) {
+        return interaction.reply({
+          content: "⚠️ This gamemode selector has already been handled or has expired.",
+          ephemeral: true,
+        });
+      }
+
+      // Validate gamemode
+      if (!FRESHSMP_GAMEMODES.includes(gamemode)) {
+        return interaction.reply({ content: "❌ Unknown gamemode selected.", ephemeral: true });
+      }
+
+      // Disable the buttons so the user can't click again
+      try {
+        await interaction.update({
+          embeds: [new EmbedBuilder()
+            .setTitle("🟢 Gamemode Selected")
+            .setDescription(
+              `You selected **${gamemode.charAt(0).toUpperCase() + gamemode.slice(1)}**.\n\n` +
+              `Sending your bot to the \`/queue ${gamemode}\` server now...`
+            )
+            .setColor(0x00c853)
+            .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+            .setTimestamp()],
+          components: [buildFreshSmpGamemodeRow(userId, true)],
+        });
+      } catch (err) {
+        console.error(`[/mcbot] ❌ Could not update FreshSMP gamemode selector for ${userId}:`, err.message);
+      }
+
+      // Send the selection to the VPS
+      const { minecraftUser } = pending;
+      pendingFreshSmpGamemode.delete(userId);
+
+      console.log(`[/mcbot] 🟢 [FreshSMP] ${userId} selected gamemode: ${gamemode} for ${minecraftUser}`);
+
+      const result = await sendFreshSmpGamemodeToVps(userId, minecraftUser, gamemode);
+      if (!result.ok) {
+        console.error(`[/mcbot] ❌ [FreshSMP] Failed to send gamemode to VPS for ${userId}/${minecraftUser}:`, result.data);
+        try {
+          await interaction.followUp({
+            content: `⚠️ Could not send gamemode selection to the VPS. The bot may have disconnected.\nUse \`/mcbot status\` to check, or \`/mcbot start play.freshsmp.fun\` to try again.`,
+            ephemeral: true,
+          });
+        } catch {}
+      }
+      return;
+    }
+
+    // ── Confirm / Reject buttons ──────────────────────────────
     const isConfirm = customId.startsWith("mcbot_confirm_");
     const isReject  = customId.startsWith("mcbot_reject_");
 
@@ -923,19 +1026,26 @@ module.exports = {
     // ── Confirmed — start the bot
     console.log(`[/mcbot] ✅ Bot start confirmed by ${userId} — starting ${pending.minecraftUser} on ${pending.serverAddress}`);
 
-    // Show appropriate starting message — note DonutSMP needs extra patience
     const isDonutSmp = isDonutSmpServer(pending.serverAddress);
-    const startingDesc = isDonutSmp
-      ? (
-          `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
-          "⚠️ **DonutSMP Note:** Due to DonutSMP's security features, the bot may need to reconnect 1-2 times before fully joining. " +
-          "This is normal and automatic — please wait up to 60 seconds.\n\n" +
-          "If Microsoft authentication is required, you'll receive a sign-in code here shortly."
-        )
-      : (
-          `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
-          "If Microsoft authentication is required, you'll receive a sign-in code here shortly."
-        );
+    const isFreshSmp = isFreshSmpServer(pending.serverAddress);
+
+    let startingDesc;
+    if (isFreshSmp) {
+      startingDesc =
+        `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
+        "🟢 **FreshSMP Note:** Once the bot connects to the lobby, you'll receive a DM here asking you to pick a gamemode (Survival / Lifesteal / SkyWars).\n\n" +
+        "If Microsoft authentication is required, you'll receive a sign-in code here shortly.";
+    } else if (isDonutSmp) {
+      startingDesc =
+        `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
+        "⚠️ **DonutSMP Note:** Due to DonutSMP's security features, the bot may need to reconnect 1-2 times before fully joining. " +
+        "This is normal and automatic — please wait up to 60 seconds.\n\n" +
+        "If Microsoft authentication is required, you'll receive a sign-in code here shortly.";
+    } else {
+      startingDesc =
+        `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\n\n` +
+        "If Microsoft authentication is required, you'll receive a sign-in code here shortly.";
+    }
 
     await interaction.update({
       embeds: [new EmbedBuilder()
@@ -953,7 +1063,8 @@ module.exports = {
           .setTitle("🚀 Bot Starting")
           .setDescription(
             `Starting bot for \`${pending.minecraftUser}\` on \`${pending.serverAddress}\`.\nCheck your DMs for updates.` +
-            (isDonutSmp ? "\n\n⚠️ DonutSMP may require an extra moment to verify — this is automatic." : "")
+            (isDonutSmp ? "\n\n⚠️ DonutSMP may require an extra moment to verify — this is automatic." : "") +
+            (isFreshSmp ? "\n\n🟢 FreshSMP will ask you to select a gamemode in your DMs once the bot is in the lobby." : "")
           )
           .setColor(0x2196f3)
           .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -983,9 +1094,24 @@ module.exports = {
       return;
     }
 
-    await pollBotStartOutcome(userId, pending.minecraftUser, pending.serverAddress, pending.dmChannel, interaction.message);
+    await pollBotStartOutcome(
+      userId,
+      pending.minecraftUser,
+      pending.serverAddress,
+      pending.dmChannel,
+      interaction.message,
+      isFreshSmp,
+    );
   },
 };
+
+// ============================================================
+// FRESHSMP PENDING GAMEMODE SELECTOR
+// Map<userId, { minecraftUser, selectorMessage }>
+// Populated by pollBotStartOutcome when the bot reaches the lobby.
+// Consumed by the freshsmp_gm_ button handler above.
+// ============================================================
+const pendingFreshSmpGamemode = new Map();
 
 // ============================================================
 // SLOT SUBCOMMAND HANDLER
@@ -1217,33 +1343,34 @@ async function _handleSlotAdmin(interaction, sub) {
 // ============================================================
 // BOT START OUTCOME POLLING
 //
-// Key change for DonutSMP: the bot may go online → reconnecting
-// several times as it works through the verification screen.
-// We treat "reconnecting" as a non-failure for DonutSMP during
-// the verification grace period, and only report "online" once
-// the bot has been stable for at least STABLE_ONLINE_THRESHOLD_MS.
+// For FreshSMP: once the bot reaches "online", we check the VPS
+// for the freshsmp/spawned notification, then DM the user a
+// gamemode selector. The bot stays connected while the user picks.
+//
+// For DonutSMP: the bot may go online → reconnecting several times
+// during the verification grace period.
 // ============================================================
 
 const STABLE_ONLINE_THRESHOLD_MS = 10 * 1000; // bot must stay online 10s to be "confirmed"
 
-async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmChannel, confirmMessage) {
+async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmChannel, confirmMessage, isFreshSmp = false) {
   const deadline     = Date.now() + BOT_START_POLL_DURATION_MS;
   const pollInterval = 3000;
   let lastCodeShown  = null;
   const isDonutSmp   = isDonutSmpServer(serverAddress);
 
-  // Track when bot first went online so we can apply stability check
-  let firstOnlineAt        = null;
-  let shownVerifyingMsg    = false; // shown the "verifying..." DM update once
-  const verificationGraceEnd = isDonutSmp ? Date.now() + DONUTSMP_VERIFICATION_GRACE_MS : 0;
+  // Re-derive isFreshSmp in case caller didn't pass it (backwards safety)
+  if (!isFreshSmp) isFreshSmp = isFreshSmpServer(serverAddress);
 
-  // Track consecutive 404s — if the bot disappears from VPS without ever
-  // going stable-online, we need to stop and report an error rather than
-  // loop forever. Allow a few misses in case of a brief reconnect gap.
+  let firstOnlineAt           = null;
+  let shownVerifyingMsg       = false;
+  let freshSmpGamemodeAsked   = false; // have we sent the gamemode selector DM?
+  const verificationGraceEnd  = isDonutSmp ? Date.now() + DONUTSMP_VERIFICATION_GRACE_MS : 0;
+
   let consecutiveMisses = 0;
   const MAX_CONSECUTIVE_MISSES = 4; // ~12 seconds of no bot on VPS
 
-  console.log(`[/mcbot poll] 🔄 Starting poll for ${discordId}/${minecraftUser} — DonutSMP: ${isDonutSmp}`);
+  console.log(`[/mcbot poll] 🔄 Starting poll for ${discordId}/${minecraftUser} — DonutSMP: ${isDonutSmp} FreshSMP: ${isFreshSmp}`);
 
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, pollInterval));
@@ -1283,20 +1410,86 @@ async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmCh
       console.error(`[/mcbot poll] ❌ Device code poll error for ${discordId}/${minecraftUser}:`, err.message);
     }
 
+    // ── FreshSMP: check for spawned notification ───────────────
+    // Once the VPS fires onFreshSmpSpawned we get a consume-once
+    // response here. We send the gamemode selector DM and register
+    // the pending entry so the button handler can forward the choice.
+    if (isFreshSmp && !freshSmpGamemodeAsked) {
+      try {
+        const spawnedRes = await getFreshSmpSpawnedFromVps(discordId, minecraftUser);
+        if (spawnedRes.ok && spawnedRes.data?.pending) {
+          freshSmpGamemodeAsked = true;
+          console.log(`[/mcbot poll] 🟢 [FreshSMP] Bot in lobby — sending gamemode selector DM to ${discordId}`);
+
+          // Register pending entry BEFORE sending the DM so the button
+          // handler never has a window where it can't find the entry.
+          pendingFreshSmpGamemode.set(discordId, { minecraftUser });
+
+          try {
+            const selectorMsg = await dmChannel.send({
+              embeds: [new EmbedBuilder()
+                .setTitle("🟢 FreshSMP — Choose Your Gamemode")
+                .setDescription(
+                  `Your bot (\`${minecraftUser}\`) has joined the **FreshSMP** lobby!\n\n` +
+                  "Pick a gamemode below and the bot will queue up automatically."
+                )
+                .addFields(
+                  { name: "⚔️ Survival",  value: "Classic survival SMP",    inline: true },
+                  { name: "❤️ Lifesteal", value: "Hearts at stake PvP SMP", inline: true },
+                  { name: "🌤️ SkyWars",  value: "Competitive SkyWars",      inline: true },
+                )
+                .setColor(0x00c853)
+                .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+                .setTimestamp()],
+              components: [buildFreshSmpGamemodeRow(discordId)],
+            });
+
+            // Store the selector message ref so we can update it later if needed
+            pendingFreshSmpGamemode.set(discordId, { minecraftUser, selectorMessage: selectorMsg });
+
+            // Update the confirm DM to reflect that the bot is online & waiting
+            try {
+              await confirmMessage.edit({
+                embeds: [new EmbedBuilder()
+                  .setTitle("🟢 Bot Online — Waiting for Gamemode")
+                  .setDescription(
+                    `Your bot (\`${minecraftUser}\`) is in the **FreshSMP** lobby.\n\n` +
+                    "Check your DMs — you've been sent a gamemode selector."
+                  )
+                  .setColor(0x00c853)
+                  .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
+                  .setTimestamp()],
+              });
+            } catch {}
+
+          } catch (dmErr) {
+            console.error(`[/mcbot poll] ❌ Failed to send FreshSMP gamemode selector DM to ${discordId}:`, dmErr.message);
+            // Clean up the pending entry if we failed to send the DM
+            pendingFreshSmpGamemode.delete(discordId);
+          }
+
+          // For FreshSMP, once we've sent the gamemode selector we're done
+          // with the poll loop — the bot is online, user picks via button.
+          return;
+        }
+      } catch (err) {
+        console.error(`[/mcbot poll] ❌ FreshSMP spawned poll error for ${discordId}/${minecraftUser}:`, err.message);
+      }
+    }
+
     // ── Status polling ─────────────────────────────────────────
     try {
       const statusRes = await getBotStatusFromVps(discordId, minecraftUser);
 
       if (!statusRes.ok) {
-        // Bot not found on VPS (404) — could be between reconnect attempts
         consecutiveMisses++;
         console.log(`[/mcbot poll] ⚠️ Bot not found on VPS (miss ${consecutiveMisses}/${MAX_CONSECUTIVE_MISSES}) for ${discordId}/${minecraftUser}`);
 
-        // For DonutSMP, be more lenient — the bot cycles through reconnects and
-        // may briefly not appear between spawns. Only bail after many misses.
         const effectiveMaxMisses = isDonutSmp
-          ? MAX_CONSECUTIVE_MISSES * 3  // up to ~36s of gaps allowed for DonutSMP
-          : MAX_CONSECUTIVE_MISSES;
+          ? MAX_CONSECUTIVE_MISSES * 3
+          : isFreshSmp
+            ? MAX_CONSECUTIVE_MISSES * 2 // FreshSMP may briefly vanish during login
+            : MAX_CONSECUTIVE_MISSES;
 
         if (consecutiveMisses >= effectiveMaxMisses) {
           console.warn(`[/mcbot poll] ❌ Bot gone from VPS after ${consecutiveMisses} consecutive misses — reporting error`);
@@ -1310,8 +1503,11 @@ async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmCh
                       "DonutSMP's security system may be requiring account verification. " +
                       "Please log into DonutSMP manually once to complete the verification, then try `/mcbot start` again.\n\n" +
                       "💡 If you have never logged into DonutSMP from this Minecraft account before, you need to do so first."
-                    : "The bot failed to start or was disconnected before fully connecting.\n\n" +
-                      "Use `/mcbot start` to try again. If this keeps happening, contact an admin."
+                    : isFreshSmp
+                      ? "The bot failed to connect to FreshSMP or was disconnected before reaching the lobby.\n\n" +
+                        "This can happen if the server is restarting or your account had a network blip. Use `/mcbot start play.freshsmp.fun` to try again."
+                      : "The bot failed to start or was disconnected before fully connecting.\n\n" +
+                        "Use `/mcbot start` to try again. If this keeps happening, contact an admin."
                 )
                 .setColor(0xf44336)
                 .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
@@ -1321,7 +1517,6 @@ async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmCh
           return;
         }
 
-        // For DonutSMP, show the "verifying" message on first miss so user isn't left in the dark
         if (isDonutSmp && !shownVerifyingMsg && consecutiveMisses === 1) {
           shownVerifyingMsg = true;
           try {
@@ -1388,7 +1583,14 @@ async function pollBotStartOutcome(discordId, minecraftUser, serverAddress, dmCh
           continue;
         }
 
-        // Confirmed stable — report success
+        // FreshSMP: if the bot is online but we haven't got the spawned
+        // notification yet, keep polling rather than declaring success —
+        // the spawned check at the top of the loop will handle it.
+        if (isFreshSmp && !freshSmpGamemodeAsked) {
+          continue;
+        }
+
+        // Confirmed stable online (non-FreshSMP, or FreshSMP already handled)
         console.log(`[/mcbot poll] ✅ Bot confirmed stable online for ${discordId}/${minecraftUser}`);
         try {
           await confirmMessage.edit({
@@ -1453,24 +1655,39 @@ function buildSingleStatusEmbed(bot) {
   const hints    = buildStatusHints(bot);
   const hintText = hints.length > 0 ? `\n\n💡 ${hints.join("\n💡 ")}` : "";
 
+  const fields = [
+    { name: "🎮 __Account__", value: `> \`${bot.minecraftUser}\``,                        inline: false },
+    { name: "📊 __Status__",  value: `> ${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
+    { name: "🌐 __Server__",  value: `> \`${bot.serverHost}\``,                           inline: false },
+    { name: "⏱️ __Uptime__",  value: `> \`${formatUptime(bot.uptimeSeconds ?? 0)}\``,     inline: false },
+  ];
+
+  // FreshSMP: show chosen gamemode if available
+  if (bot.isFreshSmp && bot.freshSmpGamemode) {
+    fields.push({
+      name:  "🎮 __Gamemode__",
+      value: `> \`${bot.freshSmpGamemode}\`${bot.freshSmpQueueSent ? " (queued)" : " (pending)"}`,
+      inline: false,
+    });
+  }
+
+  if (bot.spawnError) {
+    fields.push({ name: "⚠️ Error", value: bot.spawnError + hintText, inline: false });
+  }
+
   return new EmbedBuilder()
     .setTitle(`${getStatusEmoji(bot.status)} Bot Status — ${bot.minecraftUser}`)
-    .addFields(
-      { name: "🎮 __Account__", value: `> \`${bot.minecraftUser}\``,                        inline: false },
-      { name: "📊 __Status__",  value: `> ${getStatusEmoji(bot.status)} \`${bot.status}\``, inline: false },
-      { name: "🌐 __Server__",  value: `> \`${bot.serverHost}\``,                           inline: false },
-      { name: "⏱️ __Uptime__",  value: `> \`${formatUptime(bot.uptimeSeconds ?? 0)}\``,     inline: false },
-      ...(bot.spawnError ? [{ name: "⚠️ Error", value: bot.spawnError + hintText, inline: false }] : []),
-    )
+    .addFields(...fields)
     .setColor(getStatusColor(bot.status))
     .setFooter({ text: "Yazanaki Empire • VPS Bot Manager" })
     .setTimestamp();
 }
 
 function buildMultiStatusEmbed(bots) {
-  const lines = bots.map(b =>
-    `• \`${b.minecraftUser}\` → \`${b.serverHost}\` [${getStatusEmoji(b.status)}] ⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}`
-  );
+  const lines = bots.map(b => {
+    const gmSuffix = b.isFreshSmp && b.freshSmpGamemode ? ` [${b.freshSmpGamemode}]` : "";
+    return `• \`${b.minecraftUser}\` → \`${b.serverHost}\` [${getStatusEmoji(b.status)}] ⏱️ ${formatUptime(b.uptimeSeconds ?? 0)}${gmSuffix}`;
+  });
   return new EmbedBuilder()
     .setTitle(`🤖 Your Active Bots (${bots.length})`)
     .setDescription(lines.join("\n") + "\n\n*Use `/mcbot status account:<username>` for details on a specific bot.*")

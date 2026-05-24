@@ -179,12 +179,12 @@ function getTeamEmbedFields(summed, highlights = [], statEmojis = null) {
   const playtimeDisplay = formatPlaytime(playtimeMinutes);
 
   return [
-    { name: e("kills", "Kills"), value: `\`${summed.kills ?? 0}\``, inline: true },
-    { name: e("deaths", "Deaths"), value: `\`${summed.deaths ?? 0}\``, inline: true },
-    { name: e("money", "Money"), value: `\`${formatMoney(summed.money)}\``, inline: true },
-    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: true },
-    { name: e("shards", "Shards"), value: `\`${summed.shards ?? 0}\``, inline: true },
-    { name: e("mobs_killed", "Mobs killed"), value: `\`${summed.mobs_killed ?? 0}\``, inline: true }
+    { name: e("kills", "Kills"), value: `\`${summed.kills ?? 0}\``, inline: false },
+    { name: e("deaths", "Deaths"), value: `\`${summed.deaths ?? 0}\``, inline: false },
+    { name: e("money", "Money"), value: `\`${formatMoney(summed.money)}\``, inline: false },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: false },
+    { name: e("shards", "Shards"), value: `\`${summed.shards ?? 0}\``, inline: false },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${summed.mobs_killed ?? 0}\``, inline: false }
   ];
 }
 

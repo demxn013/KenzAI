@@ -208,19 +208,19 @@ function getPlayerEmbedFields(stats, lookup = null, statEmojis = null) {
   const playtimeDisplay = formatPlaytime(playtimeMins);
 
   return [
-    { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: true },
-    { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: true },
-    { name: e("money", "Money"), value: `\`${formatMoney(stats?.money)}\``, inline: true },
-    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: true },
-    { name: e("shards", "Shards"), value: `\`${safe(stats?.shards)}\``, inline: true },
+    { name: e("kills", "Kills"), value: `\`${safe(stats?.kills)}\``, inline: false },
+    { name: e("deaths", "Deaths"), value: `\`${safe(stats?.deaths)}\``, inline: false },
+    { name: e("money", "Money"), value: `\`${formatMoney(stats?.money)}\``, inline: false },
+    { name: e("playtime", "Playtime"), value: `\`${playtimeDisplay}\``, inline: false },
+    { name: e("shards", "Shards"), value: `\`${safe(stats?.shards)}\``, inline: false },
     {
       name: e("online", "Online"),
       value: lookup?.location ? `\`Online\` (${escapeDiscord(lookup.location)})` : "`Offline`",
-      inline: true
+      inline: false
     },
-    { name: e("broken_blocks", "Broken blocks"), value: `\`${safe(stats?.broken_blocks)}\``, inline: true },
-    { name: e("placed_blocks", "Placed blocks"), value: `\`${safe(stats?.placed_blocks)}\``, inline: true },
-    { name: e("mobs_killed", "Mobs killed"), value: `\`${safe(stats?.mobs_killed)}\``, inline: true }
+    { name: e("broken_blocks", "Broken blocks"), value: `\`${safe(stats?.broken_blocks)}\``, inline: false },
+    { name: e("placed_blocks", "Placed blocks"), value: `\`${safe(stats?.placed_blocks)}\``, inline: false },
+    { name: e("mobs_killed", "Mobs killed"), value: `\`${safe(stats?.mobs_killed)}\``, inline: false }
   ];
 }
 

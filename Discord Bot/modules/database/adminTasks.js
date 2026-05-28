@@ -1,3 +1,6 @@
+// modules/database/adminTasks.js
+// Admin-only DB tasks: migrate (001 legacy or 002 flat schema), backfill, parity.
+
 const fs = require("fs");
 const path = require("path");
 
@@ -31,12 +34,17 @@ function readJsonSafe(rel) {
   }
 }
 
+/**
+ * Merge members.json + linking.json + applicants.json into a unified users map.
+ * Linking / applicant entries that have no members.json counterpart get a
+ * lightweight stub so that their discord↔MC link is preserved.
+ */
 function buildUnifiedUsers(members, linking, applicants) {
   const map = { ...(members && typeof members === "object" ? members : {}) };
 
   const addLightweight = (discordId, mcName) => {
     const id = String(discordId);
-    if (map[id]) return;
+    if (map[id]) return; // don't overwrite real member data
     map[id] = {
       discordId: id,
       minecraftUser: mcName || "",
@@ -67,12 +75,11 @@ function buildUnifiedUsers(members, linking, applicants) {
 async function ensurePoolReady() {
   assertMysqlEnabled();
 
-  // mysql2 is required only when enabled; provide a clearer error.
   try {
     await mysqlPool.createPool();
   } catch (e) {
-    if (String(e?.message || "").includes("Cannot find module 'mysql2")) {
-      throw new Error("mysql2 dependency missing. Install mysql2 in the Discord Bot project.");
+    if (String(e?.message || "").includes("Cannot find module 'mysql2'")) {
+      throw new Error("mysql2 dependency missing. Run: npm install mysql2");
     }
     throw e;
   }
@@ -81,23 +88,35 @@ async function ensurePoolReady() {
   if (!ping.ok) throw new Error(`MySQL unreachable (${ping.reason || "unknown"})`);
 }
 
+// ---------------------------------------------------------------------------
+// MIGRATE — runs the latest migration file (002_flat_schema.sql preferred,
+//            falls back to 001_initial.sql if 002 is not present)
+// ---------------------------------------------------------------------------
 async function runMigrations() {
   assertMysqlEnabled();
   let mysql;
   try {
     mysql = require("mysql2/promise");
   } catch {
-    throw new Error("mysql2 dependency missing. Install mysql2 in the Discord Bot project.");
+    throw new Error("mysql2 dependency missing. Run: npm install mysql2");
   }
 
-  const sqlPath = path.join(migrationsDir, "001_initial.sql");
+  // Prefer 002, fall back to 001
+  const candidates = ["002_flat_schema.sql", "001_initial.sql"];
+  let sqlPath = null;
+  for (const name of candidates) {
+    const p = path.join(migrationsDir, name);
+    if (fs.existsSync(p)) { sqlPath = p; break; }
+  }
+  if (!sqlPath) throw new Error("No migration file found in migrations/");
+
   const sql = fs.readFileSync(sqlPath, "utf8");
   const conn = await mysql.createConnection({
-    host: dbConfig.host,
-    port: dbConfig.port,
-    user: dbConfig.user,
-    password: dbConfig.password,
-    database: dbConfig.database,
+    host:               dbConfig.host,
+    port:               dbConfig.port,
+    user:               dbConfig.user,
+    password:           dbConfig.password,
+    database:           dbConfig.database,
     multipleStatements: true,
   });
   try {
@@ -108,49 +127,65 @@ async function runMigrations() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// BACKFILL — populate MySQL from all JSON files
+// ---------------------------------------------------------------------------
 async function runBackfill() {
   await ensurePoolReady();
 
-  const members = readJsonSafe("members.json");
-  const clans = readJsonSafe("clans.json");
-  const empireIds = readJsonSafe("empireids.json");
-  const linking = readJsonSafe("linking.json");
+  const members    = readJsonSafe("members.json");
+  const clans      = readJsonSafe("clans.json");
+  const empireIds  = readJsonSafe("empireids.json");
+  const linking    = readJsonSafe("linking.json");
   const applicants = readJsonSafe("applicants.json");
 
   const usersMap = buildUnifiedUsers(members, linking, applicants);
 
+  // --- members / users ---
   await userRepo.replaceAllUsers(usersMap);
-  await clanRepo.replaceAllClans(clans);
+  console.log(`[db-admin] ✅ Backfilled ${Object.keys(usersMap).length} members`);
 
+  // --- clans ---
+  await clanRepo.replaceAllClans(clans);
+  console.log(`[db-admin] ✅ Backfilled ${Object.keys(clans).length} clans`);
+
+  // --- empire registry ---
   if (empireIds && typeof empireIds.ids === "object") {
     await empireRepo.saveRegistryState({
       nextNumber: typeof empireIds.nextNumber === "number" ? empireIds.nextNumber : 14,
       ids: empireIds.ids,
     });
+    console.log(`[db-admin] ✅ Backfilled ${Object.keys(empireIds.ids).length} empire IDs`);
   }
 
   return {
     ok: true,
-    users: Object.keys(usersMap).length,
-    clans: Object.keys(clans || {}).length,
+    users:     Object.keys(usersMap).length,
+    clans:     Object.keys(clans || {}).length,
     empireIds: Object.keys((empireIds && empireIds.ids) || {}).length,
   };
 }
 
+// ---------------------------------------------------------------------------
+// PARITY — quick sanity check between JSON and MySQL counts
+// ---------------------------------------------------------------------------
 async function parityCounts() {
   await ensurePoolReady();
+
   const [uSql, cSql] = await Promise.all([
     userRepo.loadAllUsersAsMap(),
     clanRepo.loadAllClansAsMap(),
   ]);
+
   const members = readJsonSafe("members.json");
-  const clans = readJsonSafe("clans.json");
+  const clans   = readJsonSafe("clans.json");
+
   return {
-    ok: true,
+    ok:          true,
     jsonMembers: Object.keys(members || {}).length,
-    sqlUsers: Object.keys(uSql || {}).length,
-    jsonClans: Object.keys(clans || {}).length,
-    sqlClans: Object.keys(cSql || {}).length,
+    sqlUsers:    Object.keys(uSql    || {}).length,
+    jsonClans:   Object.keys(clans   || {}).length,
+    sqlClans:    Object.keys(cSql    || {}).length,
   };
 }
 
@@ -159,4 +194,3 @@ module.exports = {
   runBackfill,
   parityCounts,
 };
-

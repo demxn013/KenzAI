@@ -1,25 +1,3 @@
-Assistant/start_kenzai_silent.bat
-Assistant/start_kenzai.bat
-Assistant/uninstall.py
-Assistant/__pycache__/launcher.cpython-314.pyc
-Assistant/utils/__pycache__/
-Assistant/interfaces/__pycache__/porcupine_wake.cpython-311.pyc
-Assistant/interfaces/__pycache__/vad_voice.cpython-311.pyc
-Assistant/data/logs/kenzai.log
-Assistant/core/__pycache__/assistant.cpython-311.pyc
-Assistant/core/__pycache__/conversation.cpython-311.pyc
-Assistant/core/__pycache__/__init__.cpython-311.pyc
-Assistant/core/__pycache__/greeting_system.cpython-311.pyc
-Assistant/core/__pycache__/model_manager.cpython-311.pyc
-Assistant/core/__pycache__/personality.cpython-311.pyc
-Assistant/core/__pycache__/topic_manager.cpython-311.pyc
-Assistant/interfaces/__pycache__/gui.cpython-311.pyc
-Assistant/config/user_preferences.json
-Assistant/interfaces/__pycache__/voice.cpython-311.pyc
-Assistant/memory/local_owner/general.db
-Assistant/memory/local_owner/elementalmc.db
-Assistant/memory/local_owner/yazanaki.db
-Assistant/models/vosk/
 Discord Bot/modules.zip
 Discord Bot/.env
 Discord Bot/modules/modules.zip

@@ -1,3 +1,8 @@
+// modules/database/empireRegistryPersistence.js
+// Persistence layer for empire IDs.
+// JSON is always the source of truth for reads unless DB_READ_EMPIRE_REGISTRY=mysql.
+// MySQL writes use the flat `empire_ids` + `empire_id_counters` tables from migration 002.
+
 const fs = require("fs");
 const path = require("path");
 const config = require("./dbConfig");

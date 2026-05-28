@@ -1,3 +1,8 @@
+// modules/database/clansPersistence.js
+// Persistence layer for clans data.
+// JSON is always the source of truth for reads unless DB_READ_CLANS=mysql.
+// MySQL writes use the flat `clans` table from migration 002.
+
 const fs = require("fs");
 const path = require("path");
 const config = require("./dbConfig");
@@ -49,12 +54,51 @@ function shouldSyncMysql() {
   );
 }
 
-function scheduleMysqlClans(map) {
+/**
+ * Diff old vs new clans map and sync only changed rows.
+ */
+function scheduleMysqlSync(newMap) {
   if (!shouldSyncMysql()) return;
-  const snapshot = JSON.parse(JSON.stringify(map));
-  clanRepository
-    .replaceAllClans(snapshot)
-    .catch((err) => console.error("[clansPersistence] ❌ MySQL replaceAllClans:", err.message));
+
+  const snapshot = JSON.parse(JSON.stringify(newMap || {}));
+
+  setImmediate(async () => {
+    try {
+      const pool = mysqlPool.getPool();
+      if (!pool) return;
+
+      const oldIds = new Set(Object.keys(memoryClansMap || {}));
+      const newIds = new Set(Object.keys(snapshot));
+
+      // Upsert new / changed clans
+      for (const id of newIds) {
+        await clanRepository.upsertClan(id, snapshot[id]).catch(err =>
+          console.error(`[clansPersistence] ❌ MySQL upsert clan ${id}:`, err.message)
+        );
+      }
+
+      // Remove deleted clans
+      const removed = [...oldIds].filter(id => !newIds.has(id));
+      if (removed.length > 0) {
+        const pool2 = mysqlPool.getPool();
+        if (pool2) {
+          const ph = removed.map(() => "?").join(", ");
+          await pool2.execute(
+            `DELETE FROM clans WHERE guild_id IN (${ph})`,
+            removed
+          ).catch(err =>
+            console.error(`[clansPersistence] ❌ MySQL delete clans:`, err.message)
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[clansPersistence] ❌ MySQL sync error:", err.message);
+      // Last-resort full replace
+      clanRepository.replaceAllClans(snapshot).catch(e =>
+        console.error("[clansPersistence] ❌ MySQL replaceAllClans fallback:", e.message)
+      );
+    }
+  });
 }
 
 function readClans() {
@@ -70,7 +114,7 @@ function readClans() {
 function writeClans(data) {
   memoryClansMap = JSON.parse(JSON.stringify(data || {}));
   writeClansToDisk(memoryClansMap);
-  scheduleMysqlClans(memoryClansMap);
+  scheduleMysqlSync(memoryClansMap);
 }
 
 async function hydrateClansFromMysql() {

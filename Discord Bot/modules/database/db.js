@@ -1,5 +1,5 @@
 // modules/database/db.js
-// Admin-only DB tasks (migrate/backfill/parity) for shared hosting without terminal access.
+// Admin-only DB tasks (migrate / backfill / parity) for shared hosting without terminal access.
 
 const { SlashCommandBuilder, PermissionsBitField } = require("discord.js");
 const tasks = require("./adminTasks");
@@ -16,15 +16,19 @@ module.exports = {
     .setName("db")
     .setDescription("Admin-only MySQL maintenance commands")
     .addSubcommand((sub) =>
-      sub.setName("migrate").setDescription("Apply MySQL schema migrations")
+      sub
+        .setName("migrate")
+        .setDescription("Apply MySQL schema migrations (runs 002_flat_schema.sql)")
     )
     .addSubcommand((sub) =>
-      sub.setName("backfill").setDescription("Backfill JSON data into MySQL")
+      sub
+        .setName("backfill")
+        .setDescription("Backfill all JSON data into MySQL (members, clans, empire IDs)")
     )
     .addSubcommand((sub) =>
       sub
         .setName("parity")
-        .setDescription("Compare JSON vs MySQL counts (quick sanity check)")
+        .setDescription("Compare JSON vs MySQL row counts (quick sanity check)")
     ),
 
   async execute(interaction) {
@@ -48,28 +52,46 @@ module.exports = {
     try {
       if (!dbConfig.mysqlEnabled) {
         return interaction.editReply(
-          "❌ MySQL is disabled. Set `MYSQL_ENABLED=true` and `DB_*` credentials in `.env`."
+          "❌ MySQL is disabled.\n\n" +
+          "Set `MYSQL_ENABLED=true` and the following in `.env`:\n" +
+          "```\n" +
+          "MYSQL_ENABLED=true\n" +
+          "DB_HOST=your_host\n" +
+          "DB_PORT=3306\n" +
+          "DB_USER=your_user\n" +
+          "DB_PASSWORD=your_password\n" +
+          "DB_NAME=your_database\n" +
+          "```"
         );
       }
 
       if (sub === "migrate") {
         const res = await tasks.runMigrations();
         return interaction.editReply(
-          `✅ Migrations applied: ${res.applied.join(", ")}`
+          `✅ **Migration complete**\nApplied: \`${res.applied.join(", ")}\`\n\n` +
+          `Next step: run \`/db backfill\` to populate MySQL from JSON.`
         );
       }
 
       if (sub === "backfill") {
         const res = await tasks.runBackfill();
         return interaction.editReply(
-          `✅ Backfill complete.\n- users: ${res.users}\n- clans: ${res.clans}\n- empireIds: ${res.empireIds}`
+          `✅ **Backfill complete**\n` +
+          `- Members: \`${res.users}\`\n` +
+          `- Clans: \`${res.clans}\`\n` +
+          `- Empire IDs: \`${res.empireIds}\`\n\n` +
+          `Run \`/db parity\` to verify counts match.`
         );
       }
 
       if (sub === "parity") {
         const res = await tasks.parityCounts();
+        const membersMatch = res.jsonMembers === res.sqlUsers ? "✅" : "⚠️";
+        const clansMatch   = res.jsonClans   === res.sqlClans  ? "✅" : "⚠️";
         return interaction.editReply(
-          `📊 Parity counts:\n- JSON members: ${res.jsonMembers}\n- SQL users: ${res.sqlUsers}\n- JSON clans: ${res.jsonClans}\n- SQL clans: ${res.sqlClans}`
+          `📊 **Parity Check**\n` +
+          `${membersMatch} Members — JSON: \`${res.jsonMembers}\` | MySQL: \`${res.sqlUsers}\`\n` +
+          `${clansMatch} Clans — JSON: \`${res.jsonClans}\` | MySQL: \`${res.sqlClans}\``
         );
       }
 
@@ -84,4 +106,3 @@ module.exports = {
     }
   },
 };
-

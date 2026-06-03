@@ -36,13 +36,16 @@ module.exports = {
     const client = interaction.client;
 
     // ----------------------------------------------------------
-    // DM BUTTONS — mcbot confirm/reject (must be first)
+    // DM BUTTONS — mcbot confirm/reject/freshsmp gamemode
     // These arrive from DMs where interaction.guild is null.
+    // ALL mcbot DM buttons must start with "mcbot_" and be listed
+    // here so they are forwarded to the mcbot buttonHandler.
     // ----------------------------------------------------------
     if (
       interaction.isButton() &&
       (interaction.customId.startsWith("mcbot_confirm_") ||
-        interaction.customId.startsWith("mcbot_reject_"))
+        interaction.customId.startsWith("mcbot_reject_") ||
+        interaction.customId.startsWith("mcbot_freshsmp_gm_"))
     ) {
       console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[interactionCreate] 📬 DM button: ${interaction.customId} from ${interaction.user.tag}`);

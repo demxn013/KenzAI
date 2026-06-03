@@ -276,22 +276,25 @@ function buildConfirmRow(userId, disabled = false) {
 
 /**
  * Build the FreshSMP gamemode selector action row sent via DM.
- * customId format: freshsmp_gm_<userId>_<gamemode>
+ * customId format: mcbot_freshsmp_gm_<userId>_<gamemode>
+ *
+ * NOTE: The prefix MUST start with "mcbot_" so that interactionCreate's
+ * DM button routing forwards it to this command's buttonHandler.
  */
 function buildFreshSmpGamemodeRow(userId, disabled = false) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`freshsmp_gm_${userId}_survival`)
+      .setCustomId(`mcbot_freshsmp_gm_${userId}_survival`)
       .setLabel("⚔️ Survival")
       .setStyle(ButtonStyle.Success)
       .setDisabled(disabled),
     new ButtonBuilder()
-      .setCustomId(`freshsmp_gm_${userId}_lifesteal`)
+      .setCustomId(`mcbot_freshsmp_gm_${userId}_lifesteal`)
       .setLabel("❤️ Lifesteal")
       .setStyle(ButtonStyle.Danger)
       .setDisabled(disabled),
     new ButtonBuilder()
-      .setCustomId(`freshsmp_gm_${userId}_skywars`)
+      .setCustomId(`mcbot_freshsmp_gm_${userId}_skywars`)
       .setLabel("🌤️ SkyWars")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(disabled)
@@ -919,15 +922,24 @@ module.exports = {
     }
 
     // ── FreshSMP gamemode selection buttons ───────────────────
-    // customId: freshsmp_gm_<userId>_<gamemode>
-    if (customId.startsWith("freshsmp_gm_")) {
-      const parts = customId.split("_");
-      // format: freshsmp_gm_<userId>_<gamemode>
-      // parts: ["freshsmp", "gm", ...userId parts..., gamemode]
-      // userId may contain underscores? No — Discord IDs are numeric only.
-      // So: parts[2] = userId, parts[3] = gamemode
-      const buttonUserId = parts[2];
-      const gamemode = parts[3];
+    // customId: mcbot_freshsmp_gm_<userId>_<gamemode>
+    // Parts:    ["mcbot", "freshsmp", "gm", "<userId>", "<gamemode>"]
+    //                0         1       2       3              4
+    //
+    // NOTE: prefix is "mcbot_freshsmp_gm_" (starts with "mcbot_") so that
+    // interactionCreate's DM button router forwards it here correctly.
+    if (customId.startsWith("mcbot_freshsmp_gm_")) {
+      // Strip the known prefix and split the remainder on "_"
+      // remainder = "<userId>_<gamemode>" — Discord IDs are numeric (no underscores)
+      const remainder = customId.slice("mcbot_freshsmp_gm_".length); // e.g. "811255871472140328_survival"
+      const underscoreIdx = remainder.indexOf("_");
+
+      if (underscoreIdx === -1) {
+        return interaction.reply({ content: "❌ Malformed gamemode button ID.", ephemeral: true });
+      }
+
+      const buttonUserId = remainder.slice(0, underscoreIdx);
+      const gamemode     = remainder.slice(underscoreIdx + 1);
 
       if (buttonUserId !== userId) {
         return interaction.reply({ content: "❌ This button is not for you.", ephemeral: true });
@@ -1109,7 +1121,7 @@ module.exports = {
 // FRESHSMP PENDING GAMEMODE SELECTOR
 // Map<userId, { minecraftUser, selectorMessage }>
 // Populated by pollBotStartOutcome when the bot reaches the lobby.
-// Consumed by the freshsmp_gm_ button handler above.
+// Consumed by the mcbot_freshsmp_gm_ button handler above.
 // ============================================================
 const pendingFreshSmpGamemode = new Map();
 

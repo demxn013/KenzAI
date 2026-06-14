@@ -1,0 +1,262 @@
+// modules/clantracking/clanlogic.js
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
+const Jimp = require("jimp");
+const clansPersistence = require("../database/clansPersistence");
+
+const dataPath = clansPersistence.getClansPath();
+const flagsDir = path.join(__dirname, "../images/clanflags");
+
+// Ensure data file and directories exist
+function ensureDataFile() {
+  try {
+    const dir = path.dirname(dataPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, JSON.stringify({}, null, 2));
+    if (!fs.existsSync(flagsDir)) fs.mkdirSync(flagsDir, { recursive: true });
+  } catch (err) {
+    console.error("ensureDataFile error:", err);
+  }
+}
+
+// Read/write clans (JSON and/or MySQL per env).
+function readClans() {
+  ensureDataFile();
+  return clansPersistence.readClans();
+}
+
+function writeClans(data) {
+  ensureDataFile();
+  clansPersistence.writeClans(data);
+}
+
+/**
+ * ✅ NEW: Increment resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {boolean} Success status
+ */
+function incrementClanResidents(guildId) {
+  console.log(`[clanlogic] 📊 Incrementing residents for clan ${guildId}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    // Initialize residents if not present
+    if (typeof clan.residents !== 'number') {
+      clan.residents = 0;
+    }
+    
+    clan.residents += 1;
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error incrementing residents:`, err);
+    return false;
+  }
+}
+
+/**
+ * ✅ NEW: Decrement resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {boolean} Success status
+ */
+function decrementClanResidents(guildId) {
+  console.log(`[clanlogic] 📊 Decrementing residents for clan ${guildId}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    // Initialize residents if not present
+    if (typeof clan.residents !== 'number') {
+      clan.residents = 0;
+    }
+    
+    // Don't go below 0
+    if (clan.residents > 0) {
+      clan.residents -= 1;
+    }
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error decrementing residents:`, err);
+    return false;
+  }
+}
+
+/**
+ * ✅ NEW: Get resident count for a clan
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @returns {number} Number of residents (0 if not found or not set)
+ */
+function getClanResidents(guildId) {
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      return 0;
+    }
+    
+    return clan.residents || 0;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error getting residents:`, err);
+    return 0;
+  }
+}
+
+/**
+ * ✅ NEW: Set resident count for a clan (used for initialization)
+ * @param {string} guildId - Discord Guild ID of the clan
+ * @param {number} count - Number of residents
+ * @returns {boolean} Success status
+ */
+function setClanResidents(guildId, count) {
+  console.log(`[clanlogic] 📊 Setting residents for clan ${guildId} to ${count}`);
+  
+  try {
+    const clans = readClans();
+    const clan = clans[guildId];
+    
+    if (!clan) {
+      console.error(`[clanlogic] ❌ Clan ${guildId} not found`);
+      return false;
+    }
+    
+    clan.residents = Math.max(0, count); // Ensure non-negative
+    
+    writeClans(clans);
+    
+    console.log(`[clanlogic] ✅ ${clan.abbr} residents set to: ${clan.residents}`);
+    return true;
+    
+  } catch (err) {
+    console.error(`[clanlogic] ❌ Error setting residents:`, err);
+    return false;
+  }
+}
+
+// Flag file helpers
+function getFlagPath(abbr) {
+  if (!abbr) return null;
+  const file = `${abbr.toUpperCase()}.png`;
+  return path.join(flagsDir, file);
+}
+
+function flagExists(abbr) {
+  const p = getFlagPath(abbr);
+  return p && fs.existsSync(p);
+}
+
+async function saveFlagFromAttachment(abbr, attachment) {
+  if (!abbr || !attachment || !attachment.url) throw new Error("Missing abbr or attachment");
+  if (!attachment.name.toLowerCase().endsWith(".png")) throw new Error("Only PNG files are accepted for flags.");
+  ensureDataFile();
+  const dest = getFlagPath(abbr);
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(attachment.url, res => {
+      if (res.statusCode !== 200) { file.close(); fs.unlink(dest, () => {}); return reject(new Error(`Failed to download flag (${res.statusCode})`)); }
+      res.pipe(file);
+      file.on("finish", () => { file.close(); resolve(dest); });
+    }).on("error", err => { file.close(); fs.unlink(dest, () => {}); reject(err); });
+  });
+}
+
+function deleteFlag(abbr) {
+  const p = getFlagPath(abbr);
+  try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch (err) { console.error("deleteFlag error:", err); }
+}
+
+async function getDominantColor(source) {
+  try {
+    const image = await Jimp.read(source);
+    const maxDim = 128;
+    if (image.bitmap.width > maxDim || image.bitmap.height > maxDim) image.resize(maxDim, Jimp.AUTO);
+    const colorCount = {};
+    image.scan(0, 0, image.bitmap.width, image.bitmap.height, function (x, y, idx) {
+      const r = this.bitmap.data[idx];
+      const g = this.bitmap.data[idx + 1];
+      const b = this.bitmap.data[idx + 2];
+      const key = `${r},${g},${b}`;
+      colorCount[key] = (colorCount[key] || 0) + 1;
+    });
+    const entries = Object.entries(colorCount);
+    if (!entries.length) return 0x000000;
+    entries.sort((a, b) => b[1] - a[1]);
+    const [r, g, b] = entries[0][0].split(",").map(Number);
+    return (r << 16) + (g << 8) + b;
+  } catch (err) {
+    console.error("getDominantColor error:", err?.message || err);
+    return 0x000000;
+  }
+}
+
+/**
+ * Downloads the guild banner if it exists and is new.
+ * Saves to images/clanflags/<ABBR>.png and updates clans.json bannerURL.
+ * Returns the path to the downloaded banner file if successful, else null.
+ */
+async function updateBannerIfNew(guild, abbr) {
+  if (!guild || !abbr) return null;
+  const clans = readClans();
+  const clanEntry = Object.values(clans).find(c => c.abbr.toUpperCase() === abbr.toUpperCase());
+  if (!clanEntry) return null;
+  const bannerURL = guild.bannerURL({ size: 1024, extension: "png" });
+  if (!bannerURL) return null;
+
+  // Skip download if URL matches existing
+  if (clanEntry.bannerURL === bannerURL && flagExists(abbr)) return getFlagPath(abbr);
+
+  const dest = getFlagPath(abbr);
+  await new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(bannerURL, res => {
+      if (res.statusCode !== 200) { file.close(); fs.unlink(dest, () => {}); return reject(new Error(`Failed to download banner (${res.statusCode})`)); }
+      res.pipe(file);
+      file.on("finish", () => { file.close(); resolve(dest); });
+    }).on("error", err => { file.close(); fs.unlink(dest, () => {}); reject(err); });
+  });
+
+  clanEntry.bannerURL = bannerURL;
+  writeClans(clans);
+  return dest;
+}
+
+module.exports = {
+  readClans,
+  writeClans,
+  flagsDir,
+  getFlagPath,
+  flagExists,
+  saveFlagFromAttachment,
+  deleteFlag,
+  getDominantColor,
+  updateBannerIfNew,
+  // ✅ NEW: Resident management functions
+  incrementClanResidents,
+  decrementClanResidents,
+  getClanResidents,
+  setClanResidents,
+};

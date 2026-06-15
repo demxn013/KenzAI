@@ -19,3 +19,6 @@ Discord Bot/modules/images/clanemblems/YZNK.png
 Discord Bot/modules/images/clanemblems/ONA.png
 Discord Bot/modules/images/serverlogos/DONUTSMP.png
 node_modules
+
+# Runtime judiciary case data (current repo structure; not version-controlled)
+modules/judiciary/data/

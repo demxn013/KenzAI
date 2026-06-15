@@ -54,8 +54,9 @@ async function ensurePoolReady() {
 // ---------------------------------------------------------------------------
 // MIGRATE — applies every migrations/NNN_*.sql in order, tracked in the
 //           `schema_migrations` table so each file runs exactly once.
-//           Some files (003) DROP+CREATE placeholder tables, so single-run
-//           tracking is what makes re-running /db migrate safe.
+//           The schema is idempotent (data-bearing tables use CREATE IF NOT
+//           EXISTS; only empty/obsolete tables are dropped), so even a re-run
+//           against live data is safe.
 // ---------------------------------------------------------------------------
 async function runMigrations() {
   assertMysqlEnabled();
@@ -92,22 +93,6 @@ async function runMigrations() {
 
     const [appliedRows] = await conn.query("SELECT filename FROM schema_migrations");
     const applied = new Set(appliedRows.map((r) => r.filename));
-
-    // Baseline: if the core `members` table already exists but nothing is
-    // recorded yet, 001/002 were applied manually before this tracking existed.
-    // Mark every file numbered <= 002 as applied so their destructive DROPs
-    // don't re-run against live data.
-    if (applied.size === 0) {
-      const [memberTbl] = await conn.query("SHOW TABLES LIKE 'members'");
-      if (memberTbl.length > 0) {
-        for (const f of files) {
-          if (parseInt(f, 10) <= 2) {
-            await conn.query("INSERT IGNORE INTO schema_migrations (filename) VALUES (?)", [f]);
-            applied.add(f);
-          }
-        }
-      }
-    }
 
     const newlyApplied = [];
     for (const f of files) {

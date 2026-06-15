@@ -27,7 +27,7 @@
 //
 // Recommended rollout order:
 //   1. MYSQL_ENABLED=true, DB_DUAL_WRITE=true  → dual-write, reads still from JSON
-//   2. /db migrate  → apply migrations 002_flat_schema.sql + 003_extras_schema.sql
+//   2. /db migrate  → apply the schema (001_schema.sql)
 //   3. /db backfill → populate MySQL from JSON (all stores)
 //   4. DB_READ_MEMBERS=mysql, DB_READ_CLANS=mysql, DB_READ_EMPIRE_REGISTRY=mysql,
 //      DB_READ_EXTRAS=mysql

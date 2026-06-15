@@ -18,7 +18,7 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName("migrate")
-        .setDescription("Apply MySQL schema migrations (runs 002_flat_schema.sql)")
+        .setDescription("Apply the MySQL schema (runs 001_schema.sql)")
     )
     .addSubcommand((sub) =>
       sub

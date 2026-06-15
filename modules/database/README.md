@@ -51,8 +51,13 @@ also copied into `members`), `kicked_members`, `banned_members`, `linking`,
 `archived_members`, `draft_deserters`, `court_requests`, `roles_config`
 (one row per guild), `channels_config` (singleton).
 
-`schema_migrations` tracks which `migrations/NNN_*.sql` files have run so each
-applies exactly once.
+The whole schema lives in a single file, `migrations/001_schema.sql`. It is
+idempotent: data-bearing tables (`members`, `clans`, `empire_ids`,
+`empire_id_counters`, `member_events`) use `CREATE TABLE IF NOT EXISTS` and are
+never dropped, while the hybrid extra tables (no authoritative data — JSON is
+the source of truth) are dropped and recreated to guarantee their shape.
+`schema_migrations` tracks that it has run so it normally applies exactly once,
+but a re-run against live data is safe.
 
 > Applications vs. accepted members are intentionally **separate tables**:
 > `applicants` holds all applications, and on acceptance the data is copied into
@@ -82,7 +87,7 @@ DB_JSON_WRITES_DISABLED=false   # MySQL-only mode (final step)
 
 1. Set `MYSQL_ENABLED=true`, `DB_DUAL_WRITE=true`,
    `DB_DUAL_WRITE_EMPIRE_REGISTRY=true`. Restart.
-2. `/db migrate` — applies `002` + `003` (admin only, no shell needed).
+2. `/db migrate` — applies `001_schema.sql` (admin only, no shell needed).
 3. `/db backfill` — populates every table from JSON.
 4. `/db parity` — verify JSON vs MySQL row counts match.
 5. Flip reads: `DB_READ_MEMBERS=mysql`, `DB_READ_CLANS=mysql`,

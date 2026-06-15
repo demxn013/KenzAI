@@ -1,5 +1,5 @@
 // modules/database/adminTasks.js
-// Admin-only DB tasks: migrate (001 legacy or 002 flat schema), backfill, parity.
+// Admin-only DB tasks: migrate (run-once tracked), backfill, parity.
 
 const fs = require("fs");
 const path = require("path");
@@ -9,6 +9,7 @@ const mysqlPool = require("./mysqlPool");
 const userRepo = require("./repositories/userRepository");
 const clanRepo = require("./repositories/clanRepository");
 const empireRepo = require("./repositories/empireRegistryRepository");
+const { stores } = require("./stores");
 
 const migrationsDir = path.join(__dirname, "migrations");
 const dataDir = path.join(__dirname, "..", "data");
@@ -34,44 +35,6 @@ function readJsonSafe(rel) {
   }
 }
 
-/**
- * Merge members.json + linking.json + applicants.json into a unified users map.
- * Linking / applicant entries that have no members.json counterpart get a
- * lightweight stub so that their discord↔MC link is preserved.
- */
-function buildUnifiedUsers(members, linking, applicants) {
-  const map = { ...(members && typeof members === "object" ? members : {}) };
-
-  const addLightweight = (discordId, mcName) => {
-    const id = String(discordId);
-    if (map[id]) return; // don't overwrite real member data
-    map[id] = {
-      discordId: id,
-      minecraftUser: mcName || "",
-      EmpireID: "",
-      JoinedClan: "",
-    };
-  };
-
-  if (linking && typeof linking === "object") {
-    for (const [discordId, row] of Object.entries(linking)) {
-      if (!row || typeof row !== "object") continue;
-      const mc = row.main || row.minecraftUser || "";
-      if (mc) addLightweight(discordId, mc);
-    }
-  }
-
-  if (applicants && typeof applicants === "object") {
-    for (const [discordId, row] of Object.entries(applicants)) {
-      if (!row || typeof row !== "object") continue;
-      const mc = row.minecraftUser || row.minecraftName || "";
-      addLightweight(discordId, mc);
-    }
-  }
-
-  return map;
-}
-
 async function ensurePoolReady() {
   assertMysqlEnabled();
 
@@ -89,8 +52,10 @@ async function ensurePoolReady() {
 }
 
 // ---------------------------------------------------------------------------
-// MIGRATE — runs the latest migration file (002_flat_schema.sql preferred,
-//            falls back to 001_initial.sql if 002 is not present)
+// MIGRATE — applies every migrations/NNN_*.sql in order, tracked in the
+//           `schema_migrations` table so each file runs exactly once.
+//           Some files (003) DROP+CREATE placeholder tables, so single-run
+//           tracking is what makes re-running /db migrate safe.
 // ---------------------------------------------------------------------------
 async function runMigrations() {
   assertMysqlEnabled();
@@ -101,16 +66,12 @@ async function runMigrations() {
     throw new Error("mysql2 dependency missing. Run: npm install mysql2");
   }
 
-  // Prefer 002, fall back to 001
-  const candidates = ["002_flat_schema.sql", "001_initial.sql"];
-  let sqlPath = null;
-  for (const name of candidates) {
-    const p = path.join(migrationsDir, name);
-    if (fs.existsSync(p)) { sqlPath = p; break; }
-  }
-  if (!sqlPath) throw new Error("No migration file found in migrations/");
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => /^\d+.*\.sql$/i.test(f))
+    .sort();
+  if (files.length === 0) throw new Error("No migration files found in migrations/");
 
-  const sql = fs.readFileSync(sqlPath, "utf8");
   const conn = await mysql.createConnection({
     host:               dbConfig.host,
     port:               dbConfig.port,
@@ -119,9 +80,45 @@ async function runMigrations() {
     database:           dbConfig.database,
     multipleStatements: true,
   });
+
   try {
-    await conn.query(sql);
-    return { ok: true, applied: [path.basename(sqlPath)] };
+    await conn.query(
+      `CREATE TABLE IF NOT EXISTS schema_migrations (
+         filename   VARCHAR(191) NOT NULL,
+         applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         PRIMARY KEY (filename)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+    );
+
+    const [appliedRows] = await conn.query("SELECT filename FROM schema_migrations");
+    const applied = new Set(appliedRows.map((r) => r.filename));
+
+    // Baseline: if the core `members` table already exists but nothing is
+    // recorded yet, 001/002 were applied manually before this tracking existed.
+    // Mark every file numbered <= 002 as applied so their destructive DROPs
+    // don't re-run against live data.
+    if (applied.size === 0) {
+      const [memberTbl] = await conn.query("SHOW TABLES LIKE 'members'");
+      if (memberTbl.length > 0) {
+        for (const f of files) {
+          if (parseInt(f, 10) <= 2) {
+            await conn.query("INSERT IGNORE INTO schema_migrations (filename) VALUES (?)", [f]);
+            applied.add(f);
+          }
+        }
+      }
+    }
+
+    const newlyApplied = [];
+    for (const f of files) {
+      if (applied.has(f)) continue;
+      const sql = fs.readFileSync(path.join(migrationsDir, f), "utf8");
+      await conn.query(sql);
+      await conn.query("INSERT IGNORE INTO schema_migrations (filename) VALUES (?)", [f]);
+      newlyApplied.push(f);
+    }
+
+    return { ok: true, applied: newlyApplied.length ? newlyApplied : ["(none — already up to date)"] };
   } finally {
     await conn.end();
   }
@@ -136,33 +133,46 @@ async function runBackfill() {
   const members    = readJsonSafe("members.json");
   const clans      = readJsonSafe("clans.json");
   const empireIds  = readJsonSafe("empireids.json");
-  const linking    = readJsonSafe("linking.json");
-  const applicants = readJsonSafe("applicants.json");
 
-  const usersMap = buildUnifiedUsers(members, linking, applicants);
-
-  // --- members / users ---
-  await userRepo.replaceAllUsers(usersMap);
-  console.log(`[db-admin] ✅ Backfilled ${Object.keys(usersMap).length} members`);
+  // --- members (accepted empire members ONLY — clean separation from
+  //     applications + linking, which now have their own tables) ---
+  await userRepo.replaceAllUsers(members);
+  console.log(`[db-admin] ✅ Backfilled ${Object.keys(members).length} members`);
 
   // --- clans ---
   await clanRepo.replaceAllClans(clans);
   console.log(`[db-admin] ✅ Backfilled ${Object.keys(clans).length} clans`);
 
   // --- empire registry ---
+  let empireCount = 0;
   if (empireIds && typeof empireIds.ids === "object") {
     await empireRepo.saveRegistryState({
       nextNumber: typeof empireIds.nextNumber === "number" ? empireIds.nextNumber : 14,
       ids: empireIds.ids,
     });
-    console.log(`[db-admin] ✅ Backfilled ${Object.keys(empireIds.ids).length} empire IDs`);
+    empireCount = Object.keys(empireIds.ids).length;
+    console.log(`[db-admin] ✅ Backfilled ${empireCount} empire IDs`);
+  }
+
+  // --- extra stores (applicants, linking, kicked/banned, subscriptions,
+  //     bot slots/queue, servers, archived, deserters, court, roles, channels) ---
+  const extras = {};
+  for (const [key, store] of Object.entries(stores)) {
+    try {
+      extras[key] = await store.backfillFromDisk();
+      console.log(`[db-admin] ✅ Backfilled ${extras[key]} ${key}`);
+    } catch (e) {
+      console.error(`[db-admin] ❌ backfill ${key}:`, e.message);
+      extras[key] = `err`;
+    }
   }
 
   return {
     ok: true,
-    users:     Object.keys(usersMap).length,
+    users:     Object.keys(members).length,
     clans:     Object.keys(clans || {}).length,
-    empireIds: Object.keys((empireIds && empireIds.ids) || {}).length,
+    empireIds: empireCount,
+    extras,
   };
 }
 
@@ -180,12 +190,23 @@ async function parityCounts() {
   const members = readJsonSafe("members.json");
   const clans   = readJsonSafe("clans.json");
 
+  // Per-store JSON vs MySQL row counts.
+  const extras = [];
+  for (const store of Object.values(stores)) {
+    try {
+      extras.push(await store.parity());
+    } catch (e) {
+      extras.push({ name: store.name, table: store.table, json: "?", sql: `err` });
+    }
+  }
+
   return {
     ok:          true,
     jsonMembers: Object.keys(members || {}).length,
     sqlUsers:    Object.keys(uSql    || {}).length,
     jsonClans:   Object.keys(clans   || {}).length,
     sqlClans:    Object.keys(cSql    || {}).length,
+    extras,
   };
 }
 

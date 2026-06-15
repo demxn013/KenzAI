@@ -1,44 +1,21 @@
 // modules/judiciary/courtrequests.js
 // ✅ Court requests data management
 
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = path.join(__dirname, "..", "data");
-const dataPath = path.join(dataDir, "court_requests.json");
-
-// Ensure directory exists
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-// Ensure file exists
-if (!fs.existsSync(dataPath)) {
-  fs.writeFileSync(dataPath, JSON.stringify({}, null, 2));
-}
+// Persistence is handled by the dual-write MapStore (JSON + MySQL `court_requests`).
+const { stores } = require("../database/stores");
 
 /**
  * Load all court requests
  */
 function loadCourtRequests() {
-  try {
-    const raw = fs.readFileSync(dataPath, "utf8");
-    return raw && raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[courtrequests] ❌ Failed to load court_requests.json:", err);
-    return {};
-  }
+  return stores.court_requests.readMap();
 }
 
 /**
  * Save all court requests
  */
 function saveCourtRequests(data) {
-  try {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("[courtrequests] ❌ Failed to save court_requests.json:", err);
-  }
+  stores.court_requests.writeMap(data);
 }
 
 /**

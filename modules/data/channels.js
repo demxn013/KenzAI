@@ -1,37 +1,16 @@
 // modules/data/channels.js
 // Channel configuration for KenzAI (points, applications, etc.). Single source for channel IDs and names.
 
-const fs = require("fs");
-const path = require("path");
-
-const channelsPath = path.join(__dirname, "channels.json");
+// Persistence is handled by the dual-write MapStore (JSON + MySQL `channels_config`).
+// channels.json is a single config object, stored as one row keyed "channels".
+const { stores } = require("../database/stores");
 
 function readChannels() {
-  try {
-    if (!fs.existsSync(channelsPath)) {
-      const defaultData = {
-        points: { staffChannelId: null, messageChannelIds: [] },
-        applications: { categoryName: "applications" },
-      };
-      fs.writeFileSync(channelsPath, JSON.stringify(defaultData, null, 2));
-      return defaultData;
-    }
-    const raw = fs.readFileSync(channelsPath, "utf8");
-    return raw && raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[channels] Error reading channels.json:", err);
-    return {};
-  }
+  return stores.channels_config.readObject();
 }
 
 function writeChannels(data) {
-  try {
-    fs.writeFileSync(channelsPath, JSON.stringify(data, null, 2));
-    return true;
-  } catch (err) {
-    console.error("[channels] Error writing channels.json:", err);
-    return false;
-  }
+  return stores.channels_config.writeObject(data || {});
 }
 
 /**

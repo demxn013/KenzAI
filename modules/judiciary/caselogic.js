@@ -1,64 +1,35 @@
 // modules/judiciary/caselogic.js
 // ✅ Core case management logic
 
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = path.join(__dirname, "data");
-const casesPath = path.join(dataDir, "cases.json");
-const archivedPath = path.join(dataDir, "archived_cases.json");
-const auditLogPath = path.join(dataDir, "audit_log.json");
-
-// Ensure data directory exists
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-// Ensure data files exist
-if (!fs.existsSync(casesPath)) {
-  fs.writeFileSync(casesPath, JSON.stringify({}, null, 2));
-}
-
-if (!fs.existsSync(archivedPath)) {
-  fs.writeFileSync(archivedPath, JSON.stringify({}, null, 2));
-}
-
-if (!fs.existsSync(auditLogPath)) {
-  fs.writeFileSync(auditLogPath, JSON.stringify([], null, 2));
-}
+// Persistence via dual-write MapStores (JSON + MySQL: judiciary_cases,
+// judiciary_archived_cases, judiciary_audit_log).
+const { stores } = require("../database/stores");
 
 /**
- * Read cases from disk
+ * Read cases
  * @returns {Object} Cases object
  */
 function readCases() {
   try {
-    const raw = fs.readFileSync(casesPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
+    return stores.judiciary_cases.readMap();
   } catch (err) {
-    console.error("[caselogic] ❌ Error reading cases.json:", err);
+    console.error("[caselogic] ❌ Error reading cases:", err);
     return {};
   }
 }
 
 /**
- * Write cases to disk with backup
+ * Write cases (JSON + MySQL)
  * @param {Object} data - Cases data
  * @returns {boolean} Success
  */
 function writeCases(data) {
   try {
-    // Create backup
-    if (fs.existsSync(casesPath)) {
-      const backupPath = casesPath.replace('.json', '.backup.json');
-      fs.copyFileSync(casesPath, backupPath);
-    }
-    
-    fs.writeFileSync(casesPath, JSON.stringify(data, null, 2));
+    stores.judiciary_cases.writeMap(data);
     console.log("[caselogic] ✅ Cases saved successfully");
     return true;
   } catch (err) {
-    console.error("[caselogic] ❌ Error writing cases.json:", err);
+    console.error("[caselogic] ❌ Error writing cases:", err);
     return false;
   }
 }
@@ -69,25 +40,24 @@ function writeCases(data) {
  */
 function readArchivedCases() {
   try {
-    const raw = fs.readFileSync(archivedPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
+    return stores.judiciary_archived_cases.readMap();
   } catch (err) {
-    console.error("[caselogic] ❌ Error reading archived_cases.json:", err);
+    console.error("[caselogic] ❌ Error reading archived cases:", err);
     return {};
   }
 }
 
 /**
- * Write archived cases to disk
+ * Write archived cases (JSON + MySQL)
  * @param {Object} data - Archived cases data
  * @returns {boolean} Success
  */
 function writeArchivedCases(data) {
   try {
-    fs.writeFileSync(archivedPath, JSON.stringify(data, null, 2));
+    stores.judiciary_archived_cases.writeMap(data);
     return true;
   } catch (err) {
-    console.error("[caselogic] ❌ Error writing archived_cases.json:", err);
+    console.error("[caselogic] ❌ Error writing archived cases:", err);
     return false;
   }
 }
@@ -101,10 +71,10 @@ function writeArchivedCases(data) {
  */
 function auditLog(action, caseId, actorId, details = {}) {
   try {
-    const logs = JSON.parse(fs.readFileSync(auditLogPath, "utf8"));
-    
+    const logs = stores.judiciary_audit_log.readMap();
+
     const logEntry = {
-      log_id: `AL-${new Date().getFullYear()}-${String(logs.length + 1).padStart(5, '0')}`,
+      log_id: `AL-${new Date().getFullYear()}-${String(Object.keys(logs).length + 1).padStart(5, '0')}`,
       timestamp: new Date().toISOString(),
       case_id: caseId,
       action: action,
@@ -113,10 +83,9 @@ function auditLog(action, caseId, actorId, details = {}) {
       },
       details: details
     };
-    
-    logs.push(logEntry);
-    
-    fs.writeFileSync(auditLogPath, JSON.stringify(logs, null, 2));
+
+    logs[logEntry.log_id] = logEntry;
+    stores.judiciary_audit_log.writeMap(logs);
     console.log(`[caselogic] 📋 Audit log: ${action} by ${actorId} on ${caseId}`);
   } catch (err) {
     console.error("[caselogic] ❌ Error writing audit log:", err);

@@ -5,13 +5,9 @@
 // ✅ NEW: Additional check to prevent duplicate acceptance processing
 // ✅ NEW: Increments clan resident count on acceptance
 
-const fs = require("fs");
-const path = require("path");
-
-const dataDir = path.join(__dirname, "..", "data");
-const applicantsPath = path.join(dataDir, "applicants.json");
 const { readMembers, writeMembers } = require("../database/membersPersistence");
 const { readClans } = require("../database/clansPersistence");
+const { getApplicant } = require("./applicants");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -28,31 +24,6 @@ const YAZANAKI_RANDOM_ROLE_ID = "1334846750707421194";
 
 // ✅ Import clan resident management
 const { incrementClanResidents } = require("../clantracking/clanlogic");
-
-// Ensure data files
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-function loadJSON(filePath) {
-  if (!fs.existsSync(filePath)) return {};
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error(`[acceptedapps] ❌ JSON parse error in ${filePath}`, err);
-    return {};
-  }
-}
-
-function saveJSON(filePath, data) {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 4));
-    console.log(`[acceptedapps] ✅ Saved ${path.basename(filePath)}`);
-  } catch (err) {
-    console.error(`[acceptedapps] ❌ Failed to save ${path.basename(filePath)}:`, err);
-  }
-}
 
 function formatDate(dateString) {
   const d = new Date(dateString);
@@ -301,9 +272,8 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
     return { success: false, reason: "no_client" };
   }
 
-  const applicants = loadJSON(applicantsPath);
   const members = readMembers();
-  const data = applicants[discordId];
+  const data = getApplicant(discordId);
 
   if (!data) {
     console.log(`[acceptedapps] ❌ Applicant not found`);

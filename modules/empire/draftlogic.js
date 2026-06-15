@@ -4,8 +4,6 @@
 // ✅ FIXED: Members who leave empire during draft are properly flagged
 // ✅ NEW: Draft deserter system - marks members who abandon their draft
 
-const fs = require("fs");
-const path = require("path");
 const config = require("./draftconfig");
 const {
   createArmyConfirmationEmbed,
@@ -21,37 +19,19 @@ const {
   saveEmpireRegistry,
 } = require("../database/empireRegistryPersistence");
 const { readClans } = require("../database/clansPersistence");
-
-const dataDir = path.join(__dirname, "..", "data");
-const archivedPath = path.join(dataDir, "archived_members.json");
-const desertersPath = path.join(dataDir, "draft_deserters.json");
+const { stores } = require("../database/stores");
 
 // ============================================================
 // DATA ACCESS
 // ============================================================
 
+// Persistence via dual-write MapStore (JSON + MySQL `archived_members`).
 function readArchived() {
-  try {
-    if (!fs.existsSync(archivedPath)) {
-      fs.writeFileSync(archivedPath, JSON.stringify({}, null, 4));
-      return {};
-    }
-    const raw = fs.readFileSync(archivedPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error reading archived_members.json:", err);
-    return {};
-  }
+  return stores.archived_members.readMap();
 }
 
 function writeArchived(data) {
-  try {
-    fs.writeFileSync(archivedPath, JSON.stringify(data, null, 4));
-    return true;
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error writing archived_members.json:", err);
-    return false;
-  }
+  return stores.archived_members.writeMap(data);
 }
 
 function readEmpireIds() {
@@ -70,32 +50,13 @@ function writeEmpireIds(data) {
 /**
  * Read or initialize the draft deserters list
  */
+// Persistence via dual-write MapStore (JSON + MySQL `draft_deserters`).
 function readDeserters() {
-  try {
-    if (!fs.existsSync(desertersPath)) {
-      fs.writeFileSync(desertersPath, JSON.stringify({}, null, 4));
-      return {};
-    }
-    const raw = fs.readFileSync(desertersPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error reading draft_deserters.json:", err);
-    return {};
-  }
+  return stores.draft_deserters.readMap();
 }
 
 function writeDeserters(data) {
-  try {
-    if (fs.existsSync(desertersPath)) {
-      const backupPath = desertersPath.replace('.json', '.backup.json');
-      fs.copyFileSync(desertersPath, backupPath);
-    }
-    fs.writeFileSync(desertersPath, JSON.stringify(data, null, 4));
-    return true;
-  } catch (err) {
-    console.error("[draftlogic] ❌ Error writing draft_deserters.json:", err);
-    return false;
-  }
+  return stores.draft_deserters.writeMap(data);
 }
 
 /**
@@ -456,17 +417,14 @@ async function removeAllYazanakiRoles(discordId, client) {
       return 0;
     }
     
-    // Load role configuration to get role hierarchy
-    const rolesConfigPath = path.join(__dirname, "..", "data", "roles.json");
+    // Load role configuration to get role hierarchy (JSON + MySQL store)
     let rolesConfig = {};
-    
     try {
-      const raw = fs.readFileSync(rolesConfigPath, "utf8");
-      rolesConfig = JSON.parse(raw);
+      rolesConfig = stores.roles_config.readObject();
     } catch (err) {
-      console.warn(`[draftlogic] ⚠️ Could not load roles.json:`, err.message);
+      console.warn(`[draftlogic] ⚠️ Could not load roles config:`, err.message);
     }
-    
+
     const yazanakiConfig = rolesConfig.guilds?.[config.YAZANAKI_EMPIRE_GUILD_ID];
     
     let removedCount = 0;
@@ -495,9 +453,8 @@ async function removeAllYazanakiRoles(discordId, client) {
     
     // Remove clan role (yazanakiRoleId for each clan)
     try {
-      const clansRaw = fs.readFileSync(clansPath, "utf8");
-      const clans = JSON.parse(clansRaw);
-      
+      const clans = readClans();
+
       for (const clan of Object.values(clans)) {
         if (clan.yazanakiRoleId && member.roles.cache.has(clan.yazanakiRoleId)) {
           await member.roles.remove(clan.yazanakiRoleId).catch(err => console.warn(`[draftlogic] ⚠️ Could not remove clan role:`, err.message));

@@ -1,38 +1,14 @@
-const fs = require("fs");
-const path = require("path");
+// Persistence is handled by the dual-write MapStore (JSON + MySQL `applicants`).
+const { stores } = require("../database/stores");
 
-// Data directory
-const dataDir = path.join(__dirname, "..", "data");
-const dataPath = path.join(dataDir, "applicants.json");
-
-// Ensure directory exists
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-// Ensure file exists
-if (!fs.existsSync(dataPath)) {
-  fs.writeFileSync(dataPath, JSON.stringify({}, null, 2));
-}
-
-// Load all applicants
+// Load all applicants (from MySQL cache or JSON disk, per rollout flags)
 function loadApplicants() {
-  try {
-    const raw = fs.readFileSync(dataPath, "utf8");
-    return raw && raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("Failed to load applicants.json:", err);
-    return {};
-  }
+  return stores.applicants.readMap();
 }
 
-// Save all applicants
+// Save all applicants (writes JSON + syncs MySQL when enabled)
 function saveApplicants(data) {
-  try {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Failed to save applicants.json:", err);
-  }
+  stores.applicants.writeMap(data);
 }
 
 /**

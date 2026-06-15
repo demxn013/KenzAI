@@ -1,11 +1,10 @@
 // modules/membertracking/roledetector.js
-const fs = require("fs");
-const path = require("path");
-
-const rolesConfigPath = path.join(__dirname, "../data/roles.json");
 
 // Draft system config (for Draft role ID)
 const draftConfig = require("../empire/draftconfig");
+
+// Persistence via dual-write MapStore (JSON + MySQL `roles_config`).
+const { stores } = require("../database/stores");
 
 // Yazanaki Empire Guild ID (hardcoded for now)
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
@@ -13,15 +12,9 @@ const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 // Load roles configuration
 function loadRolesConfig() {
   try {
-    if (!fs.existsSync(rolesConfigPath)) {
-      console.error("roles.json not found!");
-      return null;
-    }
-
-    const raw = fs.readFileSync(rolesConfigPath, "utf8");
-    return JSON.parse(raw);
+    return stores.roles_config.readObject();
   } catch (err) {
-    console.error("Error loading roles.json:", err);
+    console.error("Error loading roles config:", err);
     return null;
   }
 }
@@ -29,15 +22,10 @@ function loadRolesConfig() {
 // Save roles configuration
 function saveRolesConfig(config) {
   try {
-    const dir = path.dirname(rolesConfigPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(rolesConfigPath, JSON.stringify(config, null, 2));
-    console.log("[roledetector] Saved roles.json");
+    stores.roles_config.writeObject(config);
+    console.log("[roledetector] Saved roles config");
   } catch (err) {
-    console.error("Error saving roles.json:", err);
+    console.error("Error saving roles config:", err);
   }
 }
 

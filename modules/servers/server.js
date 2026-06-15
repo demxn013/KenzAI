@@ -17,21 +17,15 @@ const {
   parsePlaytimeToMinutes
 } = require("./serverembed");
 
-const serversPath = path.join(__dirname, "../data/servers.json");
+const { stores } = require("../database/stores");
 const serverLogosDir = path.join(__dirname, "../images/serverlogos");
 
 const BUTTON_TIMEOUT_MS = 10 * 60 * 1000;
 
+// servers.json (map of serverId -> config, plus a top-level statEmojis key).
+// Persistence is handled by the dual-write MapStore (JSON + MySQL `servers`).
 function readServers() {
-  try {
-    if (!fs.existsSync(serversPath)) return {};
-    const raw = fs.readFileSync(serversPath, "utf8");
-    if (!raw || !raw.trim()) return {};
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("[/server] ❌ Error reading servers.json:", err);
-    return {};
-  }
+  return stores.servers.readMap();
 }
 
 function getEnabledServers() {

@@ -14,4 +14,14 @@ module.exports = async function hydrateCaches() {
   if (config.readEmpireRegistrySource === "mysql") {
     await require("./empireRegistryPersistence").hydrateEmpireRegistryFromMysql();
   }
+  if (config.readExtrasSource === "mysql") {
+    const { stores } = require("./stores");
+    for (const store of Object.values(stores)) {
+      try {
+        await store.hydrate();
+      } catch (err) {
+        console.error(`[hydrateCaches] ❌ ${store.name}:`, err.message);
+      }
+    }
+  }
 };

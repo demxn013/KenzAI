@@ -1,0 +1,340 @@
+// modules/database/stores.js
+// Central registry of every "extra" JSON store that is dual-written to MySQL.
+//
+// The core member-facing tables (members, clans, empire_ids) keep their bespoke
+// flat repositories (the API + Mod query them). Everything else uses the generic
+// hybrid MapStore: a `data` JSON column holds the full object losslessly (so the
+// bot always reads back exactly what it stored), while a handful of indexed
+// columns are derived for SQL analytics (stats module, future API endpoints).
+
+const path = require("path");
+const { MapStore } = require("./mapStore");
+
+const dataDir = path.join(__dirname, "..", "data");
+const dataPath = (file) => path.join(dataDir, file);
+
+// Judiciary keeps its own data dir (cases / archived cases / audit log).
+const judiciaryDir = path.join(__dirname, "..", "judiciary", "data");
+const judiciaryPath = (file) => path.join(judiciaryDir, file);
+
+// ---- value coercion helpers (JSON value -> SQL column) --------------------
+
+/** ISO / Date-ish value -> MySQL DATETIME string ("YYYY-MM-DD HH:MM:SS") or null. */
+function dt(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+/** truthy -> 1, else 0. */
+function bool(v) {
+  return v ? 1 : 0;
+}
+/** value -> trimmed string or null. */
+function str(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v);
+  return s.length ? s : null;
+}
+/** number-ish -> Number or default. */
+function int(v, def = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : def;
+}
+
+/**
+ * Build a hybrid mapper: full object in `data` JSON (lossless read-back) plus
+ * derived analytics columns.
+ * @param {string}   pkCol   primary-key column name
+ * @param {Function} [index] (id, value) => ({ col: val }) analytics columns
+ */
+function hybrid(pkCol, index) {
+  return {
+    pk: pkCol,
+    toRow(id, value) {
+      const row = { [pkCol]: String(id) };
+      if (index) Object.assign(row, index(id, value || {}) || {});
+      row.data = JSON.stringify(value == null ? {} : value);
+      return row;
+    },
+    fromRow(row) {
+      try {
+        const raw = row.data;
+        if (raw == null) return {};
+        return typeof raw === "string" ? JSON.parse(raw) : raw;
+      } catch {
+        return {};
+      }
+    },
+  };
+}
+
+function defineStore(name, jsonFile, table, pkCol, index, extra = {}) {
+  const m = hybrid(pkCol, index);
+  return new MapStore({
+    name,
+    jsonPath: dataPath(jsonFile),
+    table,
+    pk: m.pk,
+    toRow: m.toRow,
+    fromRow: m.fromRow,
+    ...extra,
+  });
+}
+
+// ---- store definitions -----------------------------------------------------
+
+const stores = {
+  // Applications (ALL applications; accepted ones are copied into `members`).
+  applicants: defineStore(
+    "applicants",
+    "applicants.json",
+    "applicants",
+    "discord_id",
+    (id, v) => ({
+      discord_user: str(v.discordUser),
+      minecraft_user: str(v.minecraftUser),
+      minecraft_user_key: str(v.minecraftUserKey || (v.minecraftUser ? String(v.minecraftUser).toLowerCase() : null)),
+      server_guild_id: str(v.server),
+      accepted: bool(v.accepted),
+      opened_at: dt(v.openedAt),
+      closed_at: dt(v.closedAt),
+    })
+  ),
+
+  // Kicked members (3-month reapply cooldown).
+  kicked_members: defineStore(
+    "kicked_members",
+    "kicked_members.json",
+    "kicked_members",
+    "discord_id",
+    (id, v) => ({
+      empire_id: str(v.empireId),
+      discord_user: str(v.discordUser),
+      minecraft_user: str(v.minecraftUser),
+      original_clan: str(v.originalClan),
+      kicked_at: dt(v.kickedAt),
+      can_reapply_at: dt(v.canReapplyAt),
+    })
+  ),
+
+  // Permanently banned members.
+  banned_members: defineStore(
+    "banned_members",
+    "banned_members.json",
+    "banned_members",
+    "discord_id",
+    (id, v) => ({
+      empire_id: str(v.empireId),
+      discord_user: str(v.discordUser),
+      minecraft_user: str(v.minecraftUser),
+      original_clan: str(v.originalClan),
+      banned_at: dt(v.bannedAt),
+    })
+  ),
+
+  // Account linking (main + alternate Minecraft accounts).
+  linking: defineStore(
+    "linking",
+    "linking.json",
+    "linking",
+    "discord_id",
+    (id, v) => ({
+      main_account: str(v.main || v.minecraftUser),
+    })
+  ),
+
+  // Bot-slot monetization: subscriptions.
+  subscriptions: defineStore(
+    "subscriptions",
+    "subscriptions.json",
+    "subscriptions",
+    "user_id",
+    (id, v) => ({
+      tier: str(v.subscription_tier),
+      active: bool(v.active),
+      max_slots_allowed: int(v.max_slots_allowed, 0),
+    })
+  ),
+
+  subscription_logs: defineStore(
+    "subscription_logs",
+    "subscription_logs.json",
+    "subscription_logs",
+    "log_id",
+    (id, v) => ({
+      user_id: str(v.user_id),
+      action: str(v.action),
+      tier: str(v.tier),
+      logged_at: dt(v.timestamp),
+    })
+  ),
+
+  bot_slots: defineStore(
+    "bot_slots",
+    "bot_slots.json",
+    "bot_slots",
+    "slot_id",
+    (id, v) => ({
+      owner_id: str(v.owner_id),
+      mc_username: str(v.mc_username),
+      tier: str(v.tier),
+      server_id: str(v.server_id),
+    })
+  ),
+
+  slot_queue: defineStore(
+    "slot_queue",
+    "slot_queue.json",
+    "slot_queue",
+    "queue_id",
+    (id, v) => ({
+      user_id: str(v.user_id),
+      tier: str(v.tier),
+      queued_at: dt(v.queued_at),
+    })
+  ),
+
+  // Game-server registry (config). Note: servers.json also holds a top-level
+  // "statEmojis" key which round-trips losslessly via the data column.
+  servers: defineStore(
+    "servers",
+    "servers.json",
+    "servers",
+    "server_id",
+    (id, v) => ({
+      name: str(v && v.name),
+      enabled: bool(!v || v.enabled !== false),
+    })
+  ),
+
+  // Members who left / were archived (draft desertion etc.).
+  archived_members: defineStore(
+    "archived_members",
+    "archived_members.json",
+    "archived_members",
+    "discord_id",
+    (id, v) => ({
+      empire_id: str(v.empireId),
+      minecraft_user: str(v.minecraftUser),
+      original_clan: str(v.originalClan),
+      left_at: dt(v.leftDate || v.archivedAt),
+    })
+  ),
+
+  draft_deserters: defineStore(
+    "draft_deserters",
+    "draft_deserters.json",
+    "draft_deserters",
+    "discord_id",
+    (id, v) => ({
+      empire_id: str(v.empireId),
+      minecraft_user: str(v.minecraftUser),
+      original_clan: str(v.originalClan),
+      deserted_at: dt(v.desertedAt),
+      punishment_served: bool(v.punishmentServed),
+    })
+  ),
+
+  // Judiciary court requests.
+  court_requests: defineStore(
+    "court_requests",
+    "court_requests.json",
+    "court_requests",
+    "discord_id",
+    (id, v) => ({
+      accused_minecraft: str(v.accusedMinecraft),
+      crime_type: str(v.crimeType),
+      ticket_channel: str(v.ticketChannel),
+      ticket_number: v.ticketNumber == null ? null : int(v.ticketNumber, null),
+      opened_at: dt(v.openedAt),
+      escalated: bool(v.escalated),
+      dismissed: bool(v.dismissed),
+    })
+  ),
+
+  // Per-guild role-detection config. roles.json is { guilds: { [gid]: cfg } }.
+  roles_config: defineStore(
+    "roles_config",
+    "roles.json",
+    "roles_config",
+    "guild_id",
+    (id, v) => ({ name: str(v && v.name) }),
+    {
+      unwrap: (obj) => (obj && typeof obj.guilds === "object" ? obj.guilds : {}),
+      wrap: (map) => ({ guilds: map || {} }),
+      defaults: () => ({
+        guilds: {
+          "1220847061797179524": { name: "Yazanaki Empire", statusRoles: {}, rankRoles: {} },
+        },
+      }),
+    }
+  ),
+
+  // Channel config singleton — stored as a single row keyed "channels".
+  channels_config: defineStore(
+    "channels_config",
+    "channels.json",
+    "channels_config",
+    "config_key",
+    null,
+    {
+      unwrap: (obj) => ({ channels: obj && typeof obj === "object" ? obj : {} }),
+      wrap: (map) => (map && map.channels ? map.channels : {}),
+      defaults: () => ({
+        points: { staffChannelId: null, messageChannelIds: [] },
+        applications: { categoryName: "applications" },
+      }),
+    }
+  ),
+
+  // Judiciary case lifecycle (separate judiciary/data dir).
+  judiciary_cases: defineStore(
+    "judiciary_cases",
+    "cases.json",
+    "judiciary_cases",
+    "case_id",
+    null,
+    { jsonPath: judiciaryPath("cases.json") }
+  ),
+
+  judiciary_archived_cases: defineStore(
+    "judiciary_archived_cases",
+    "archived_cases.json",
+    "judiciary_archived_cases",
+    "case_id",
+    null,
+    { jsonPath: judiciaryPath("archived_cases.json") }
+  ),
+
+  // audit_log.json is a JSON ARRAY — adapt array <-> map (keyed by log_id).
+  judiciary_audit_log: defineStore(
+    "judiciary_audit_log",
+    "audit_log.json",
+    "judiciary_audit_log",
+    "log_id",
+    (id, v) => ({
+      case_id: str(v.case_id),
+      action: str(v.action),
+      logged_at: dt(v.timestamp),
+    }),
+    {
+      jsonPath: judiciaryPath("audit_log.json"),
+      defaults: () => [],
+      unwrap: (arr) => {
+        const map = {};
+        (Array.isArray(arr) ? arr : []).forEach((e, i) => {
+          const key = e && e.log_id ? String(e.log_id) : `idx-${i}`;
+          map[key] = e;
+        });
+        return map;
+      },
+      wrap: (map) =>
+        Object.values(map || {}).sort(
+          (a, b) => new Date(a && a.timestamp || 0) - new Date(b && b.timestamp || 0)
+        ),
+    }
+  ),
+};
+
+module.exports = { stores };

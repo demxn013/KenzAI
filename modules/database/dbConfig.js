@@ -15,13 +15,22 @@
 //   DB_READ_MEMBERS               "json" (default) | "mysql"
 //   DB_READ_CLANS                 "json" (default) | "mysql"
 //   DB_READ_EMPIRE_REGISTRY       "json" (default) | "mysql"
+//   DB_READ_EXTRAS                "json" (default) | "mysql"  (applicants, linking,
+//                                 kicked/banned, subscriptions, bot slots/queue,
+//                                 servers, archived, deserters, court requests,
+//                                 roles + channels config)
 //   DB_JSON_WRITES_DISABLED       Stop writing JSON files (MySQL-only mode)
+//
+// Note: DB_DUAL_WRITE also drives the "extra" map stores (applicants, linking,
+// kicked/banned, subscriptions, etc.) — they sync to MySQL whenever dual-write,
+// json-writes-disabled, or DB_READ_EXTRAS=mysql is active.
 //
 // Recommended rollout order:
 //   1. MYSQL_ENABLED=true, DB_DUAL_WRITE=true  → dual-write, reads still from JSON
-//   2. /db migrate  → apply migration 002_flat_schema.sql
-//   3. /db backfill → populate MySQL from JSON
-//   4. DB_READ_MEMBERS=mysql, DB_READ_CLANS=mysql, DB_READ_EMPIRE_REGISTRY=mysql
+//   2. /db migrate  → apply migrations 002_flat_schema.sql + 003_extras_schema.sql
+//   3. /db backfill → populate MySQL from JSON (all stores)
+//   4. DB_READ_MEMBERS=mysql, DB_READ_CLANS=mysql, DB_READ_EMPIRE_REGISTRY=mysql,
+//      DB_READ_EXTRAS=mysql
 //   5. Verify with /db parity
 //   6. DB_JSON_WRITES_DISABLED=true (optional, when confident)
 
@@ -51,6 +60,7 @@ module.exports = {
   readMembersSource:      parseSource(process.env.DB_READ_MEMBERS,          ["json", "mysql"], "json"),
   readClansSource:        parseSource(process.env.DB_READ_CLANS,            ["json", "mysql"], "json"),
   readEmpireRegistrySource: parseSource(process.env.DB_READ_EMPIRE_REGISTRY, ["json", "mysql"], "json"),
+  readExtrasSource:       parseSource(process.env.DB_READ_EXTRAS,           ["json", "mysql"], "json"),
 
   /** When true, JSON files are not written (MySQL-only writes). */
   jsonWritesDisabled: parseBool(process.env.DB_JSON_WRITES_DISABLED, false),

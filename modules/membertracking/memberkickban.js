@@ -10,11 +10,17 @@ const { readMembers, writeMembers } = require("../database/membersPersistence");
 const { readClans } = require("../database/clansPersistence");
 const { appendEvent } = require("../database/repositories/memberEventsRepository");
 const { loadEmpireRegistry, saveEmpireRegistry } = require("../database/empireRegistryPersistence");
+const { stores } = require("../database/stores");
 
 const dataDir = path.join(__dirname, "..", "data");
 const kickedMembersPath = path.join(dataDir, "kicked_members.json");
 const bannedMembersPath = path.join(dataDir, "banned_members.json");
-const rolesConfigPath = path.join(dataDir, "roles.json");
+
+// Map basename -> dual-write store (JSON + MySQL). Used by readJSON/writeJSON.
+const STORE_BY_FILE = {
+  "kicked_members.json": stores.kicked_members,
+  "banned_members.json": stores.banned_members,
+};
 
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 const KICK_COOLDOWN_DAYS = 90; // 3 months
@@ -24,11 +30,11 @@ const KICK_COOLDOWN_DAYS = 90; // 3 months
 // ============================================================
 
 function readJSON(filePath) {
+  const store = STORE_BY_FILE[path.basename(filePath)];
+  if (store) return store.readMap();
+  // Fallback for any other path (kept for safety).
   try {
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, JSON.stringify({}, null, 4));
-      return {};
-    }
+    if (!fs.existsSync(filePath)) return {};
     const raw = fs.readFileSync(filePath, "utf8");
     return raw.trim() ? JSON.parse(raw) : {};
   } catch (err) {
@@ -38,13 +44,15 @@ function readJSON(filePath) {
 }
 
 function writeJSON(filePath, data) {
+  const store = STORE_BY_FILE[path.basename(filePath)];
+  if (store) {
+    store.writeMap(data);
+    return true;
+  }
   try {
-    // Create backup
     if (fs.existsSync(filePath)) {
-      const backupPath = filePath.replace('.json', '.backup.json');
-      fs.copyFileSync(filePath, backupPath);
+      fs.copyFileSync(filePath, filePath.replace('.json', '.backup.json'));
     }
-    
     fs.writeFileSync(filePath, JSON.stringify(data, null, 4));
     return true;
   } catch (err) {
@@ -101,10 +109,9 @@ async function addEmpireEnemyRole(discordId, client) {
   try {
     let rolesConfig = {};
     try {
-      const raw = fs.readFileSync(rolesConfigPath, "utf8");
-      rolesConfig = JSON.parse(raw);
+      rolesConfig = stores.roles_config.readObject();
     } catch (err) {
-      console.warn(`[memberkickban] ⚠️ Could not load roles.json for empire enemy role:`, err.message);
+      console.warn(`[memberkickban] ⚠️ Could not load roles config for empire enemy role:`, err.message);
       return false;
     }
     const roleId = getEmpireEnemyRoleId(rolesConfig);
@@ -148,12 +155,11 @@ async function removeAllYazanakiRoles(discordId, client) {
     let rolesConfig = {};
     
     try {
-      const raw = fs.readFileSync(rolesConfigPath, "utf8");
-      rolesConfig = JSON.parse(raw);
+      rolesConfig = stores.roles_config.readObject();
     } catch (err) {
-      console.warn(`[memberkickban] ⚠️ Could not load roles.json:`, err.message);
+      console.warn(`[memberkickban] ⚠️ Could not load roles config:`, err.message);
     }
-    
+
     const yazanakiConfig = rolesConfig.guilds?.[YAZANAKI_EMPIRE_GUILD_ID];
     
     let removedCount = 0;
@@ -228,10 +234,9 @@ async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
     // Load roles.json to check if clan guild has role config
     let rolesConfig = {};
     try {
-      const raw = fs.readFileSync(rolesConfigPath, "utf8");
-      rolesConfig = JSON.parse(raw);
+      rolesConfig = stores.roles_config.readObject();
     } catch (err) {
-      console.warn(`[memberkickban] ⚠️ Could not load roles.json for clan role removal:`, err.message);
+      console.warn(`[memberkickban] ⚠️ Could not load roles config for clan role removal:`, err.message);
     }
 
     const clanGuildConfig = rolesConfig.guilds?.[clanGuildId];

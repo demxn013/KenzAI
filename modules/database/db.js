@@ -75,11 +75,15 @@ module.exports = {
 
       if (sub === "backfill") {
         const res = await tasks.runBackfill();
+        const extraTotal = Object.values(res.extras || {})
+          .filter((v) => typeof v === "number")
+          .reduce((a, b) => a + b, 0);
         return interaction.editReply(
           `✅ **Backfill complete**\n` +
           `- Members: \`${res.users}\`\n` +
           `- Clans: \`${res.clans}\`\n` +
-          `- Empire IDs: \`${res.empireIds}\`\n\n` +
+          `- Empire IDs: \`${res.empireIds}\`\n` +
+          `- Extra stores: \`${Object.keys(res.extras || {}).length}\` tables, \`${extraTotal}\` rows\n\n` +
           `Run \`/db parity\` to verify counts match.`
         );
       }
@@ -88,10 +92,14 @@ module.exports = {
         const res = await tasks.parityCounts();
         const membersMatch = res.jsonMembers === res.sqlUsers ? "✅" : "⚠️";
         const clansMatch   = res.jsonClans   === res.sqlClans  ? "✅" : "⚠️";
+        const extraLines = (res.extras || [])
+          .map((e) => `${e.json === e.sql ? "✅" : "⚠️"} ${e.name} — JSON: \`${e.json}\` | MySQL: \`${e.sql}\``)
+          .join("\n");
         return interaction.editReply(
           `📊 **Parity Check**\n` +
           `${membersMatch} Members — JSON: \`${res.jsonMembers}\` | MySQL: \`${res.sqlUsers}\`\n` +
-          `${clansMatch} Clans — JSON: \`${res.jsonClans}\` | MySQL: \`${res.sqlClans}\``
+          `${clansMatch} Clans — JSON: \`${res.jsonClans}\` | MySQL: \`${res.sqlClans}\`` +
+          (extraLines ? `\n${extraLines}` : "")
         );
       }
 

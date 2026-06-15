@@ -1,29 +1,20 @@
 // modules/yazanaki/yazanakilogic.js
-const fs = require("fs");
-const path = require("path");
 const { readMembers } = require("../database/membersPersistence");
 const { readClans } = require("../database/clansPersistence");
-
-const rolesPath = path.join(__dirname, "../data/roles.json");
+const { stores } = require("../database/stores");
 
 // Yazanaki Empire Guild ID
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
 
 /**
- * Read roles.json
+ * Read roles config (JSON + MySQL via the dual-write store).
  */
 function readRoles() {
   try {
-    if (!fs.existsSync(rolesPath)) {
-      console.warn("[yazanakilogic] ⚠️ roles.json not found");
-      return {};
-    }
-    
-    const raw = fs.readFileSync(rolesPath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
+    return stores.roles_config.readObject();
   } catch (err) {
-    console.error("[yazanakilogic] ❌ Error reading roles.json:", err);
+    console.error("[yazanakilogic] ❌ Error reading roles config:", err);
     return {};
   }
 }

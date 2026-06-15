@@ -4,50 +4,46 @@
 
 "use strict";
 
-const fs   = require("fs");
 const path = require("path");
 
-// Stored alongside the other KenzAI data files
-const DATA_DIR = path.join(__dirname, "../../data");
+// Persistence via dual-write MapStores (JSON + MySQL). Call sites keep using
+// readJSON(FILES.x) / writeJSON(FILES.x, data); those are routed to the correct
+// store by file basename below.
+const { stores } = require("../../database/stores");
 
+// Logical handles kept for call-site compatibility (basename is the lookup key).
 const FILES = {
-  subscriptions:     path.join(DATA_DIR, "subscriptions.json"),
-  bot_slots:         path.join(DATA_DIR, "bot_slots.json"),
-  slot_queue:        path.join(DATA_DIR, "slot_queue.json"),
-  subscription_logs: path.join(DATA_DIR, "subscription_logs.json"),
+  subscriptions:     "subscriptions.json",
+  bot_slots:         "bot_slots.json",
+  slot_queue:        "slot_queue.json",
+  subscription_logs: "subscription_logs.json",
+};
+
+const STORE_BY_FILE = {
+  "subscriptions.json":     stores.subscriptions,
+  "bot_slots.json":         stores.bot_slots,
+  "slot_queue.json":        stores.slot_queue,
+  "subscription_logs.json": stores.subscription_logs,
 };
 
 // ============================================================
 // HELPERS
 // ============================================================
 
-function ensureFile(filePath) {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "{}", "utf8");
+function storeFor(filePath) {
+  return STORE_BY_FILE[path.basename(filePath)] || null;
 }
 
 function readJSON(filePath) {
-  try {
-    ensureFile(filePath);
-    const raw = fs.readFileSync(filePath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error(`[subscriptiondb] ❌ Error reading ${path.basename(filePath)}:`, err.message);
-    return {};
-  }
+  const store = storeFor(filePath);
+  return store ? store.readMap() : {};
 }
 
 function writeJSON(filePath, data) {
-  try {
-    ensureFile(filePath);
-    const backupPath = filePath.replace(".json", ".backup.json");
-    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
-    return true;
-  } catch (err) {
-    console.error(`[subscriptiondb] ❌ Error writing ${path.basename(filePath)}:`, err.message);
-    return false;
-  }
+  const store = storeFor(filePath);
+  if (!store) return false;
+  store.writeMap(data);
+  return true;
 }
 
 function genId(prefix) {

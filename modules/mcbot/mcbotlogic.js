@@ -5,15 +5,21 @@
 
 "use strict";
 
-const fs = require("fs");
 const path = require("path");
 const http = require("http");
 
-const dataDir = path.join(__dirname, "..", "data");
 const { readMembers } = require("../database/membersPersistence");
 const { loadEmpireRegistry } = require("../database/empireRegistryPersistence");
-const kickedMembersPath = path.join(dataDir, "kicked_members.json");
-const bannedMembersPath = path.join(dataDir, "banned_members.json");
+const { stores } = require("../database/stores");
+
+// Dual-write stores (JSON + MySQL). Kept as path-style handles so the existing
+// readJSON(...) call sites stay unchanged.
+const kickedMembersPath = "kicked_members.json";
+const bannedMembersPath = "banned_members.json";
+const STORE_BY_FILE = {
+  "kicked_members.json": stores.kicked_members,
+  "banned_members.json": stores.banned_members,
+};
 
 // ============================================================
 // CONFIG — loaded from process.env (KenzAI's .env)
@@ -38,14 +44,8 @@ function getApiKey() {
 // ============================================================
 
 function readJSON(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return {};
-    const raw = fs.readFileSync(filePath, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error(`[mcbotlogic] ❌ Error reading ${path.basename(filePath)}:`, err.message);
-    return {};
-  }
+  const store = STORE_BY_FILE[path.basename(filePath)];
+  return store ? store.readMap() : {};
 }
 
 // ============================================================

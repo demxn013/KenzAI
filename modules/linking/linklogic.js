@@ -1,29 +1,14 @@
 // modules/linking/linklogic.js
-const fs = require("fs");
-const path = require("path");
 
 // applicants module (needed for autolinking support)
 const applicants = require("../applications/applicants");
 
-const dataDir = path.join(__dirname, "..", "data");
-const dataFile = path.join(dataDir, "linking.json");
+// Persistence via dual-write MapStore (JSON + MySQL `linking`).
+const { stores } = require("../database/stores");
 
 function ensureDataFile() {
   try {
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-    if (!fs.existsSync(dataFile)) {
-      fs.writeFileSync(dataFile, JSON.stringify({}, null, 2));
-      return {};
-    }
-
-    const raw = fs.readFileSync(dataFile, "utf8");
-    if (!raw || !raw.trim()) {
-      fs.writeFileSync(dataFile, JSON.stringify({}, null, 2));
-      return {};
-    }
-
-    const parsed = JSON.parse(raw);
+    const parsed = stores.linking.readMap();
 
     // Ensure new structure for each entry:
     // {
@@ -58,18 +43,13 @@ function ensureDataFile() {
     return migrated;
   } catch (err) {
     console.error("linklogic.ensureDataFile error:", err);
-
-    try {
-      fs.writeFileSync(dataFile, JSON.stringify({}, null, 2));
-    } catch (e) {}
-
     return {};
   }
 }
 
 function saveData(data) {
   try {
-    fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+    stores.linking.writeMap(data);
   } catch (err) {
     console.error("linklogic.saveData error:", err);
   }

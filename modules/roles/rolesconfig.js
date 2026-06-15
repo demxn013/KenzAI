@@ -2,96 +2,69 @@
 // ✅ Centralized role configuration management for all guilds
 // Supports multi-guild role detection with priority-based selection
 
-const fs = require("fs");
-const path = require("path");
+// Persistence via dual-write MapStore (JSON + MySQL `roles_config`).
+// roles.json is { guilds: { [guildId]: cfg } }; the store keeps one row per guild.
+const { stores } = require("../database/stores");
 
-const rolesConfigPath = path.join(__dirname, "../data/roles.json");
-
-// Cache to avoid repeated file reads
+// Cache to avoid repeated reads
 let rolesConfigCache = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 60000; // 1 minute
 
 /**
- * Ensure roles.json exists with proper structure
+ * Ensure the roles config exists with proper structure (store creates defaults).
  */
 function ensureRolesConfig() {
   try {
-    const dir = path.dirname(rolesConfigPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    if (!fs.existsSync(rolesConfigPath)) {
-      const defaultConfig = {
-        guilds: {
-          "1220847061797179524": {
-            name: "Yazanaki Empire",
-            statusRoles: {},
-            rankRoles: {}
-          }
-        }
-      };
-      fs.writeFileSync(rolesConfigPath, JSON.stringify(defaultConfig, null, 2));
-      console.log("[rolesconfig] ✅ Created default roles.json");
-    }
+    stores.roles_config.readObject();
   } catch (err) {
-    console.error("[rolesconfig] ❌ Error ensuring roles.json:", err);
+    console.error("[rolesconfig] ❌ Error ensuring roles config:", err);
   }
 }
 
 /**
  * Load roles configuration with caching
- * @param {boolean} forceReload - Force reload from disk
+ * @param {boolean} forceReload - Force reload from the store
  * @returns {Object|null} Roles configuration
  */
 function loadRolesConfig(forceReload = false) {
   const now = Date.now();
-  
+
   // Return cached config if valid
   if (!forceReload && rolesConfigCache && (now - cacheTimestamp) < CACHE_TTL) {
     return rolesConfigCache;
   }
 
-  ensureRolesConfig();
-
   try {
-    const raw = fs.readFileSync(rolesConfigPath, "utf8");
-    rolesConfigCache = JSON.parse(raw);
+    rolesConfigCache = stores.roles_config.readObject();
     cacheTimestamp = now;
-    
+
     console.log(`[rolesconfig] ✅ Loaded roles config for ${Object.keys(rolesConfigCache.guilds || {}).length} guilds`);
     return rolesConfigCache;
-    
+
   } catch (err) {
-    console.error("[rolesconfig] ❌ Error loading roles.json:", err);
+    console.error("[rolesconfig] ❌ Error loading roles config:", err);
     return null;
   }
 }
 
 /**
- * Save roles configuration to disk
+ * Save roles configuration (JSON + MySQL).
  * @param {Object} config - Roles configuration
  * @returns {boolean} Success status
  */
 function saveRolesConfig(config) {
   try {
-    // Create backup before writing
-    if (fs.existsSync(rolesConfigPath)) {
-      const backupPath = rolesConfigPath.replace('.json', '.backup.json');
-      fs.copyFileSync(rolesConfigPath, backupPath);
-    }
+    stores.roles_config.writeObject(config);
 
-    fs.writeFileSync(rolesConfigPath, JSON.stringify(config, null, 2));
-    
     // Invalidate cache
     rolesConfigCache = null;
     cacheTimestamp = 0;
-    
-    console.log("[rolesconfig] ✅ Saved roles.json");
+
+    console.log("[rolesconfig] ✅ Saved roles config");
     return true;
   } catch (err) {
-    console.error("[rolesconfig] ❌ Failed to save roles.json:", err);
+    console.error("[rolesconfig] ❌ Failed to save roles config:", err);
     return false;
   }
 }

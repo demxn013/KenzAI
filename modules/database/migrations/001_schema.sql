@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS members (
     discord_id            VARCHAR(20) NOT NULL,
     discord_user          VARCHAR(100) NOT NULL DEFAULT '',
     minecraft_user        VARCHAR(100) NOT NULL DEFAULT '',
-    minecraft_version     VARCHAR(50),
+    minecraft_version     VARCHAR(255),
     joined_clan           VARCHAR(100),
     clan_guild_id         VARCHAR(20),
     join_date             DATE,
@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS members (
     INDEX idx_draft_expiry    (draft_expiry_date),
     INDEX idx_points          (points)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- `minecraft_version` holds a free-text answer from the application form and can
+-- exceed the old VARCHAR(50). Widen it (idempotent) so a pre-existing `members`
+-- table is fixed too — the CREATE IF NOT EXISTS above won't alter a live table.
+ALTER TABLE members MODIFY COLUMN minecraft_version VARCHAR(255);
 
 -- ============================================================
 -- CLANS — one row per clan Discord server (keyed by guild id).

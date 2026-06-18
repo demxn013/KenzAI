@@ -176,6 +176,16 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // /relink confirm / cancel buttons
+        if (
+          interaction.customId.startsWith("relink_confirm|") ||
+          interaction.customId === "relink_cancel"
+        ) {
+          const cmd = client.commands.get("relink");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "relink");
+          return await cmd.buttonHandler(interaction);
+        }
+
         console.warn(`[interactionCreate] ⚠️ Unhandled button ID: ${interaction.customId}`);
 
       } catch (err) {

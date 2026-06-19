@@ -1,4 +1,4 @@
-// modules/admin/relink.js
+// modules/linking/relink.js
 // Admin-only /relink — rewrites a member's Discord identity (ID + username)
 // across EVERY data store. Use when a member loses access to their Discord
 // account and returns on a new one: all of their records (member profile,

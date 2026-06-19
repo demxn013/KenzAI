@@ -1,4 +1,4 @@
-// modules/admin/relinkCore.js
+// modules/linking/relinkCore.js
 // Pure, dependency-free transform used by /relink. Kept separate from the
 // Discord command shell (relink.js) so it can be unit-tested in isolation.
 //

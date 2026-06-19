@@ -176,14 +176,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
-        // /relink confirm / cancel buttons
+        // /relink confirm / cancel are handled by an in-command component
+        // collector (modules/linking/relink.js), not routed here.
         if (
-          interaction.customId.startsWith("relink_confirm|") ||
+          interaction.customId === "relink_confirm" ||
           interaction.customId === "relink_cancel"
         ) {
-          const cmd = client.commands.get("relink");
-          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "relink");
-          return await cmd.buttonHandler(interaction);
+          return;
         }
 
         console.warn(`[interactionCreate] ⚠️ Unhandled button ID: ${interaction.customId}`);

@@ -246,7 +246,7 @@ module.exports = {
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`relink_confirm|${oldId}|${newId}`)
+        .setCustomId("relink_confirm")
         .setLabel("Confirm relink")
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
@@ -255,36 +255,40 @@ module.exports = {
         .setStyle(ButtonStyle.Secondary)
     );
 
-    return interaction.editReply({ embeds: [embed], components: [row] });
-  },
+    await interaction.editReply({ embeds: [embed], components: [row] });
 
-  async buttonHandler(interaction) {
-    if (!isAdmin(interaction)) {
-      return interaction.reply({ content: "❌ Admin only.", ephemeral: true });
+    // Confirm/cancel is handled by an in-command collector so /relink does not
+    // depend on events/interactionCreate.js routing (event handlers only reload
+    // on a full process restart, not on a command hot-reload). The closure
+    // already holds oldId / newId / newUsername, so no re-fetch is needed.
+    const message = await interaction.fetchReply();
+    let choice;
+    try {
+      choice = await message.awaitMessageComponent({
+        filter: (i) => i.user.id === interaction.user.id,
+        time: 120000,
+      });
+    } catch {
+      return interaction.editReply({
+        content: "⏱️ Relink confirmation timed out — nothing was changed.",
+        embeds: [],
+        components: [],
+      });
     }
 
-    if (interaction.customId === "relink_cancel") {
-      return interaction.update({ content: "❌ Relink cancelled.", embeds: [], components: [] });
+    if (choice.customId === "relink_cancel") {
+      return choice.update({ content: "❌ Relink cancelled.", embeds: [], components: [] });
     }
-
-    if (!interaction.customId.startsWith("relink_confirm|")) return;
-
-    const [, oldId, newId] = interaction.customId.split("|");
 
     if (running) {
-      return interaction.reply({ content: "⏳ Another relink is already running.", ephemeral: true });
+      return choice.update({
+        content: "⏳ Another relink is already running. Try again in a moment.",
+        embeds: [],
+        components: [],
+      });
     }
 
-    // Re-fetch the new account's current username so stored names are accurate.
-    let newUsername = null;
-    try {
-      const u = await interaction.client.users.fetch(newId);
-      newUsername = u.username;
-    } catch {
-      // Account not fetchable — proceed, but leave usernames as-is.
-    }
-
-    await interaction.update({ content: "⏳ Relinking…", embeds: [], components: [] });
+    await choice.update({ content: "⏳ Relinking…", embeds: [], components: [] });
 
     running = true;
     let result;
@@ -292,13 +296,17 @@ module.exports = {
       result = processAll(oldId, newId, newUsername, true);
     } catch (e) {
       console.error("[/relink] apply error:", e);
-      return interaction.editReply(`❌ Relink failed: ${e.message}`);
+      return interaction.editReply({
+        content: `❌ Relink failed: ${e.message}`,
+        embeds: [],
+        components: [],
+      });
     } finally {
       running = false;
     }
 
     const writeErrors = result.report.filter((r) => r.writeError);
-    const embed = new EmbedBuilder()
+    const resultEmbed = new EmbedBuilder()
       .setTitle(writeErrors.length ? "⚠️ Relink completed with errors" : "✅ Relink complete")
       .setColor(writeErrors.length ? 0xe74c3c : 0x2ecc71)
       .setDescription(
@@ -312,6 +320,6 @@ module.exports = {
       )
       .setFooter({ text: "Remember to grant the new account the right Discord roles." });
 
-    return interaction.editReply({ content: "", embeds: [embed], components: [] });
+    return interaction.editReply({ content: "", embeds: [resultEmbed], components: [] });
   },
 };

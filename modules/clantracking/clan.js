@@ -69,7 +69,7 @@ module.exports = {
       sub
         .setName("remove")
         .setDescription("Remove a clan")
-        .addStringOption(opt => opt.setName("guildid").setDescription("Discord Guild ID").setRequired(true))
+        .addStringOption(opt => opt.setName("clan").setDescription("Clan name, abbreviation, or guild ID").setRequired(true))
     )
     .addSubcommand(sub =>
       sub
@@ -413,10 +413,18 @@ module.exports = {
     // -------------------------------------------------------------------------
     if (sub === "remove") {
       await interaction.deferReply();
-      const guildId = interaction.options.getString("guildid");
+      const input = interaction.options.getString("clan");
 
-      if (!clans[guildId]) {
-        return interaction.editReply({ content: "❌ No clan found.", ephemeral: true });
+      // Resolve by exact guild ID, or by abbreviation / full name (case-insensitive).
+      const guildId = clans[input]
+        ? input
+        : Object.keys(clans).find(id =>
+            clans[id].abbr?.toLowerCase() === input.toLowerCase() ||
+            clans[id].name?.toLowerCase() === input.toLowerCase()
+          );
+
+      if (!guildId || !clans[guildId]) {
+        return interaction.editReply({ content: `❌ Clan **${input}** not found.`, ephemeral: true });
       }
 
       const removed = clans[guildId];

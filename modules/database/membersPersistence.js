@@ -61,23 +61,13 @@ function shouldSyncMysql() {
 }
 
 /**
- * Determine which Discord IDs changed between oldMap and newMap.
- * Returns { added, updated, removed }.
- */
-function diffMaps(oldMap, newMap) {
-  const oldIds = new Set(Object.keys(oldMap || {}));
-  const newIds = new Set(Object.keys(newMap || {}));
-
-  const added   = [...newIds].filter(id => !oldIds.has(id));
-  const removed = [...oldIds].filter(id => !newIds.has(id));
-  const updated = [...newIds].filter(id => oldIds.has(id));
-
-  return { added, updated, removed };
-}
-
-/**
- * Sync only the changed rows to MySQL instead of doing a full replace.
- * Falls back to replaceAllUsers if we have no prior snapshot to diff against.
+ * Mirror the full members map to MySQL: deletes rows that are no longer present
+ * (e.g. after a /relink moves a member to a new Discord ID, or a member leaves)
+ * and upserts the rest, so the `members` table always matches members.json.
+ *
+ * A full replace is used (like every other store) because the previous diff
+ * approach marked all members as "updated" anyway — it upserted everyone but
+ * never detected removals, leaving stale ghost rows in MySQL.
  */
 function scheduleMysqlSync(newMap) {
   if (!shouldSyncMysql()) return;
@@ -86,30 +76,10 @@ function scheduleMysqlSync(newMap) {
 
   setImmediate(async () => {
     try {
-      const pool = mysqlPool.getPool();
-      if (!pool) return;
-
-      const { added, updated, removed } = diffMaps(memoryMembersMap, snapshot);
-
-      // Upsert new / changed rows
-      for (const id of [...added, ...updated]) {
-        await userRepository.upsertUser(id, snapshot[id]).catch(err =>
-          console.error(`[membersPersistence] ❌ MySQL upsert ${id}:`, err.message)
-        );
-      }
-
-      // Delete removed rows
-      for (const id of removed) {
-        await userRepository.deleteUser(id).catch(err =>
-          console.error(`[membersPersistence] ❌ MySQL delete ${id}:`, err.message)
-        );
-      }
+      if (!mysqlPool.getPool()) return;
+      await userRepository.replaceAllUsers(snapshot);
     } catch (err) {
       console.error("[membersPersistence] ❌ MySQL sync error:", err.message);
-      // Last-resort full replace
-      userRepository.replaceAllUsers(snapshot).catch(e =>
-        console.error("[membersPersistence] ❌ MySQL replaceAllUsers fallback:", e.message)
-      );
     }
   });
 }
@@ -136,7 +106,6 @@ function writeMembers(data) {
     return false;
   }
 
-  const previous = memoryMembersMap;
   memoryMembersMap = JSON.parse(JSON.stringify(data));
 
   writeMembersToDisk(memoryMembersMap);

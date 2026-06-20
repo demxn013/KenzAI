@@ -157,11 +157,47 @@ module.exports = {
         });
       }
 
+      // Auto-create (or reuse) a role in the MAIN Yazanaki discord named after
+      // the clan abbreviation, unless an explicit yazanaki role was supplied.
+      let resolvedYazanakiRole = yazanakiRole;
+      let yazanakiRoleNote = null;
+      if (!resolvedYazanakiRole) {
+        try {
+          const mainGuild = await interaction.client.guilds
+            .fetch(draftConfig.YAZANAKI_EMPIRE_GUILD_ID)
+            .catch(() => null);
+
+          if (!mainGuild) {
+            yazanakiRoleNote = "⚠️ Could not access the Yazanaki Empire server to create the clan role.";
+          } else {
+            const allRoles = await mainGuild.roles.fetch().catch(() => mainGuild.roles.cache);
+            const existing = allRoles?.find(r => r.name.toLowerCase() === abbr.toLowerCase());
+
+            if (existing) {
+              resolvedYazanakiRole = existing;
+              yazanakiRoleNote = `♻️ Reused existing Yazanaki role **${existing.name}**`;
+            } else {
+              resolvedYazanakiRole = await mainGuild.roles.create({
+                name: abbr,
+                mentionable: true,
+                reason: `Auto-created for clan ${abbr} (${name}) via /clan add by ${interaction.user.tag}`,
+              });
+              yazanakiRoleNote = `🎭 Created Yazanaki role **${abbr}** in the main server`;
+            }
+          }
+        } catch (err) {
+          console.error("[clan add] Failed to auto-create Yazanaki role:", err);
+          yazanakiRoleNote =
+            `⚠️ Failed to auto-create the Yazanaki role (${err.message}). ` +
+            `Set it manually with \`/clan edit clan:${abbr} yazanakirole:@Role\`.`;
+        }
+      }
+
       clans[guildId] = {
         abbr,
         name,
         joinedEmpire: new Date().toISOString().split("T")[0],
-        yazanakiRoleId: yazanakiRole ? yazanakiRole.id : null,
+        yazanakiRoleId: resolvedYazanakiRole ? resolvedYazanakiRole.id : null,
         clanRoleId: clanRole ? clanRole.id : null,
         residents: 0, // ✅ Initialize with 0 residents
         applicationMode // ✅ Per-clan application mode
@@ -191,19 +227,20 @@ module.exports = {
           }
           
           response += `**Role Status:**\n`;
-          
-          if (yazanakiRole) {
-            response += `✅ Yazanaki Role: ${yazanakiRole}\n`;
+
+          if (resolvedYazanakiRole) {
+            response += `✅ Yazanaki Role: ${resolvedYazanakiRole}\n`;
           } else {
-            response += `❌ Yazanaki Role: NOT SET (REQUIRED!)\n`;
-            response += `   Use: \`/clan setrole clan:${abbr} type:Yazanaki role:@RoleName\`\n`;
+            response += `❌ Yazanaki Role: NOT SET\n`;
+            response += `   Set it with \`/clan edit clan:${abbr} yazanakirole:@Role\`\n`;
           }
+          if (yazanakiRoleNote) response += `   ${yazanakiRoleNote}\n`;
           
           if (clanRole) {
             response += `✅ Clan Role: ${clanRole}\n`;
           } else {
             response += `⚠️ Clan Role: NOT SET (Optional)\n`;
-            response += `   Use: \`/clan setrole clan:${abbr} type:Clan role:@RoleName\`\n`;
+            response += `   Set it with \`/clan edit clan:${abbr} clanrole:@Role\`\n`;
           }
 
           const modeLabel = applicationMode === "timed" ? "Timed (7 days of guidelines)" : "Manual";
@@ -214,7 +251,11 @@ module.exports = {
           return interaction.editReply({ content: response });
         } else {
           return interaction.editReply({
-            content: `✅ Clan **${abbr}** added.\n⚠️ Bot not in guild. Set roles with \`/clan setrole\``
+            content:
+              `✅ Clan **${abbr}** added.` +
+              (resolvedYazanakiRole ? `\n✅ Yazanaki Role: ${resolvedYazanakiRole}` : "") +
+              (yazanakiRoleNote ? `\n${yazanakiRoleNote}` : "") +
+              `\n⚠️ Bot not in the clan's guild — set the clan-side role with \`/clan edit\`.`
           });
         }
       } catch (err) {

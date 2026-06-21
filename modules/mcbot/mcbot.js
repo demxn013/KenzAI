@@ -1095,6 +1095,8 @@ module.exports = {
         errMsg = `A bot for \`${pending.minecraftUser}\` is already running on \`${addr}\`.\nUse \`/mcbot stop\` first.`;
       } else if (reason === "max_bots_reached") {
         errMsg = `The VPS has reached its maximum bot limit (${startResponse.data?.max ?? "?"}). Try again later.`;
+      } else if (reason === "donutsmp_limit_reached") {
+        errMsg = `🍩 DonutSMP is at its **${startResponse.data?.max ?? 5}-bot limit** right now. This protects accounts from alt-detection bans — please try again once a slot frees up.`;
       }
 
       if (REQUIRE_SUBSCRIPTION && pending.preAssignedSlot) {

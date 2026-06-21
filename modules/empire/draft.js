@@ -11,6 +11,7 @@ const {
 } = require("./draftlogic");
 const config = require("./draftconfig");
 const { restartScheduler } = require("./draftscheduler");
+const { createDraftListEmbed } = require("./draftembed");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -31,6 +32,23 @@ module.exports = {
       sub
         .setName("list")
         .setDescription("List all active drafts")
+        .addStringOption(opt =>
+          opt
+            .setName("sort")
+            .setDescription("How to sort/group the list")
+            .setRequired(false)
+            .addChoices(
+              { name: "Time Remaining", value: "time" },
+              { name: "Clan", value: "clan" },
+              { name: "Draft Status", value: "status" }
+            )
+        )
+        .addStringOption(opt =>
+          opt
+            .setName("clan")
+            .setDescription("Only show drafts from this clan (name or abbreviation)")
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -153,39 +171,14 @@ module.exports = {
         });
       }
 
-      // Sort by days remaining (ascending)
-      activeDrafts.sort((a, b) => a.daysRemaining - b.daysRemaining);
+      const sort = interaction.options.getString("sort") || "time";
+      const clanFilter = interaction.options.getString("clan");
 
-      const embed = new EmbedBuilder()
-        .setTitle("🎖️ Active Drafts")
-        .setColor(0xFFAA00)
-        .setDescription(`Total: **${activeDrafts.length}** active draft(s)`)
-        .setFooter({ text: `${config.TESTING_MODE ? "TESTING MODE" : "Production Mode"}` });
-
-      const timeframe = config.TESTING_MODE ? "min" : "days";
-
-      // Discord allows at most 25 embed fields total — reserve one for truncation notice when needed
-      const maxDraftFields = activeDrafts.length > 25 ? 24 : 25;
-      activeDrafts.slice(0, maxDraftFields).forEach(draft => {
-        const user = `<@${draft.discordId}>`;
-        const empireId = draft.EmpireID || "n/d";
-        const clan = draft.JoinedClan || "n/d";
-        const remaining = draft.daysRemaining;
-
-        embed.addFields({
-          name: `${empireId} - ${clan}`,
-          value: `**Member:** ${user}\n**Time Left:** ${remaining} ${timeframe}\n**Reminder:** ${draft.draftReminderSent ? "✅" : "❌"} | **Notified:** ${draft.draftNotified ? "✅" : "❌"}`,
-          inline: false
-        });
+      const { embed } = createDraftListEmbed(activeDrafts, {
+        sort,
+        clanFilter,
+        testingMode: config.TESTING_MODE
       });
-
-      if (activeDrafts.length > 25) {
-        embed.addFields({
-          name: "⚠️ Too Many Drafts",
-          value: `Showing first ${maxDraftFields} of ${activeDrafts.length} active drafts.`,
-          inline: false
-        });
-      }
 
       return interaction.editReply({ embeds: [embed] });
     }

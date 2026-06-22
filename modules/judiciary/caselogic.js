@@ -344,6 +344,47 @@ function getAllCases(filters = {}) {
   return caseList;
 }
 
+/**
+ * Pardon every active case against a user.
+ * Finds all non-archived cases whose accused is `discordId`, marks them PARDONED,
+ * and moves them to the archived cases store. Already-terminal cases are skipped.
+ * @param {string} discordId - Accused user's Discord ID
+ * @param {string} actorId - Discord ID of the royalty member issuing the pardon
+ * @returns {{ pardoned: string[] }} list of pardoned case IDs
+ */
+function pardonCasesForUser(discordId, actorId) {
+  const TERMINAL = ["CLOSED", "DISMISSED", "PARDONED"];
+  const cases = readCases();
+  const pardoned = [];
+
+  for (const [caseId, caseData] of Object.entries(cases)) {
+    if (caseData?.parties?.accused?.discord_id !== discordId) continue;
+    if (TERMINAL.includes(caseData?.metadata?.state)) continue;
+
+    caseData.metadata.previous_states = caseData.metadata.previous_states || [];
+    caseData.metadata.previous_states.push(caseData.metadata.state);
+    caseData.metadata.state = "PARDONED";
+    caseData.metadata.last_updated = new Date().toISOString();
+    caseData.metadata.pardoned_by = actorId;
+    caseData.metadata.pardoned_at = new Date().toISOString();
+
+    cases[caseId] = caseData;
+    pardoned.push(caseId);
+
+    auditLog("CASE_PARDONED", caseId, actorId, { accused: discordId });
+  }
+
+  if (pardoned.length === 0) return { pardoned };
+
+  // Persist the PARDONED state, then archive each pardoned case.
+  writeCases(cases);
+  for (const caseId of pardoned) {
+    archiveCase(caseId);
+  }
+
+  return { pardoned };
+}
+
 module.exports = {
   readCases,
   writeCases,
@@ -355,5 +396,6 @@ module.exports = {
   getCase,
   updateCase,
   archiveCase,
-  getAllCases
+  getAllCases,
+  pardonCasesForUser
 };

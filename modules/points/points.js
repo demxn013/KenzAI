@@ -34,29 +34,8 @@ const { readClans } = require("../clantracking/clanlogic");
 const clemsDir = path.join(__dirname, "../images/clanemblems");
 const YZNK_EMBLEM_PATH = path.join(clemsDir, "YZNK.png");
 
-// Clan abbreviation → Discord emoji ID mapping (from Yazanaki Empire server)
-const CLAN_EMOJI_IDS = {
-  ANO:  "1335362902953037884",
-  SNU:  "1225251585983119400",
-  ONA:  "1334862597798891602",
-  ONF:  "1334862640392044616",
-  YZNK: "1334529701527683225",
-  KSII: "1334862565812994109",
-};
-
-/**
- * Returns a Discord custom emoji string for a clan abbreviation, if mapped.
- * Falls back to an empty string if no emoji is configured for that clan.
- * @param {string} abbr - Clan abbreviation (e.g. "SNU")
- * @returns {string} e.g. "<:SNU:1225251585983119400> " or ""
- */
-function getClanEmoji(abbr) {
-  if (!abbr) return "";
-  const upper = abbr.toUpperCase();
-  const emojiId = CLAN_EMOJI_IDS[upper];
-  if (!emojiId) return "";
-  return `<:${upper}:${emojiId}> `;
-}
+// Clan abbreviation → Discord emoji mapping (shared single source of truth)
+const { getClanEmoji } = require("../clantracking/clanEmojis");
 
 /**
  * Build the invite counts display for a member.

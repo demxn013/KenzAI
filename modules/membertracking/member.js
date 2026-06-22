@@ -139,7 +139,8 @@ module.exports = {
           `**Former Clan:** ${result.clan}\n` +
           `**Reason:** ${reason}\n\n` +
           `**Can Reapply:** <t:${reapplyTimestamp}:F> (<t:${reapplyTimestamp}:R>)\n\n` +
-          `All empire roles have been removed.`
+          `Empire & clan-membership roles were removed and the **Random** role was restored. ` +
+          `Roles unrelated to the empire were left untouched.`
         )
         .setColor(0xFF6600)
         .setFooter({ text: `Kicked by ${interaction.user.tag}` })

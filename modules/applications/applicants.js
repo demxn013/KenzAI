@@ -86,8 +86,23 @@ function getAllApplicants() {
   return loadApplicants();
 }
 
+/**
+ * Delete an applicant record entirely.
+ * Used to clear a post-rejection cooldown (e.g. via /pardon).
+ * @param {string} discordId
+ * @returns {boolean} true if a record existed and was removed
+ */
+function deleteApplicant(discordId) {
+  const data = loadApplicants();
+  if (!data[discordId]) return false;
+  delete data[discordId];
+  saveApplicants(data);
+  return true;
+}
+
 module.exports = {
   saveApplicant,
   getApplicant,
-  getAllApplicants
+  getAllApplicants,
+  deleteApplicant
 };

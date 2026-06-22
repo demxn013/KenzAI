@@ -11,6 +11,7 @@ const { readClans } = require("../database/clansPersistence");
 const { appendEvent } = require("../database/repositories/memberEventsRepository");
 const { loadEmpireRegistry, saveEmpireRegistry } = require("../database/empireRegistryPersistence");
 const { stores } = require("../database/stores");
+const { getApplicant } = require("../applications/applicants");
 
 const dataDir = path.join(__dirname, "..", "data");
 const kickedMembersPath = path.join(dataDir, "kicked_members.json");
@@ -24,6 +25,13 @@ const STORE_BY_FILE = {
 
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 const KICK_COOLDOWN_DAYS = 90; // 3 months
+const REJECTION_COOLDOWN_DAYS = 90; // 3 months — applicants rejected cannot reapply for this long
+
+// "Random" role in Yazanaki Empire — the baseline role every non-member holds.
+// It is removed on acceptance and must be restored on kick so the user keeps a
+// valid baseline role instead of being left with only @everyone.
+const YAZANAKI_RANDOM_ROLE_ID = "1334846750707421194";
+const RANDOM_ROLE_NAME = "random";
 
 // ============================================================
 // DATA ACCESS
@@ -139,21 +147,53 @@ async function addEmpireEnemyRole(discordId, client) {
 }
 
 /**
- * Remove all Yazanaki Empire roles from a member
+ * Remove the "empire enemy" role from a member in the Yazanaki guild (used when un-banning / pardoning).
  */
-async function removeAllYazanakiRoles(discordId, client) {
+async function removeEmpireEnemyRole(discordId, client) {
+  try {
+    let rolesConfig = {};
+    try {
+      rolesConfig = stores.roles_config.readObject();
+    } catch (err) {
+      console.warn(`[memberkickban] ⚠️ Could not load roles config for empire enemy role:`, err.message);
+      return false;
+    }
+    const roleId = getEmpireEnemyRoleId(rolesConfig);
+    if (!roleId) return false;
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member) return false;
+    if (!member.roles.cache.has(roleId)) return true;
+    await member.roles.remove(roleId);
+    console.log(`[memberkickban] 🎭 Removed empire enemy role from ${discordId}`);
+    return true;
+  } catch (err) {
+    console.error(`[memberkickban] ❌ Error removing empire enemy role:`, err);
+    return false;
+  }
+}
+
+/**
+ * Remove all Yazanaki Empire roles from a member
+ * @param {string} discordId
+ * @param {Client} client
+ * @param {Object} [options]
+ * @param {string[]} [options.keepRoleIds] - role IDs to leave untouched (e.g. the "Random" baseline role on kick)
+ */
+async function removeAllYazanakiRoles(discordId, client, options = {}) {
+  const keepRoleIds = new Set(options.keepRoleIds || []);
   try {
     const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
     const member = await guild.members.fetch(discordId).catch(() => null);
-    
+
     if (!member) {
       console.warn(`[memberkickban] ⚠️ Member ${discordId} not in Yazanaki Empire`);
       return 0;
     }
-    
+
     // Load role configuration
     let rolesConfig = {};
-    
+
     try {
       rolesConfig = stores.roles_config.readObject();
     } catch (err) {
@@ -161,12 +201,13 @@ async function removeAllYazanakiRoles(discordId, client) {
     }
 
     const yazanakiConfig = rolesConfig.guilds?.[YAZANAKI_EMPIRE_GUILD_ID];
-    
+
     let removedCount = 0;
-    
+
     // Remove all rank roles
     if (yazanakiConfig?.rankRoles) {
       for (const roleId of Object.keys(yazanakiConfig.rankRoles)) {
+        if (keepRoleIds.has(roleId)) continue;
         if (member.roles.cache.has(roleId)) {
           await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove rank role ${roleId}:`, err.message));
           removedCount++;
@@ -178,6 +219,7 @@ async function removeAllYazanakiRoles(discordId, client) {
     // Remove all status roles
     if (yazanakiConfig?.statusRoles) {
       for (const roleId of Object.keys(yazanakiConfig.statusRoles)) {
+        if (keepRoleIds.has(roleId)) continue;
         if (member.roles.cache.has(roleId)) {
           await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove status role ${roleId}:`, err.message));
           removedCount++;
@@ -210,8 +252,12 @@ async function removeAllYazanakiRoles(discordId, client) {
 }
 
 /**
- * ✅ NEW: Remove all roles from the member's clan discord server
- * This removes the clanRoleId and any clan-specific inner ranks
+ * Remove the member's clan-membership role from their clan discord server.
+ *
+ * NOTE: roles.json auto-imports *every* role of a clan guild into `rankRoles`,
+ * so removing that whole list used to strip ALL of a member's roles (colours,
+ * self-assigned/personal roles, etc.). We now remove only the clan membership
+ * role (`clanRoleId`) and leave every unrelated role intact.
  */
 async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
   if (!clanGuildId) return 0;
@@ -231,51 +277,68 @@ async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
 
     let removedCount = 0;
 
-    // Load roles.json to check if clan guild has role config
-    let rolesConfig = {};
-    try {
-      rolesConfig = stores.roles_config.readObject();
-    } catch (err) {
-      console.warn(`[memberkickban] ⚠️ Could not load roles config for clan role removal:`, err.message);
-    }
-
-    const clanGuildConfig = rolesConfig.guilds?.[clanGuildId];
-
-    // Remove all rank roles in clan discord if configured
-    if (clanGuildConfig?.rankRoles) {
-      for (const roleId of Object.keys(clanGuildConfig.rankRoles)) {
-        if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan rank role ${roleId}:`, err.message));
-          removedCount++;
-          console.log(`[memberkickban] 🎭 Removed clan rank role: ${clanGuildConfig.rankRoles[roleId].name} (${clanGuildId})`);
-        }
-      }
-    }
-
-    // Remove all status roles in clan discord if configured
-    if (clanGuildConfig?.statusRoles) {
-      for (const roleId of Object.keys(clanGuildConfig.statusRoles)) {
-        if (member.roles.cache.has(roleId)) {
-          await member.roles.remove(roleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clan status role ${roleId}:`, err.message));
-          removedCount++;
-          console.log(`[memberkickban] 🎭 Removed clan status role: ${clanGuildConfig.statusRoles[roleId].name} (${clanGuildId})`);
-        }
-      }
-    }
-
-    // Also remove the clanRoleId specifically (the "member" role)
+    // Remove only the clan membership role (clanRoleId). All other roles
+    // (colour roles, personal roles, anything unrelated to the clan) are kept.
     if (clanData?.clanRoleId && member.roles.cache.has(clanData.clanRoleId)) {
       await member.roles.remove(clanData.clanRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clanRoleId:`, err.message));
       removedCount++;
       console.log(`[memberkickban] 🎭 Removed clan member role (clanRoleId) in clan discord`);
+    } else {
+      console.log(`[memberkickban] ℹ️ No clan membership role to remove in guild ${clanGuildId}`);
     }
 
-    console.log(`[memberkickban] ✅ Removed ${removedCount} clan roles from ${discordId} in guild ${clanGuildId}`);
+    console.log(`[memberkickban] ✅ Removed ${removedCount} clan role(s) from ${discordId} in guild ${clanGuildId} (unrelated roles preserved)`);
     return removedCount;
 
   } catch (err) {
     console.error(`[memberkickban] ❌ Error removing clan roles for ${discordId} in ${clanGuildId}:`, err);
     return 0;
+  }
+}
+
+/**
+ * Restore the baseline "Random" role to a kicked member.
+ * Adds the Yazanaki "Random" role (by ID) and, if present, a clan role literally
+ * named "Random" (mirrors what acceptance removes), so a kicked member ends up
+ * back in their pre-membership baseline state instead of role-less.
+ */
+async function restoreRandomRole(discordId, clanGuildId, client) {
+  // 1. Yazanaki Empire "Random" role (fixed ID)
+  try {
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (member) {
+      const randomRole = guild.roles.cache.get(YAZANAKI_RANDOM_ROLE_ID);
+      if (randomRole && !member.roles.cache.has(YAZANAKI_RANDOM_ROLE_ID)) {
+        await member.roles.add(YAZANAKI_RANDOM_ROLE_ID);
+        console.log(`[memberkickban] 🎭 Restored Yazanaki "Random" role to ${discordId}`);
+      } else if (!randomRole) {
+        console.warn(`[memberkickban] ⚠️ Yazanaki "Random" role (${YAZANAKI_RANDOM_ROLE_ID}) not found in guild`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[memberkickban] ⚠️ Could not restore Yazanaki "Random" role:`, err.message);
+  }
+
+  // 2. Clan discord "Random" role (matched by name, mirroring acceptance)
+  if (clanGuildId) {
+    try {
+      const clanGuild = await client.guilds.fetch(clanGuildId).catch(() => null);
+      if (clanGuild) {
+        const member = await clanGuild.members.fetch(discordId).catch(() => null);
+        if (member) {
+          const randomRole = clanGuild.roles.cache.find(
+            (r) => r && r.name && r.name.toLowerCase() === RANDOM_ROLE_NAME
+          );
+          if (randomRole && !member.roles.cache.has(randomRole.id)) {
+            await member.roles.add(randomRole.id);
+            console.log(`[memberkickban] 🎭 Restored clan "Random" role in guild ${clanGuildId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[memberkickban] ⚠️ Could not restore clan "Random" role:`, err.message);
+    }
   }
 }
 
@@ -310,11 +373,14 @@ async function kickMember(discordId, reason, client) {
   }
   
   try {
-    // 1. Remove all Yazanaki Empire roles
-    const yazanakiRolesRemoved = await removeAllYazanakiRoles(discordId, client);
+    // 1. Remove Yazanaki Empire roles — but KEEP the baseline "Random" role so
+    //    we don't strip-then-re-add it, and so unrelated roles stay untouched.
+    const yazanakiRolesRemoved = await removeAllYazanakiRoles(discordId, client, {
+      keepRoleIds: [YAZANAKI_RANDOM_ROLE_ID],
+    });
     console.log(`[memberkickban] 🎭 Yazanaki roles removed: ${yazanakiRolesRemoved}`);
 
-    // 2. ✅ NEW: Remove all roles from clan discord
+    // 2. Remove the clan membership role from the clan discord (unrelated roles kept)
     const clanName = member.JoinedClan;
     let clanGuildId = null;
     let clanEntry = null;
@@ -329,7 +395,10 @@ async function kickMember(discordId, reason, client) {
         console.warn(`[memberkickban] ⚠️ Could not find clan entry for: ${clanName}`);
       }
     }
-    
+
+    // 2b. Restore the baseline "Random" role(s) so the kicked member isn't left role-less.
+    await restoreRandomRole(discordId, clanGuildId, client);
+
     // 3. Decrement clan resident count
     if (clanGuildId) {
       const decremented = decrementClanResidents(clanGuildId);
@@ -555,8 +624,38 @@ async function banMember(discordId, reason, client) {
 // ============================================================
 
 /**
+ * Determine whether a user is within the post-rejection cooldown window.
+ * A rejection is an applicant record that was closed (`closedAt`) without being
+ * accepted. The cooldown lasts REJECTION_COOLDOWN_DAYS from the rejection date.
+ * @param {string} discordId
+ * @returns {{ onCooldown: boolean, rejectedAt?: string, canReapplyAt?: Date }}
+ */
+function getRejectionCooldown(discordId) {
+  let applicant = null;
+  try {
+    applicant = getApplicant(discordId);
+  } catch (err) {
+    console.warn(`[memberkickban] ⚠️ Could not read applicant record for ${discordId}:`, err.message);
+    return { onCooldown: false };
+  }
+
+  // Only a closed-and-rejected application counts (open or accepted ones don't).
+  if (!applicant || applicant.accepted || !applicant.closedAt) {
+    return { onCooldown: false };
+  }
+
+  const rejectedAt = new Date(applicant.closedAt);
+  if (Number.isNaN(rejectedAt.getTime())) return { onCooldown: false };
+
+  const canReapplyAt = new Date(rejectedAt.getTime() + REJECTION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+  if (new Date() >= canReapplyAt) return { onCooldown: false };
+
+  return { onCooldown: true, rejectedAt: applicant.closedAt, canReapplyAt };
+}
+
+/**
  * Check if a user is eligible to apply
- * Returns status: "eligible", "kicked", or "banned"
+ * Returns status: "eligible", "kicked", "banned", or "rejected"
  * @param {string} discordId - Discord user ID
  * @returns {Object} Eligibility status
  */
@@ -614,8 +713,27 @@ function checkApplicationEligibility(discordId) {
       };
     }
   }
-  
-  // Not kicked or banned - eligible
+
+  // Check if a previous application was rejected within the cooldown window
+  const rejection = getRejectionCooldown(discordId);
+  if (rejection.onCooldown) {
+    const reapplyTimestamp = Math.floor(rejection.canReapplyAt.getTime() / 1000);
+
+    console.log(`[memberkickban] ⏰ User is on REJECTED-APPLICATION COOLDOWN`);
+    console.log(`[memberkickban] 📅 Can reapply: ${rejection.canReapplyAt.toISOString()}`);
+
+    return {
+      eligible: false,
+      status: "rejected",
+      rejectedAt: rejection.rejectedAt,
+      canReapplyAt: rejection.canReapplyAt.toISOString(),
+      message:
+        `❌ **Your previous application was rejected.**\n\n` +
+        `You can apply again: <t:${reapplyTimestamp}:F> (<t:${reapplyTimestamp}:R>)`
+    };
+  }
+
+  // Not kicked, banned, or recently rejected - eligible
   console.log(`[memberkickban] ✅ User is eligible to apply`);
   
   return {
@@ -626,6 +744,45 @@ function checkApplicationEligibility(discordId) {
 }
 
 // ============================================================
+// PARDON HELPERS (undo punishments)
+// ============================================================
+
+/**
+ * Lift a member's kick cooldown by removing their kicked_members record.
+ * @returns {{ lifted: boolean, kickReason?: string }}
+ */
+function liftKickCooldown(discordId) {
+  const kickedMembers = readJSON(kickedMembersPath);
+  if (!kickedMembers[discordId]) return { lifted: false };
+
+  const kickReason = kickedMembers[discordId].kickReason;
+  delete kickedMembers[discordId];
+  writeJSON(kickedMembersPath, kickedMembers);
+  console.log(`[memberkickban] 🕊️ Lifted kick cooldown for ${discordId}`);
+  return { lifted: true, kickReason };
+}
+
+/**
+ * Lift a member's ban: remove their banned_members record and the empire enemy role.
+ * @returns {Promise<{ lifted: boolean, banReason?: string }>}
+ */
+async function liftBan(discordId, client) {
+  const bannedMembers = readJSON(bannedMembersPath);
+  const banRecord = bannedMembers[discordId];
+
+  // Always attempt to strip the enemy role, even if the record is already gone.
+  await removeEmpireEnemyRole(discordId, client);
+
+  if (!banRecord) return { lifted: false };
+
+  const banReason = banRecord.banReason;
+  delete bannedMembers[discordId];
+  writeJSON(bannedMembersPath, bannedMembers);
+  console.log(`[memberkickban] 🕊️ Lifted ban for ${discordId}`);
+  return { lifted: true, banReason };
+}
+
+// ============================================================
 // EXPORTS
 // ============================================================
 
@@ -633,5 +790,11 @@ module.exports = {
   kickMember,
   banMember,
   checkApplicationEligibility,
-  KICK_COOLDOWN_DAYS
+  getRejectionCooldown,
+  restoreRandomRole,
+  removeEmpireEnemyRole,
+  liftKickCooldown,
+  liftBan,
+  KICK_COOLDOWN_DAYS,
+  REJECTION_COOLDOWN_DAYS
 };

@@ -13,6 +13,7 @@ const crypto = require('crypto');
 // ============================================================
 const { initDatabase } = require('./modules/database/bootstrap');
 const { startScheduler } = require('./modules/empire/draftscheduler');
+const { startRoleScheduler } = require('./modules/roles/roleScheduler');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
 const { startBotMonitor } = require('./modules/mcbot/botmonitor');
 
@@ -234,6 +235,9 @@ client.once('ready', async () => {
 
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
+
+  console.log("🔄 Starting daily clan role refresh...");
+  startRoleScheduler(client);
 
   setupPointsEvents(client);
 

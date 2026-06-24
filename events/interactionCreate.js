@@ -120,34 +120,15 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
-        // ── /shop buttons (new) ──────────────────────────────
+        // ── /shop category buttons (badges / capes / pets) ───
         if (
-          interaction.customId.startsWith("shop_discord") ||
-          interaction.customId.startsWith("shop_in_game") ||
-          interaction.customId.startsWith("shop_clan") ||
-          interaction.customId.startsWith("shop_redeem_")
+          interaction.customId === "shop_badge" ||
+          interaction.customId === "shop_cape" ||
+          interaction.customId === "shop_pet"
         ) {
           const cmd = client.commands.get("shop");
           if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "shop");
           return await cmd.buttonHandler(interaction);
-        }
-
-        // ── Legacy /points shop buttons (backward compat) ────
-        if (
-          interaction.customId.startsWith("points_shop_") ||
-          interaction.customId.startsWith("points_redeem_")
-        ) {
-          // Route to shop command for backward compatibility
-          const cmd = client.commands.get("shop");
-          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "shop");
-          // Translate old customId to new format
-          const translatedId = interaction.customId
-            .replace("points_shop_", "shop_")
-            .replace("points_redeem_", "shop_redeem_");
-          // Patch the customId temporarily for routing
-          const patchedInteraction = Object.create(interaction);
-          Object.defineProperty(patchedInteraction, "customId", { value: translatedId });
-          return await cmd.buttonHandler(patchedInteraction);
         }
 
         // Patreon info button (from mcbot upsell embed)
@@ -200,24 +181,21 @@ module.exports = {
     // ----------------------------------------------------------
     if (interaction.isStringSelectMenu()) {
       try {
-        // /shop select menu (new)
-        if (interaction.customId === "shop_select_reward") {
+        // /shop buy select
+        if (interaction.customId === "shop_buy_select") {
           const cmd = client.commands.get("shop");
           if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "shop");
           return await cmd.selectMenuHandler(interaction);
         }
 
-        // Legacy /points select menu — reroute to shop
-        if (interaction.customId === "points_select_reward") {
-          const cmd = client.commands.get("shop");
-          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "shop");
-          // Translate value prefix
-          const patchedInteraction = Object.create(interaction);
-          Object.defineProperty(patchedInteraction, "customId", { value: "shop_select_reward" });
-          Object.defineProperty(patchedInteraction, "values", {
-            value: interaction.values.map(v => v.replace("points_redeem_", "shop_redeem_"))
-          });
-          return await cmd.selectMenuHandler(patchedInteraction);
+        // /profile equip / unequip selects
+        if (
+          interaction.customId === "profile_equip_select" ||
+          interaction.customId === "profile_unequip_select"
+        ) {
+          const cmd = client.commands.get("profile");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "profile");
+          return await cmd.selectMenuHandler(interaction);
         }
 
         // /empireid list — filter menu
@@ -261,35 +239,6 @@ module.exports = {
           const cmd = client.commands.get("application");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "application");
           return await cmd.modalHandler(interaction);
-        }
-
-        // /shop modals (new)
-        if (
-          interaction.customId.startsWith("shop_customrole_modal_") ||
-          interaction.customId.startsWith("shop_nickname_modal_") ||
-          interaction.customId.startsWith("shop_clan_build_modal_")
-        ) {
-          const cmd = client.commands.get("shop");
-          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "shop");
-          return await cmd.modalHandler(interaction);
-        }
-
-        // Legacy /points modals — reroute to shop
-        if (
-          interaction.customId.startsWith("points_customrole_modal_") ||
-          interaction.customId.startsWith("points_nickname_modal_") ||
-          interaction.customId.startsWith("points_clan_build_modal_")
-        ) {
-          const cmd = client.commands.get("shop");
-          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "shop");
-          const patchedInteraction = Object.create(interaction);
-          Object.defineProperty(patchedInteraction, "customId", {
-            value: interaction.customId
-              .replace("points_customrole_modal_", "shop_customrole_modal_")
-              .replace("points_nickname_modal_", "shop_nickname_modal_")
-              .replace("points_clan_build_modal_", "shop_clan_build_modal_")
-          });
-          return await cmd.modalHandler(patchedInteraction);
         }
 
         console.warn(`[interactionCreate] ⚠️ Unhandled modal ID: ${interaction.customId}`);

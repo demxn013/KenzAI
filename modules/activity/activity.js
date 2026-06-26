@@ -4,19 +4,25 @@
 // You paste the message link of an activity-check post and pick the clan it
 // applies to. Clan members prove they're active by reacting to that message
 // with their clan's logo emoji (see modules/clantracking/clanEmojis.js, sourced
-// from modules/images/clanemblems). The command then reports which clan members
-// reacted (active) and which did not (inactive).
+// from modules/images/clanemblems). The command reports which clan members
+// reacted (active) and which did not (inactive), then offers a single
+// confirmation to kick the inactive members from the clan via kickMember()
+// (modules/membertracking/memberkickban.js).
 
 const {
   SlashCommandBuilder,
   EmbedBuilder,
   PermissionsBitField,
   MessageFlags,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } = require("discord.js");
 
 const { getClanEmojiId, getClanEmoji } = require("../clantracking/clanEmojis");
 const { readClans } = require("../database/clansPersistence");
 const { readMembers } = require("../database/membersPersistence");
+const { kickMember } = require("../membertracking/memberkickban");
 
 // Static snapshot used only to build the command's clan choice list at registration.
 // Runtime resolution always reads clans live via readClans().
@@ -72,7 +78,7 @@ module.exports = {
     .addSubcommand((sub) => {
       sub
         .setName("check")
-        .setDescription("Tally which clan members reacted to an activity-check message with their clan emoji")
+        .setDescription("Tally reactions to an activity-check message and kick clan members who didn't react")
         .addStringOption((opt) =>
           opt
             .setName("message")
@@ -207,11 +213,123 @@ module.exports = {
     if (!reaction) {
       embed.addFields({
         name: "⚠️ Note",
-        value: `No ${getClanEmoji(clanAbbr)}\`:${clanAbbr}:\` reactions found on that message yet. Everyone shows as inactive.`,
+        value: `No ${getClanEmoji(clanAbbr)}\`:${clanAbbr}:\` reactions found on that message yet. Everyone shows as inactive — **no one will be kicked**.`,
         inline: false,
       });
     }
 
-    return interaction.editReply({ embeds: [embed] });
+    // ── Decide whether a bulk kick is safe to offer ──────────────────────────
+    // Never offer to kick when we couldn't find the clan-emoji reaction, or when
+    // nobody actually reacted: in those cases the entire roster shows as
+    // "inactive", and that's almost always a wrong-message-link mistake rather
+    // than a real mass-inactivity event. We also never kick the admin running
+    // the command.
+    const kickTargets = inactive.filter((id) => id !== interaction.user.id);
+    const canKick = !!reaction && reactorIds.size > 0 && kickTargets.length > 0;
+
+    if (!canKick) {
+      return interaction.editReply({ embeds: [embed] });
+    }
+
+    // Mass kicks are destructive (roles removed, 3-month reapply cooldown) and
+    // hard to undo, so require one explicit confirmation first.
+    const plural = kickTargets.length === 1 ? "" : "s";
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("activity_kick_confirm")
+        .setLabel(`Kick ${kickTargets.length} inactive member${plural}`)
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId("activity_kick_cancel")
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    embed.addFields({
+      name: "⚠️ Confirm kick",
+      value:
+        `Clicking **Kick** removes the **${kickTargets.length}** member${plural} listed under ` +
+        `“Did not react” from **${clanName}** — roles stripped, moved to the kicked list, ` +
+        `3-month reapply cooldown.`,
+      inline: false,
+    });
+
+    await interaction.editReply({ embeds: [embed], components: [row] });
+
+    // In-command collector (mirrors /relink) so this doesn't depend on
+    // events/interactionCreate.js routing, which only reloads on a full restart.
+    const promptMessage = await interaction.fetchReply();
+    let choice;
+    try {
+      choice = await promptMessage.awaitMessageComponent({
+        filter: (i) => i.user.id === interaction.user.id,
+        time: 120000,
+      });
+    } catch {
+      return interaction.editReply({
+        content: "⏱️ Activity-check kick timed out — no one was kicked.",
+        embeds: [embed],
+        components: [],
+      });
+    }
+
+    if (choice.customId === "activity_kick_cancel") {
+      return choice.update({
+        content: "❌ Cancelled — no one was kicked.",
+        embeds: [embed],
+        components: [],
+      });
+    }
+
+    await choice.update({
+      content: `⏳ Kicking ${kickTargets.length} inactive member${plural}…`,
+      embeds: [embed],
+      components: [],
+    });
+
+    const kickReason = `Failed activity check for ${clanName} — did not react to the activity-check message`;
+    const kickedIds = [];
+    const failedIds = [];
+
+    // Sequential on purpose: kickMember does a full read-modify-write of
+    // members.json, so concurrent kicks would race on the same map.
+    for (const id of kickTargets) {
+      try {
+        const res = await kickMember(id, kickReason, interaction.client);
+        if (res?.success) kickedIds.push(id);
+        else failedIds.push(id);
+      } catch (err) {
+        console.error(`[/activity check] ❌ Error kicking ${id}:`, err);
+        failedIds.push(id);
+      }
+    }
+
+    const resultEmbed = new EmbedBuilder()
+      .setTitle(`📋 Activity Check — ${getClanEmoji(clanAbbr)}${clanName}`)
+      .setColor(failedIds.length ? 0xe67e22 : 0x2ecc71)
+      .setURL(link)
+      .setDescription(
+        `**Kicked for inactivity:** ${kickedIds.length}\n` +
+        (failedIds.length ? `**Failed to kick:** ${failedIds.length} (see logs)\n` : "") +
+        `**Still active:** ${active.length}\n` +
+        `\n[Jump to activity-check message](${link})`
+      )
+      .setFooter({ text: `Activity check by ${interaction.user.tag}` })
+      .setTimestamp();
+
+    resultEmbed.addFields({
+      name: `👢 Kicked (${kickedIds.length})`,
+      value: renderMemberList(kickedIds).slice(0, 1024),
+      inline: false,
+    });
+    if (failedIds.length) {
+      resultEmbed.addFields({
+        name: `⚠️ Could not kick (${failedIds.length})`,
+        value: renderMemberList(failedIds).slice(0, 1024),
+        inline: false,
+      });
+    }
+
+    return interaction.editReply({ content: "", embeds: [resultEmbed], components: [] });
   },
 };

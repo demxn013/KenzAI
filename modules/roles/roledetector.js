@@ -219,6 +219,25 @@ async function detectRolesFromDiscord(discordId, client) {
       }
     }
 
+    // Active draft always presents as "Draft", even though Military outranks
+    // Draft in the role precedence above: draftees are enrolled in the military
+    // for their 3-month draft period, so they hold the Military role too. We key
+    // this off the draft *record* (draftExpiryDate / draftCompletedDate via
+    // draftlogic.isDraftActive) rather than the Draft role, so a stale Draft role
+    // can't pin someone to Draft forever — once the draft expires/completes they
+    // fall back to Military. Lazy require keeps roledetector free of any
+    // load-order cycle with the draft module.
+    try {
+      const { getDraftStatus } = require("../empire/draftlogic");
+      const draft = getDraftStatus(discordId);
+      if (draft?.isActive) {
+        bestStatus = "Draft";
+        console.log("[roledetector] 🎖️ Active draft → status forced to Draft");
+      }
+    } catch (err) {
+      console.warn("[roledetector] ⚠️ Could not check active draft:", err.message);
+    }
+
     // ============================================================
     // DETECT RANK (highest priority)
     // ============================================================

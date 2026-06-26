@@ -23,6 +23,7 @@ const { getClanEmojiId, getClanEmoji } = require("../clantracking/clanEmojis");
 const { readClans } = require("../database/clansPersistence");
 const { readMembers } = require("../database/membersPersistence");
 const { kickMember } = require("../membertracking/memberkickban");
+const { stores } = require("../database/stores");
 
 // Static snapshot used only to build the command's clan choice list at registration.
 // Runtime resolution always reads clans live via readClans().
@@ -40,6 +41,25 @@ try {
 
 const MESSAGE_LINK_RE = /channels\/(\d+)\/(\d+)\/(\d+)/;
 const MAX_LIST = 40; // cap mentions per embed field to stay within Discord limits
+
+// Main Yazanaki Empire guild + "Royalty" status role. Royalty members are
+// exempt from activity-check kicks. The role ID is read live from roles.json
+// (statusRoles, by name) with a known fallback — same lookup used by
+// modules/clantracking/clan.js and modules/applications/application.js.
+const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
+const ROYALTY_ROLE_FALLBACK_ID = "1334642034472128654";
+
+function getRoyaltyRoleId() {
+  try {
+    const rolesConfig = stores.roles_config.readObject();
+    const statusRoles = rolesConfig?.guilds?.[YAZANAKI_EMPIRE_GUILD_ID]?.statusRoles || {};
+    const entry = Object.entries(statusRoles).find(([, r]) => r?.name === "Royalty");
+    if (entry) return entry[0];
+  } catch (err) {
+    console.warn("[/activity check] ⚠️ Could not read roles config for Royalty role:", err.message);
+  }
+  return ROYALTY_ROLE_FALLBACK_ID;
+}
 
 /**
  * Fetch every (non-bot) user ID that reacted with a given reaction, paginating
@@ -223,9 +243,45 @@ module.exports = {
     // nobody actually reacted: in those cases the entire roster shows as
     // "inactive", and that's almost always a wrong-message-link mistake rather
     // than a real mass-inactivity event. We also never kick the admin running
-    // the command.
-    const kickTargets = inactive.filter((id) => id !== interaction.user.id);
-    const canKick = !!reaction && reactorIds.size > 0 && kickTargets.length > 0;
+    // the command, and Royalty members are exempt.
+    const candidateIds = inactive.filter((id) => id !== interaction.user.id);
+    const kickAllowed = !!reaction && reactorIds.size > 0 && candidateIds.length > 0;
+
+    // Protect anyone holding the Royalty role in the main Yazanaki Empire discord.
+    // They still appear as inactive in the report above — they're just not kicked.
+    const protectedRoyaltyIds = [];
+    if (kickAllowed) {
+      const royaltyRoleId = getRoyaltyRoleId();
+      try {
+        const yazanakiGuild = await interaction.client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID);
+        for (const id of candidateIds) {
+          const gm = await yazanakiGuild.members.fetch(id).catch(() => null);
+          if (gm && gm.roles.cache.has(royaltyRoleId)) protectedRoyaltyIds.push(id);
+        }
+      } catch (err) {
+        // If we can't verify Royalty (e.g. the guild is unreachable), fail safe:
+        // kick no one rather than risk kicking a protected member.
+        console.error("[/activity check] ❌ Could not verify Royalty roles — aborting kick:", err.message);
+        embed.addFields({
+          name: "⚠️ Kick skipped",
+          value: "Couldn't verify Royalty roles in the Yazanaki Empire discord, so no one was kicked. Try again.",
+          inline: false,
+        });
+        return interaction.editReply({ embeds: [embed] });
+      }
+    }
+
+    if (protectedRoyaltyIds.length) {
+      embed.addFields({
+        name: `👑 Protected — Royalty (${protectedRoyaltyIds.length})`,
+        value: renderMemberList(protectedRoyaltyIds).slice(0, 1024),
+        inline: false,
+      });
+    }
+
+    const protectedSet = new Set(protectedRoyaltyIds);
+    const kickTargets = candidateIds.filter((id) => !protectedSet.has(id));
+    const canKick = kickAllowed && kickTargets.length > 0;
 
     if (!canKick) {
       return interaction.editReply({ embeds: [embed] });
@@ -248,9 +304,11 @@ module.exports = {
     embed.addFields({
       name: "⚠️ Confirm kick",
       value:
-        `Clicking **Kick** removes the **${kickTargets.length}** member${plural} listed under ` +
-        `“Did not react” from **${clanName}** — roles stripped, moved to the kicked list, ` +
-        `3-month reapply cooldown.`,
+        `Clicking **Kick** removes **${kickTargets.length}** inactive member${plural} from **${clanName}** — ` +
+        `roles stripped, moved to the kicked list, 3-month reapply cooldown.` +
+        (protectedRoyaltyIds.length
+          ? `\n👑 ${protectedRoyaltyIds.length} Royalty member${protectedRoyaltyIds.length === 1 ? " is" : "s are"} exempt and will be kept.`
+          : ""),
       inline: false,
     });
 

@@ -1,8 +1,5 @@
 // modules/membertracking/roledetector.js
 
-// Draft system config (for Draft role ID)
-const draftConfig = require("../empire/draftconfig");
-
 // Persistence via dual-write MapStore (JSON + MySQL `roles_config`).
 const { stores } = require("../database/stores");
 
@@ -170,38 +167,55 @@ async function detectRolesFromDiscord(discordId, client) {
     const userRoleIds = member.roles.cache.map(role => role.id);
     console.log(`[roledetector] User has ${userRoleIds.length} roles`);
 
-    // Special-case: track if the user currently has the Draft role
-    const DRAFT_ROLE_ID = draftConfig?.ROLES?.DRAFT || null;
-    const hasDraftRole = DRAFT_ROLE_ID ? userRoleIds.includes(DRAFT_ROLE_ID) : false;
-
     let bestRank = "n/d";
     let bestStatus = "n/d";
     let highestRankPriority = 0;
-    let highestStatusPriority = 0;
 
     // ============================================================
-    // DETECT STATUS (highest priority)
+    // DETECT STATUS (explicit precedence, highest authority first)
     // ============================================================
+    // Status is decided by which Yazanaki Empire status role the member holds.
+    // A member normally has just one, but if several are present the higher one
+    // in this list wins:
+    //   Royalty > Council > Draft > Military > Citizen   (then Ally > Enemy)
+    // "Draft" outranks "Military" because a member still holding the Draft role
+    // is inside their 3-month draft period — the draft scheduler (draftconfig.js)
+    // swaps Draft → Military or Citizen when that period ends. "Citizen" is the
+    // ordinary-member status that only applies when none of the deciding roles
+    // are present. Role IDs are resolved live from roles.json by name, so
+    // re-categorising a role in config is enough to change detection.
+    const STATUS_PRECEDENCE = ["Royalty", "Council", "Draft", "Military", "Citizen", "Ally", "Enemy"];
+
+    const statusRoleIdByName = {};
     if (yazanakiData.statusRoles) {
-      for (const roleId of userRoleIds) {
-        if (yazanakiData.statusRoles[roleId]) {
-          const roleData = yazanakiData.statusRoles[roleId];
-          const priority = roleData.priority || 0;
-          
-          if (priority > highestStatusPriority) {
-            highestStatusPriority = priority;
-            bestStatus = roleData.name;
-            console.log(`[roledetector] Status: ${bestStatus} (priority: ${priority})`);
-          }
-        }
+      for (const [roleId, roleData] of Object.entries(yazanakiData.statusRoles)) {
+        if (roleData?.name) statusRoleIdByName[roleData.name] = roleId;
       }
     }
 
-    // If the member is currently in Draft (has the Draft role), we want
-    // the public Status to show "Draft" instead of "Military".
-    if (hasDraftRole) {
-      bestStatus = "Draft";
-      console.log("[roledetector] 🎖️ Overriding status to Draft due to active Draft role");
+    const userRoleIdSet = new Set(userRoleIds);
+    for (const statusName of STATUS_PRECEDENCE) {
+      const roleId = statusRoleIdByName[statusName];
+      if (roleId && userRoleIdSet.has(roleId)) {
+        bestStatus = statusName;
+        console.log(`[roledetector] Status: ${bestStatus} (precedence match)`);
+        break;
+      }
+    }
+
+    // Fallback: if the member has some other configured status role not covered
+    // by the precedence list above, keep the legacy highest-priority behaviour
+    // so future/unknown status roles still resolve to something.
+    if (bestStatus === "n/d" && yazanakiData.statusRoles) {
+      let highestStatusPriority = 0;
+      for (const roleId of userRoleIds) {
+        const roleData = yazanakiData.statusRoles[roleId];
+        if (roleData && (roleData.priority || 0) > highestStatusPriority) {
+          highestStatusPriority = roleData.priority || 0;
+          bestStatus = roleData.name;
+          console.log(`[roledetector] Status (fallback): ${bestStatus}`);
+        }
+      }
     }
 
     // ============================================================

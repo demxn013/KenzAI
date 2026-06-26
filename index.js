@@ -16,6 +16,7 @@ const { startScheduler } = require('./modules/empire/draftscheduler');
 const { startRoleScheduler } = require('./modules/roles/roleScheduler');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
 const { startBotMonitor } = require('./modules/mcbot/botmonitor');
+const { startCosmeticsServer } = require('./modules/cosmetics/cosmeticsServer');
 
 // ============================================================
 // CLIENT SETUP
@@ -240,6 +241,9 @@ client.once('ready', async () => {
   startRoleScheduler(client);
 
   setupPointsEvents(client);
+
+  console.log("🛒 Starting internal cosmetics endpoint (for the launcher via the API)...");
+  startCosmeticsServer();
 
   console.log("🤖 Starting bot offline monitor...");
   startBotMonitor(client);

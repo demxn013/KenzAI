@@ -13,7 +13,8 @@ const {
 } = require("discord.js");
 const { getBalance, isMember } = require("./pointslogic");
 const repo = require("../cosmetics/cosmeticsRepository");
-const { purchaseItem, TYPE_LABELS } = require("../cosmetics/cosmeticsConfig");
+const { TYPE_LABELS } = require("../cosmetics/cosmeticsConfig");
+const cosmeticsService = require("../cosmetics/cosmeticsService");
 
 // Shop tabs → catalog filters.
 const TABS = [
@@ -134,25 +135,14 @@ module.exports = {
     const check = ensureReady(interaction);
     if (!check.ok) return interaction.reply({ content: check.message, ephemeral: true });
 
-    const item = await repo.getItem(itemId);
-    if (!item || !item.enabled || !item.purchasable) {
-      return interaction.reply({ content: "❌ That item is no longer available.", ephemeral: true });
+    // Single shared purchase path (same one the launcher uses via the API).
+    const result = await cosmeticsService.purchase(interaction.user.id, itemId);
+    if (!result.ok) {
+      return interaction.reply({ content: result.message || "❌ Purchase failed.", ephemeral: true });
     }
-
-    // Block re-buying a permanent item already owned.
-    if (item.duration_days == null && (await repo.owns(interaction.user.id, itemId))) {
-      return interaction.reply({ content: "❌ You already own that item. Equip it with `/profile`.", ephemeral: true });
-    }
-
-    const purchase = purchaseItem(interaction.user.id, item);
-    if (!purchase.success) {
-      return interaction.reply({ content: purchase.failReason, ephemeral: true });
-    }
-
-    await repo.grant(interaction.user.id, itemId, "purchase");
 
     return interaction.reply({
-      content: `✅ You bought **${item.name}**! New balance: **${purchase.newBalance}** pts. Equip it with \`/profile\`.`,
+      content: `✅ You bought **${result.item.name}**! New balance: **${result.newBalance}** pts. Equip it with \`/profile\`.`,
       ephemeral: true,
     });
   },

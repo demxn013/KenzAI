@@ -177,14 +177,15 @@ async function detectRolesFromDiscord(discordId, client) {
     // Status is decided by which Yazanaki Empire status role the member holds.
     // A member normally has just one, but if several are present the higher one
     // in this list wins:
-    //   Royalty > Council > Draft > Military > Citizen   (then Ally > Enemy)
-    // "Draft" outranks "Military" because a member still holding the Draft role
-    // is inside their 3-month draft period — the draft scheduler (draftconfig.js)
-    // swaps Draft → Military or Citizen when that period ends. "Citizen" is the
+    //   Royalty > Council > Military > Draft > Citizen   (then Ally > Enemy)
+    // "Military" outranks "Draft": Draft is the provisional 3-month state, so
+    // once a member has committed to the military the Military status wins even
+    // if a stale Draft role lingers. The draft scheduler (draftconfig.js) swaps
+    // Draft → Military or Citizen when the 3-month period ends. "Citizen" is the
     // ordinary-member status that only applies when none of the deciding roles
     // are present. Role IDs are resolved live from roles.json by name, so
     // re-categorising a role in config is enough to change detection.
-    const STATUS_PRECEDENCE = ["Royalty", "Council", "Draft", "Military", "Citizen", "Ally", "Enemy"];
+    const STATUS_PRECEDENCE = ["Royalty", "Council", "Military", "Draft", "Citizen", "Ally", "Enemy"];
 
     const statusRoleIdByName = {};
     if (yazanakiData.statusRoles) {

@@ -157,6 +157,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // Stock market buttons (buy/sell/mark-paid)
+        if (interaction.customId.startsWith("stock_")) {
+          const cmd = client.commands.get("stock");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "stock");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // /relink confirm / cancel are handled by an in-command component
         // collector (modules/linking/relink.js), not routed here.
         if (
@@ -238,6 +245,16 @@ module.exports = {
         ) {
           const cmd = client.commands.get("application");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "application");
+          return await cmd.modalHandler(interaction);
+        }
+
+        // Stock market modals (buy/sell)
+        if (
+          interaction.customId.startsWith("stock_buy_modal_") ||
+          interaction.customId.startsWith("stock_sell_modal_")
+        ) {
+          const cmd = client.commands.get("stock");
+          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "stock");
           return await cmd.modalHandler(interaction);
         }
 

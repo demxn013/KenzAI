@@ -273,8 +273,27 @@ function markSellPaid(txId) {
   return { success: true, remainingHoldings: held - debited };
 }
 
+/**
+ * Compare the first visible candle's open to the latest close, over
+ * whatever window is currently charted (up to the last MAX_VISIBLE_CANDLES).
+ * @param {Array<{o:number,c:number}>} candles
+ * @returns {{ absolute: number, percent: number, direction: "up"|"down"|"flat" }}
+ */
+function computePriceChange(candles) {
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return { absolute: 0, percent: 0, direction: "flat" };
+  }
+  const first = candles[0].o;
+  const last = candles[candles.length - 1].c;
+  const absolute = last - first;
+  const percent = first > 0 ? (absolute / first) * 100 : 0;
+  const direction = absolute > 0 ? "up" : absolute < 0 ? "down" : "flat";
+  return { absolute, percent, direction };
+}
+
 module.exports = {
   SHARES_PER_MEMBER,
+  computePriceChange,
   getClanServerId,
   getStockRecord,
   saveStockRecord,

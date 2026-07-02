@@ -5,24 +5,35 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("
 const { formatMoney } = require("../servers/serverembed");
 
 const DEMXN13_IGN = "DEMXN13";
-const EMBED_COLOR = 0xffd700;
+const UP_EMBED_COLOR = 0x0a0a0a;   // near-black (pure 0x000000 is treated as "no color" by Discord)
+const DOWN_EMBED_COLOR = 0xd40000; // red
 
 /**
- * Public market post: current price, treasury availability, and the
- * explicit "pay DEMXN13 in-game" payment instructions.
+ * Public market post: current price, treasury availability, price change,
+ * and the explicit "pay DEMXN13 in-game" payment instructions.
+ * @param {object} clan
+ * @param {object} stock
+ * @param {string} chartAttachmentName
+ * @param {{ absolute: number, percent: number, direction: "up"|"down"|"flat" }} priceChange
  */
-function createMarketEmbed(clan, stock, chartAttachmentName) {
+function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
   const currencyLabel = stock.server === "donutsmp" ? "DonutSMP money" : stock.server;
+
+  const change = priceChange || { absolute: 0, percent: 0, direction: "flat" };
+  const arrow = change.direction === "down" ? "🔻" : change.direction === "up" ? "🔺" : "▪️";
+  const sign = change.absolute > 0 ? "+" : "";
+  const changeText = `${arrow} ${sign}${formatMoney(change.absolute)} (${sign}${change.percent.toFixed(2)}%)`;
 
   const embed = new EmbedBuilder()
     .setTitle(`📈 ${clan.abbr} Stock Market`)
-    .setColor(EMBED_COLOR)
+    .setColor(change.direction === "down" ? DOWN_EMBED_COLOR : UP_EMBED_COLOR)
     .setDescription(
       `**${clan.name}** trades its own clan stock! Every accepted member adds ` +
       `${1000} new shares to the treasury. Prices move over time based on market activity.`
     )
     .addFields(
       { name: "💰 Price per share", value: `\`${formatMoney(stock.currentPrice)}\` ${currencyLabel}`, inline: true },
+      { name: "📈 Price change", value: changeText, inline: true },
       { name: "🏦 Shares available", value: `\`${stock.treasuryShares.toLocaleString()}\``, inline: true },
       { name: "📊 Total shares outstanding", value: `\`${stock.outstandingShares.toLocaleString()}\``, inline: true },
       { name: "🌐 Server", value: `\`${currencyLabel}\``, inline: true },
@@ -50,7 +61,14 @@ function createMarketEmbed(clan, stock, chartAttachmentName) {
   return embed;
 }
 
-function createMarketButtons(guildId) {
+/**
+ * @param {string} guildId
+ * @param {"ohlc"|"line"} mode - the chart style currently being displayed
+ */
+function createMarketButtons(guildId, mode = "ohlc") {
+  const nextMode = mode === "ohlc" ? "line" : "ohlc";
+  const toggleLabel = mode === "ohlc" ? "View Line Chart" : "View OHLC Chart";
+
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`stock_buy_${guildId}`)
@@ -61,7 +79,12 @@ function createMarketButtons(guildId) {
       .setCustomId(`stock_sell_${guildId}`)
       .setLabel("Sell")
       .setStyle(ButtonStyle.Danger)
-      .setEmoji("📉")
+      .setEmoji("📉"),
+    new ButtonBuilder()
+      .setCustomId(`stock_toggle_${nextMode}_${guildId}`)
+      .setLabel(toggleLabel)
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji("🔄")
   );
 }
 

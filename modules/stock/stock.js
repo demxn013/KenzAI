@@ -22,7 +22,7 @@ const { readClans } = require("../database/clansPersistence");
 const stocklogic = require("./stocklogic");
 const pendingOrders = require("./pendingOrders");
 const investorRole = require("./investorRole");
-const { renderStockChart } = require("./chart");
+const { renderStockChart, renderStockLineChart, MAX_VISIBLE_CANDLES } = require("./chart");
 const donutsmp = require("../servers/donutsmp");
 const {
   DEMXN13_IGN,
@@ -46,6 +46,35 @@ function replyReason(interaction, reason, fallback = "Something went wrong.") {
   });
 }
 
+// ---- Shared market view builder (used by /stock post and the toggle button) ----
+
+/**
+ * Build the { embeds, files, components } payload for a clan's market post
+ * in the given chart mode. Shared by handlePost and the toggle button so
+ * both render from the exact same data/embed/button logic.
+ * @param {object} clan
+ * @param {object} stock
+ * @param {"ohlc"|"line"} mode
+ */
+function buildMarketView(clan, stock, mode) {
+  const visible = (stock.candles || []).slice(-MAX_VISIBLE_CANDLES);
+  const priceChange = stocklogic.computePriceChange(visible);
+
+  const chartOpts = {
+    title: `${clan.abbr} — ${stock.server}`,
+    subtitle: `Current: ${stock.currentPrice.toLocaleString()} per share`,
+  };
+  const chartBuffer = mode === "line"
+    ? renderStockLineChart(stock.candles, chartOpts)
+    : renderStockChart(stock.candles, chartOpts);
+
+  const attachment = new AttachmentBuilder(chartBuffer, { name: CHART_ATTACHMENT_NAME });
+  const embed = createMarketEmbed(clan, stock, CHART_ATTACHMENT_NAME, priceChange);
+  const buttons = createMarketButtons(stock.guildId, mode);
+
+  return { embeds: [embed], files: [attachment], components: [buttons] };
+}
+
 // ---- /stock post ---------------------------------------------------------
 
 async function handlePost(interaction) {
@@ -60,14 +89,23 @@ async function handlePost(interaction) {
   const result = stocklogic.getOrCreateStockRecord(interaction.guild.id);
   if (!result.success) return replyReason(interaction, result.reason);
 
-  const { stock, clan } = result;
-  const chartBuffer = renderStockChart(stock.candles, { title: `${clan.abbr} — ${stock.server}` });
-  const attachment = new AttachmentBuilder(chartBuffer, { name: CHART_ATTACHMENT_NAME });
+  const payload = buildMarketView(result.clan, result.stock, "ohlc");
+  return interaction.reply(payload);
+}
 
-  const embed = createMarketEmbed(clan, stock, CHART_ATTACHMENT_NAME);
-  const buttons = createMarketButtons(interaction.guild.id);
+// ---- Toggle chart style ---------------------------------------------------
 
-  return interaction.reply({ embeds: [embed], files: [attachment], components: [buttons] });
+async function handleToggle(interaction, mode, guildId) {
+  const clans = readClans();
+  const clan = clans[guildId];
+  const stock = stocklogic.getStockRecord(guildId);
+
+  if (!clan || !stock) {
+    return interaction.reply({ content: "❌ This clan's stock market isn't set up yet.", flags: MessageFlags.Ephemeral });
+  }
+
+  const payload = buildMarketView(clan, stock, mode);
+  return interaction.update(payload);
 }
 
 // ---- /stock portfolio -----------------------------------------------------
@@ -111,6 +149,11 @@ async function buttonHandler(interaction) {
   // interactionCreate.js's isModalSubmit() branch, never here).
   if (interaction.customId.startsWith("stock_markpaid_")) {
     return handleMarkPaid(interaction);
+  }
+
+  const toggleMatch = interaction.customId.match(/^stock_toggle_(ohlc|line)_(\d+)$/);
+  if (toggleMatch) {
+    return handleToggle(interaction, toggleMatch[1], toggleMatch[2]);
   }
 
   if (interaction.customId.startsWith("stock_buy_")) {

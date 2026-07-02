@@ -5,7 +5,6 @@
     "apiBaseUrl": "https://api.donutsmp.net",
     "apiKeyEnv": "DONUTSMP_API_KEY",
     "enabled": true,
-    "pricePerShare": 100000,
     "currencyName": "DonutSMP money"
   },
   "statEmojis": {

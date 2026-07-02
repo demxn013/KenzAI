@@ -12,17 +12,18 @@ const priceEngine = require("./priceEngine");
 
 const SHARES_PER_MEMBER = 1000;
 
+// Price per share is a fixed business rule per Minecraft server, not an
+// editable config value — currently only DonutSMP clans are live (ONF).
+const SERVER_PRICE_PER_SHARE = {
+  donutsmp: 100000,
+};
+
 function holdingKey(guildId, discordId) {
   return `${guildId}:${discordId}`;
 }
 
 function genTxId() {
   return `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-}
-
-function getServerConfig(serverId) {
-  const all = stores.servers.readMap();
-  return all && all[serverId] && typeof all[serverId] === "object" ? all[serverId] : null;
 }
 
 /** Which server key a clan is linked to. Only "donutsmp" exists today. */
@@ -76,8 +77,7 @@ function getOrCreateStockRecord(guildId) {
   const serverId = getClanServerId(clan);
   if (!serverId) return { success: false, reason: "no_server_linked" };
 
-  const serverConfig = getServerConfig(serverId);
-  const basePricePerShare = Number(serverConfig?.pricePerShare) || 0;
+  const basePricePerShare = SERVER_PRICE_PER_SHARE[serverId] || 0;
   if (basePricePerShare <= 0) return { success: false, reason: "no_server_price_configured" };
 
   let stock = getStockRecord(guildId);

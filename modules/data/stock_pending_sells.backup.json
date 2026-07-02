@@ -1,13 +1,1 @@
-{
-  "1782932334229-44fb6789": {
-    "txId": "1782932334229-44fb6789",
-    "guildId": "TESTGUILD001",
-    "discordId": "USER1",
-    "ign": "Notch",
-    "shares": 4,
-    "pricePerShare": 99288,
-    "payout": 397152,
-    "status": "confirmed",
-    "createdAt": "2026-07-01T18:58:54.229Z"
-  }
-}
+{}

@@ -100,7 +100,17 @@ function getOrCreateStockRecord(guildId) {
     };
   }
 
+  if (isNew) {
+    console.log(`[stocklogic] 🆕 Created stock record for ${clan.abbr} (${guildId}) on ${serverId} @ ${basePricePerShare}/share`);
+  }
+
+  const before = Number(stock.treasuryShares) || 0;
   reconcileResidents(stock, clan);
+  const added = (Number(stock.treasuryShares) || 0) - before;
+  if (added > 0) {
+    console.log(`[stocklogic] 📈 Reconciled ${clan.abbr}: +${added} treasury shares (now ${stock.treasuryShares}, outstanding ${stock.outstandingShares})`);
+  }
+
   saveStockRecord(guildId, stock);
 
   return { success: true, stock, clan, isNew };
@@ -108,7 +118,11 @@ function getOrCreateStockRecord(guildId) {
 
 /** Explicit hook called right after a member is accepted into a clan. */
 function onResidentAdded(guildId) {
+  console.log(`[stocklogic] 👤 Resident added to clan ${guildId} — issuing ${SHARES_PER_MEMBER} shares to treasury`);
   const result = getOrCreateStockRecord(guildId);
+  if (!result.success) {
+    console.warn(`[stocklogic] ⚠️ Could not issue shares for ${guildId}: ${result.reason}`);
+  }
   return result.success;
 }
 
@@ -169,10 +183,12 @@ function reserveTreasuryShares(guildId, shares) {
   const stock = getStockRecord(guildId);
   if (!stock) return { success: false, reason: "no_stock_record" };
   if ((Number(stock.treasuryShares) || 0) < shares) {
+    console.log(`[stocklogic] 🚫 Reserve rejected for ${guildId}: wanted ${shares}, only ${stock.treasuryShares} in treasury`);
     return { success: false, reason: "insufficient_treasury" };
   }
   stock.treasuryShares -= shares;
   saveStockRecord(guildId, stock);
+  console.log(`[stocklogic] 🔒 Reserved ${shares} share(s) for ${guildId} (treasury now ${stock.treasuryShares})`);
   return { success: true };
 }
 
@@ -181,6 +197,7 @@ function refundTreasuryShares(guildId, shares) {
   if (!stock) return false;
   stock.treasuryShares = (Number(stock.treasuryShares) || 0) + shares;
   saveStockRecord(guildId, stock);
+  console.log(`[stocklogic] 🔓 Refunded ${shares} reserved share(s) to ${guildId} treasury (now ${stock.treasuryShares})`);
   return true;
 }
 
@@ -195,7 +212,7 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
     saveStockRecord(guildId, stock);
   }
 
-  return logTransaction({
+  const txId = logTransaction({
     guildId,
     discordId,
     ign,
@@ -205,6 +222,8 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
     total: shares * pricePerShare,
     status: "confirmed",
   });
+  console.log(`[stocklogic] ✅ BUY confirmed: ${discordId} (${ign}) bought ${shares} share(s) of ${guildId} @ ${pricePerShare} = ${shares * pricePerShare} [tx ${txId}]`);
+  return txId;
 }
 
 /** Create a durable pending sell awaiting owner confirmation. Does NOT move shares yet. */
@@ -212,6 +231,7 @@ function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
   const held = getHolding(guildId, discordId);
   const reserved = getReservedSellShares(guildId, discordId);
   if (held - reserved < shares) {
+    console.log(`[stocklogic] 🚫 Sell rejected for ${discordId} on ${guildId}: wanted ${shares}, only ${held - reserved} sellable (held ${held}, reserved ${reserved})`);
     return { success: false, reason: "insufficient_holdings" };
   }
 
@@ -229,6 +249,7 @@ function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
     createdAt: new Date().toISOString(),
   };
   stores.stock_pending_sells.writeMap(all);
+  console.log(`[stocklogic] 📉 SELL pending: ${discordId} (${ign}) selling ${shares} share(s) of ${guildId}, payout ${shares * pricePerShare} [tx ${txId}] — awaiting owner payment`);
   return { success: true, txId, payout: shares * pricePerShare };
 }
 
@@ -242,6 +263,7 @@ function markSellPaid(txId) {
   const all = stores.stock_pending_sells.readMap();
   const pending = all[txId];
   if (!pending || pending.status !== "pending_payment") {
+    console.warn(`[stocklogic] ⚠️ markSellPaid: tx ${txId} not found or already confirmed`);
     return { success: false, reason: "not_found" };
   }
 
@@ -270,6 +292,7 @@ function markSellPaid(txId) {
     status: "confirmed",
   });
 
+  console.log(`[stocklogic] ✅ SELL paid: ${pending.discordId} (${pending.ign}) sold ${debited} share(s) of ${pending.guildId} for ${pending.payout} [tx ${txId}] — ${held - debited} share(s) remaining`);
   return { success: true, remainingHoldings: held - debited };
 }
 

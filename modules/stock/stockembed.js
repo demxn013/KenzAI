@@ -32,11 +32,11 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
       `${1000} new shares to the treasury. Prices move over time based on market activity.`
     )
     .addFields(
-      { name: "💰 Price per share", value: `\`${formatMoney(stock.currentPrice)}\` ${currencyLabel}`, inline: true },
-      { name: "📈 Price change", value: changeText, inline: true },
-      { name: "🏦 Shares available", value: `\`${stock.treasuryShares.toLocaleString()}\``, inline: true },
-      { name: "📊 Total shares outstanding", value: `\`${stock.outstandingShares.toLocaleString()}\``, inline: true },
-      { name: "🌐 Server", value: `\`${currencyLabel}\``, inline: true },
+      { name: "💰 Price per share", value: `\`${formatMoney(stock.currentPrice)}\` ${currencyLabel}`, inline: false },
+      { name: "📈 Price change", value: changeText, inline: false },
+      { name: "🏦 Shares available", value: `\`${stock.treasuryShares.toLocaleString()}\``, inline: false },
+      { name: "📊 Total shares outstanding", value: `\`${stock.outstandingShares.toLocaleString()}\``, inline: false },
+      { name: "🌐 Server", value: `\`${currencyLabel}\``, inline: false },
       {
         name: "💳 How to pay",
         value:
@@ -92,7 +92,7 @@ function createMarketButtons(guildId, mode = "ohlc") {
 function createPortfolioEmbed(discordId, holdings, clansById) {
   const embed = new EmbedBuilder()
     .setTitle("📊 Your Stock Portfolio")
-    .setColor(EMBED_COLOR);
+    .setColor(UP_EMBED_COLOR);
 
   if (!holdings.length) {
     embed.setDescription("You don't own any clan stock yet. Find a clan's `/stock` post to invest!");

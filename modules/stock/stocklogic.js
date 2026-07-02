@@ -127,21 +127,45 @@ function onResidentAdded(guildId) {
 }
 
 // ---- Holdings ----------------------------------------------------------
+// A holding tracks share count AND `invested` — the total in-game money paid
+// for the shares currently held (cost basis). Buys add their cost; sells
+// remove the weighted-average cost of the shares sold. This lets the
+// portfolio show average buy price and profit/loss vs. the live price.
+
+function getHoldingRecord(guildId, discordId) {
+  const all = stores.stock_holdings.readMap();
+  return all[holdingKey(guildId, discordId)] || null;
+}
 
 function getHolding(guildId, discordId) {
-  const all = stores.stock_holdings.readMap();
-  const entry = all[holdingKey(guildId, discordId)];
+  const entry = getHoldingRecord(guildId, discordId);
   return entry ? Number(entry.shares) || 0 : 0;
 }
 
+/**
+ * A member's holdings across all clans, enriched with cost-basis and live
+ * valuation figures for display.
+ * @returns {Array<{guildId,ign,shares,invested,avgBuyPrice,currentPrice,currentValue,profit,profitPercent}>}
+ */
 function getPortfolio(discordId) {
   const all = stores.stock_holdings.readMap();
-  return Object.values(all).filter(
-    (h) => h && h.discordId === discordId && Number(h.shares) > 0
-  );
+  return Object.values(all)
+    .filter((h) => h && h.discordId === discordId && Number(h.shares) > 0)
+    .map((h) => {
+      const shares = Number(h.shares) || 0;
+      const invested = Number(h.invested) || 0;
+      const stock = getStockRecord(h.guildId);
+      const currentPrice = stock ? Number(stock.currentPrice) || 0 : 0;
+      const avgBuyPrice = shares > 0 ? invested / shares : 0;
+      const currentValue = shares * currentPrice;
+      const profit = currentValue - invested;
+      const profitPercent = invested > 0 ? (profit / invested) * 100 : 0;
+      return { guildId: h.guildId, ign: h.ign, shares, invested, avgBuyPrice, currentPrice, currentValue, profit, profitPercent };
+    });
 }
 
-function setHolding(guildId, discordId, shares, ign) {
+/** Low-level holding write. `invested` is the cost basis of the held shares. */
+function writeHolding(guildId, discordId, shares, invested, ign) {
   const all = stores.stock_holdings.readMap();
   const key = holdingKey(guildId, discordId);
   if (shares <= 0) {
@@ -152,6 +176,7 @@ function setHolding(guildId, discordId, shares, ign) {
       discordId,
       ign: ign || all[key]?.ign || null,
       shares,
+      invested: Math.max(0, Math.round(invested)),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -203,8 +228,10 @@ function refundTreasuryShares(guildId, shares) {
 
 /** Finalize a confirmed buy: shares already reserved out of treasury. */
 function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
-  const held = getHolding(guildId, discordId);
-  setHolding(guildId, discordId, held + shares, ign);
+  const existing = getHoldingRecord(guildId, discordId);
+  const prevShares = existing ? Number(existing.shares) || 0 : 0;
+  const prevInvested = existing ? Number(existing.invested) || 0 : 0;
+  writeHolding(guildId, discordId, prevShares + shares, prevInvested + shares * pricePerShare, ign);
 
   const stock = getStockRecord(guildId);
   if (stock) {
@@ -269,9 +296,15 @@ function markSellPaid(txId) {
     return { success: false, reason: "not_found" };
   }
 
-  const held = getHolding(pending.guildId, pending.discordId);
+  const existing = getHoldingRecord(pending.guildId, pending.discordId);
+  const held = existing ? Number(existing.shares) || 0 : 0;
+  const heldInvested = existing ? Number(existing.invested) || 0 : 0;
   const debited = Math.min(held, pending.shares);
-  setHolding(pending.guildId, pending.discordId, held - debited, pending.ign);
+  // Remove the sold shares' weighted-average cost basis from `invested`.
+  const avgCost = held > 0 ? heldInvested / held : 0;
+  const remainingShares = held - debited;
+  const remainingInvested = remainingShares > 0 ? heldInvested - avgCost * debited : 0;
+  writeHolding(pending.guildId, pending.discordId, remainingShares, remainingInvested, pending.ign);
 
   const stock = getStockRecord(pending.guildId);
   if (stock) {
@@ -327,8 +360,8 @@ module.exports = {
   getOrCreateStockRecord,
   onResidentAdded,
   getHolding,
+  getHoldingRecord,
   getPortfolio,
-  setHolding,
   getReservedSellShares,
   logTransaction,
   reserveTreasuryShares,

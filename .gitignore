@@ -22,3 +22,5 @@ node_modules
 
 # Runtime judiciary case data (current repo structure; not version-controlled)
 modules/judiciary/data/
+
+modules.zip

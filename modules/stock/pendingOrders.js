@@ -6,6 +6,9 @@
 // balance baseline.
 
 const donutsmp = require("../servers/donutsmp");
+// The DonutSMP API returns `money` as a formatted string (e.g. "50,058,803.23"),
+// so it must be parsed with num() — plain Number() yields NaN on the commas.
+const { num } = require("../servers/serverembed");
 
 const DEFAULT_WINDOW_MS = 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 5 * 1000;
@@ -63,7 +66,7 @@ function startBuyWatch(order, { onConfirmed, onTimeout } = {}) {
       console.log(`[pendingOrders] ⚠️ Balance check failed for "${order.ign}" (${key}) — will retry`);
       return;
     }
-    const currentMoney = Number(res.stats?.money) || 0;
+    const currentMoney = num(res.stats?.money);
     const dropped = entry.baselineMoney - currentMoney;
     console.log(`[pendingOrders] 🔎 Poll ${key}: balance ${currentMoney}, dropped ${dropped}/${entry.cost} needed`);
     if (dropped >= entry.cost) {

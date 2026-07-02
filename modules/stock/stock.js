@@ -27,6 +27,7 @@ const pendingOrders = require("./pendingOrders");
 const investorRole = require("./investorRole");
 const { renderStockChart, renderStockLineChart, MAX_VISIBLE_CANDLES } = require("./chart");
 const donutsmp = require("../servers/donutsmp");
+const { num } = require("../servers/serverembed");
 const {
   DEMXN13_IGN,
   createMarketEmbed,
@@ -374,7 +375,7 @@ async function handleBuyModal(interaction, guildId) {
     return interaction.editReply({ content: `❌ Couldn't find \`${ign}\` on DonutSMP. Double-check the spelling and try again.` });
   }
 
-  const baselineMoney = Number(statsRes.stats?.money) || 0;
+  const baselineMoney = num(statsRes.stats?.money);
   console.log(`[stock] ⏱️ BUY watch started for ${interaction.user.id} (${ign}): total ${cost} (base ${base} + ${feePct}% fee ${tax}), baseline balance ${baselineMoney}, 60s window`);
 
   await interaction.editReply({

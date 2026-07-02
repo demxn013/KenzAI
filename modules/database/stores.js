@@ -307,6 +307,62 @@ const stores = {
     { jsonPath: judiciaryPath("archived_cases.json") }
   ),
 
+  // Clan stock market — one record per clan guild ID.
+  clan_stocks: defineStore(
+    "clan_stocks",
+    "clan_stocks.json",
+    "clan_stocks",
+    "guild_id",
+    (id, v) => ({
+      server_id: str(v.server),
+      current_price: int(v.currentPrice, 0),
+      treasury_shares: int(v.treasuryShares, 0),
+      outstanding_shares: int(v.outstandingShares, 0),
+    })
+  ),
+
+  // Stock holdings — keyed by "<guildId>:<discordId>".
+  stock_holdings: defineStore(
+    "stock_holdings",
+    "stock_holdings.json",
+    "stock_holdings",
+    "holding_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      discord_id: str(v.discordId),
+      shares: int(v.shares, 0),
+    })
+  ),
+
+  // Stock transaction ledger — keyed by generated txId, append-only.
+  stock_transactions: defineStore(
+    "stock_transactions",
+    "stock_transactions.json",
+    "stock_transactions",
+    "tx_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      discord_id: str(v.discordId),
+      tx_type: str(v.type),
+      shares: int(v.shares, 0),
+      logged_at: dt(v.createdAt),
+    })
+  ),
+
+  // Durable pending sell payouts awaiting owner "Mark Paid" confirmation.
+  stock_pending_sells: defineStore(
+    "stock_pending_sells",
+    "stock_pending_sells.json",
+    "stock_pending_sells",
+    "tx_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      discord_id: str(v.discordId),
+      shares: int(v.shares, 0),
+      status: str(v.status),
+    })
+  ),
+
   // audit_log.json is a JSON ARRAY — adapt array <-> map (keyed by log_id).
   judiciary_audit_log: defineStore(
     "judiciary_audit_log",

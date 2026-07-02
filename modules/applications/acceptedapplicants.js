@@ -24,6 +24,7 @@ const YAZANAKI_RANDOM_ROLE_ID = "1334846750707421194";
 
 // ✅ Import clan resident management
 const { incrementClanResidents } = require("../clantracking/clanlogic");
+const { onResidentAdded: onStockResidentAdded } = require("../stock/stocklogic");
 
 function formatDate(dateString) {
   const d = new Date(dateString);
@@ -419,6 +420,15 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   
   if (residentIncremented) {
     console.log(`[acceptedapps] ✅ Clan ${clan.abbr} resident count updated`);
+
+    // ✅ NEW: Issue 1000 more treasury shares for the clan's stock (no-op if
+    // the clan has never run /stock post or isn't linked to a server yet —
+    // the record is created/reconciled lazily whenever it's next accessed).
+    try {
+      onStockResidentAdded(clanGuildId);
+    } catch (err) {
+      console.warn(`[acceptedapps] ⚠️ Failed to update stock treasury for ${clan.abbr}:`, err.message);
+    }
   } else {
     console.warn(`[acceptedapps] ⚠️ Failed to increment resident count for ${clan.abbr}`);
   }

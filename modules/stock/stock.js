@@ -18,6 +18,8 @@ const {
   MessageFlags,
 } = require("discord.js");
 
+const path = require("path");
+const fs = require("fs");
 const { readClans } = require("../database/clansPersistence");
 const stocklogic = require("./stocklogic");
 const pendingOrders = require("./pendingOrders");
@@ -32,6 +34,14 @@ const {
 } = require("./stockembed");
 
 const CHART_ATTACHMENT_NAME = "stockchart.png";
+const EMBLEMS_DIR = path.join(__dirname, "..", "images", "clanemblems");
+
+/** Absolute path to a clan's emblem PNG, or null if it doesn't exist. */
+function getEmblemPath(abbr) {
+  if (!abbr) return null;
+  const p = path.join(EMBLEMS_DIR, `${abbr.toUpperCase()}.png`);
+  return fs.existsSync(p) ? p : null;
+}
 
 const REASON_MESSAGES = {
   clan_not_registered: "This server isn't a registered Yazanaki Empire clan. Use `/clan add` first.",
@@ -56,17 +66,21 @@ function replyReason(interaction, reason, fallback = "Something went wrong.") {
  * @param {object} stock
  * @param {"ohlc"|"line"} mode
  */
-function buildMarketView(clan, stock, mode) {
+async function buildMarketView(clan, stock, mode) {
   const visible = (stock.candles || []).slice(-MAX_VISIBLE_CANDLES);
   const priceChange = stocklogic.computePriceChange(visible);
+  const serverLabel = stock.server === "donutsmp" ? "DonutSMP" : stock.server;
 
   const chartOpts = {
-    title: `${clan.abbr} — ${stock.server}`,
-    subtitle: `Current: ${stock.currentPrice.toLocaleString()} per share`,
+    clanAbbr: clan.abbr,
+    serverLabel,
+    currentPrice: stock.currentPrice,
+    priceChange,
+    emblemPath: getEmblemPath(clan.abbr),
   };
   const chartBuffer = mode === "line"
-    ? renderStockLineChart(stock.candles, chartOpts)
-    : renderStockChart(stock.candles, chartOpts);
+    ? await renderStockLineChart(stock.candles, chartOpts)
+    : await renderStockChart(stock.candles, chartOpts);
 
   const attachment = new AttachmentBuilder(chartBuffer, { name: CHART_ATTACHMENT_NAME });
   const embed = createMarketEmbed(clan, stock, CHART_ATTACHMENT_NAME, priceChange);
@@ -95,7 +109,7 @@ async function handlePost(interaction) {
     return replyReason(interaction, result.reason);
   }
 
-  const payload = buildMarketView(result.clan, result.stock, "ohlc");
+  const payload = await buildMarketView(result.clan, result.stock, "ohlc");
   console.log(`[stock] ✅ Posted ${result.clan.abbr} market (price ${result.stock.currentPrice}, treasury ${result.stock.treasuryShares})`);
   return interaction.reply(payload);
 }
@@ -112,7 +126,7 @@ async function handleToggle(interaction, mode, guildId) {
     return interaction.reply({ content: "❌ This clan's stock market isn't set up yet.", flags: MessageFlags.Ephemeral });
   }
 
-  const payload = buildMarketView(clan, stock, mode);
+  const payload = await buildMarketView(clan, stock, mode);
   return interaction.update(payload);
 }
 

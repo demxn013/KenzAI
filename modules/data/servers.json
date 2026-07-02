@@ -7,6 +7,18 @@
     "enabled": true,
     "currencyName": "DonutSMP money"
   },
+  "elementalmc": {
+    "id": "elementalmc",
+    "name": "ElementalMC",
+    "enabled": true,
+    "currencyName": "ElementalMC money"
+  },
+  "freshsmp": {
+    "id": "freshsmp",
+    "name": "FreshSMP",
+    "enabled": true,
+    "currencyName": "FreshSMP money"
+  },
   "statEmojis": {
     "donutsmp": {
       "kills": "⚔️",

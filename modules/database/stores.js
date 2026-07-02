@@ -363,6 +363,21 @@ const stores = {
     })
   ),
 
+  // Durable pending buys awaiting staff "Mark Paid" confirmation (for servers
+  // with no stats API to auto-detect the DEMXN13 payment — FreshSMP/ElementalMC).
+  stock_pending_buys: defineStore(
+    "stock_pending_buys",
+    "stock_pending_buys.json",
+    "stock_pending_buys",
+    "tx_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      discord_id: str(v.discordId),
+      shares: int(v.shares, 0),
+      status: str(v.status),
+    })
+  ),
+
   // audit_log.json is a JSON ARRAY — adapt array <-> map (keyed by log_id).
   judiciary_audit_log: defineStore(
     "judiciary_audit_log",

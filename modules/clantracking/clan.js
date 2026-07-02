@@ -12,6 +12,7 @@ const path = require("path");
 const fs = require("fs");
 const https = require("https");
 const { readMembers } = require("../database/membersPersistence");
+const { listServers } = require("../servers/serverRegistry");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -61,7 +62,7 @@ module.exports = {
         .addStringOption(opt =>
           opt
             .setName("server")
-            .setDescription("Server this clan is on (e.g., donutsmp, or 'clear' to remove)")
+            .setDescription("Link/unlink a server: donutsmp, elementalmc, freshsmp (toggles), or 'clear' to remove all")
             .setRequired(false)
         )
     )
@@ -368,21 +369,43 @@ module.exports = {
         }
       }
 
-      // Servers option (currently only DonutSMP supported)
+      // Servers option — link this clan to one or more Minecraft servers.
+      // DonutSMP keeps its dedicated donutsmpTeamName field (it also carries the
+      // in-game team name used by the DonutSMP API). Every other enabled server
+      // is a label-only link toggled in clan.serverLinks.
       if (newServer !== undefined && newServer !== null) {
         const v = newServer.trim().toLowerCase();
+        if (!Array.isArray(clan.serverLinks)) clan.serverLinks = [];
+
         if (v === "" || v === "clear") {
+          const had = !!clan.donutsmpTeamName || clan.serverLinks.length > 0;
           delete clan.donutsmpTeamName;
-          changes.push("🟠 Servers: cleared DonutSMP link.");
-          console.log(`[/clan edit] 🟠 Servers: cleared DonutSMP link for ${clan.abbr}`);
+          clan.serverLinks = [];
+          changes.push(had ? "🟠 Servers: cleared all server links." : "🟠 Servers: no server links to clear.");
+          console.log(`[/clan edit] 🟠 Servers: cleared all links for ${clan.abbr}`);
         } else if (v === "donutsmp") {
           // For DonutSMP we treat the clan abbreviation as the in-game team name by default
           clan.donutsmpTeamName = clan.abbr;
           changes.push(`🟠 Servers: linked to DonutSMP (team \`${clan.donutsmpTeamName}\`).`);
           console.log(`[/clan edit] 🟠 Servers: linked ${clan.abbr} to DonutSMP (team: ${clan.donutsmpTeamName})`);
         } else {
-          changes.push(`⚠️ Servers: unknown server \`${v}\` (supported: \`donutsmp\`). No server link changed.`);
-          console.log(`[/clan edit] ⚠️ Servers: unknown server "${v}", no link changed`);
+          const server = listServers().find(s => s.id === v);
+          if (!server) {
+            const supported = [...listServers().map(s => s.id), "clear"].map(s => `\`${s}\``).join(", ");
+            changes.push(`⚠️ Servers: unknown server \`${v}\` (supported: ${supported}). No server link changed.`);
+            console.log(`[/clan edit] ⚠️ Servers: unknown server "${v}", no link changed`);
+          } else {
+            const idx = clan.serverLinks.indexOf(v);
+            if (idx === -1) {
+              clan.serverLinks.push(v);
+              changes.push(`🟠 Servers: linked to ${server.name}.`);
+              console.log(`[/clan edit] 🟠 Servers: linked ${clan.abbr} to ${server.name}`);
+            } else {
+              clan.serverLinks.splice(idx, 1);
+              changes.push(`🟠 Servers: unlinked from ${server.name}.`);
+              console.log(`[/clan edit] 🟠 Servers: unlinked ${clan.abbr} from ${server.name}`);
+            }
+          }
         }
       }
 
@@ -559,14 +582,27 @@ module.exports = {
 
       const components = [];
       let serverRow = null;
-      if (clan.donutsmpTeamName) {
-        console.log(`[/clan view] 🟠 Adding DonutSMP button for clan ${clan.abbr} (guild ${guildId})`);
-        serverRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`clan_server_donutsmp_${guildId}`)
-            .setLabel("DonutSMP")
-            .setStyle(ButtonStyle.Secondary)
-        );
+      // One button per linked server: DonutSMP (donutsmpTeamName) + every
+      // label-only link in serverLinks. Routed by the /server buttonHandler.
+      const linkedServerIds = [];
+      if (clan.donutsmpTeamName) linkedServerIds.push("donutsmp");
+      if (Array.isArray(clan.serverLinks)) {
+        for (const sid of clan.serverLinks) {
+          if (sid && !linkedServerIds.includes(sid)) linkedServerIds.push(sid);
+        }
+      }
+      if (linkedServerIds.length) {
+        const serverNames = Object.fromEntries(listServers().map(s => [s.id, s.name]));
+        serverRow = new ActionRowBuilder();
+        for (const sid of linkedServerIds.slice(0, 5)) {
+          serverRow.addComponents(
+            new ButtonBuilder()
+              .setCustomId(`clan_server_${sid}_${guildId}`)
+              .setLabel(serverNames[sid] || sid)
+              .setStyle(ButtonStyle.Secondary)
+          );
+        }
+        console.log(`[/clan view] 🟠 Adding ${serverRow.components.length} server button(s) for clan ${clan.abbr} (guild ${guildId}): ${linkedServerIds.join(", ")}`);
         components.push(serverRow);
       }
 
@@ -578,7 +614,7 @@ module.exports = {
           setTimeout(async () => {
             try {
               const disabledRow = new ActionRowBuilder().addComponents(
-                ButtonBuilder.from(serverRow.components[0]).setDisabled(true)
+                serverRow.components.map(btn => ButtonBuilder.from(btn).setDisabled(true))
               );
               await message.edit({ components: [disabledRow] });
             } catch {

@@ -3,6 +3,7 @@
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { formatMoney } = require("../servers/serverembed");
+const { TAX_RATE } = require("./stocklogic");
 
 const DEMXN13_IGN = "DEMXN13";
 const UP_EMBED_COLOR = 0x0a0a0a;   // near-black (pure 0x000000 is treated as "no color" by Discord)
@@ -43,7 +44,8 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
           `All payments must be sent **in-game** to **${DEMXN13_IGN}**. ` +
           `Click **Buy**, enter your Minecraft IGN and share count, then send the ` +
           `exact amount to ${DEMXN13_IGN} (e.g. \`/pay ${DEMXN13_IGN} <amount>\`) within 60 seconds ` +
-          `— the bot verifies the payment by watching your own in-game balance drop by that amount.`,
+          `— the bot verifies the payment by watching your own in-game balance drop by that amount.\n` +
+          `A **${(TAX_RATE * 100).toFixed(0)}%** transaction fee applies to buys and sells.`,
         inline: false,
       },
       {

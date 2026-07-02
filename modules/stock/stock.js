@@ -78,24 +78,32 @@ function buildMarketView(clan, stock, mode) {
 // ---- /stock post ---------------------------------------------------------
 
 async function handlePost(interaction) {
+  console.log(`[stock] 📊 /stock post by ${interaction.user.tag} (${interaction.user.id}) in guild ${interaction.guild?.id}`);
+
   if (!interaction.guild) {
     return interaction.reply({ content: "❌ This command only works in a clan's Discord server.", flags: MessageFlags.Ephemeral });
   }
 
   if (interaction.user.id !== interaction.guild.ownerId) {
+    console.log(`[stock] 🚫 /stock post denied — ${interaction.user.id} is not owner of ${interaction.guild.id}`);
     return interaction.reply({ content: "❌ Only this clan's Discord owner can post the stock market.", flags: MessageFlags.Ephemeral });
   }
 
   const result = stocklogic.getOrCreateStockRecord(interaction.guild.id);
-  if (!result.success) return replyReason(interaction, result.reason);
+  if (!result.success) {
+    console.log(`[stock] ⚠️ /stock post could not build market for ${interaction.guild.id}: ${result.reason}`);
+    return replyReason(interaction, result.reason);
+  }
 
   const payload = buildMarketView(result.clan, result.stock, "ohlc");
+  console.log(`[stock] ✅ Posted ${result.clan.abbr} market (price ${result.stock.currentPrice}, treasury ${result.stock.treasuryShares})`);
   return interaction.reply(payload);
 }
 
 // ---- Toggle chart style ---------------------------------------------------
 
 async function handleToggle(interaction, mode, guildId) {
+  console.log(`[stock] 🔄 Chart toggle to "${mode}" for ${guildId} by ${interaction.user.tag}`);
   const clans = readClans();
   const clan = clans[guildId];
   const stock = stocklogic.getStockRecord(guildId);
@@ -112,6 +120,7 @@ async function handleToggle(interaction, mode, guildId) {
 
 async function handlePortfolio(interaction) {
   const holdings = stocklogic.getPortfolio(interaction.user.id);
+  console.log(`[stock] 📁 /stock portfolio by ${interaction.user.tag} — ${holdings.length} holding(s)`);
   const clans = readClans();
   const embed = createPortfolioEmbed(interaction.user.id, holdings, clans);
   return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -173,12 +182,15 @@ async function handleMarkPaid(interaction) {
   const guildId = rest.slice(0, sepIndex);
   const txId = rest.slice(sepIndex + 1);
 
+  console.log(`[stock] 💵 Mark-paid clicked by ${interaction.user.tag} (${interaction.user.id}) for tx ${txId} (guild ${guildId})`);
+
   const clanGuild = await interaction.client.guilds.fetch(guildId).catch(() => null);
   if (!clanGuild) {
     return interaction.reply({ content: "❌ Couldn't find that clan's Discord server anymore.", flags: MessageFlags.Ephemeral });
   }
 
   if (interaction.user.id !== clanGuild.ownerId) {
+    console.log(`[stock] 🚫 Mark-paid denied — ${interaction.user.id} is not owner of ${guildId}`);
     return interaction.reply({ content: "❌ Only this clan's Discord owner can confirm a sell payout.", flags: MessageFlags.Ephemeral });
   }
 
@@ -210,11 +222,14 @@ async function handleBuyModal(interaction, guildId) {
   const ign = interaction.fields.getTextInputValue("ign").trim();
   const shares = parseShares(interaction.fields.getTextInputValue("shares"));
 
+  console.log(`[stock] 🛒 BUY request: ${interaction.user.tag} (${interaction.user.id}) wants ${shares ?? "?"} share(s) of ${guildId} as IGN "${ign}"`);
+
   if (!shares) {
     return interaction.editReply({ content: "❌ Enter a whole number of shares greater than 0." });
   }
 
   if (pendingOrders.hasPendingBuy(guildId, interaction.user.id)) {
+    console.log(`[stock] ⏳ BUY blocked — ${interaction.user.id} already has a pending order on ${guildId}`);
     return interaction.editReply({ content: "⏳ You already have a pending buy order — wait for it to resolve or expire (60s)." });
   }
 
@@ -234,11 +249,13 @@ async function handleBuyModal(interaction, guildId) {
 
   const statsRes = await donutsmp.getPlayerStats(ign).catch(() => ({ ok: false }));
   if (!statsRes.ok) {
+    console.log(`[stock] ❌ BUY aborted — could not fetch DonutSMP stats for "${ign}"; refunding ${shares} reserved share(s)`);
     stocklogic.refundTreasuryShares(guildId, shares);
     return interaction.editReply({ content: `❌ Couldn't find \`${ign}\` on DonutSMP. Double-check the spelling and try again.` });
   }
 
   const baselineMoney = Number(statsRes.stats?.money) || 0;
+  console.log(`[stock] ⏱️ BUY watch started for ${interaction.user.id} (${ign}): cost ${cost}, baseline balance ${baselineMoney}, 60s window`);
 
   await interaction.editReply({
     content:
@@ -287,6 +304,8 @@ async function handleSellModal(interaction, guildId) {
   const ign = interaction.fields.getTextInputValue("ign").trim();
   const shares = parseShares(interaction.fields.getTextInputValue("shares"));
 
+  console.log(`[stock] 🧾 SELL request: ${interaction.user.tag} (${interaction.user.id}) wants to sell ${shares ?? "?"} share(s) of ${guildId} as IGN "${ign}"`);
+
   if (!shares) {
     return interaction.editReply({ content: "❌ Enter a whole number of shares greater than 0." });
   }
@@ -333,9 +352,13 @@ async function handleSellModal(interaction, guildId) {
         .setLabel("Mark Paid")
         .setStyle(ButtonStyle.Success)
     );
-    await owner.send({ embeds: [embed], components: [row] }).catch(() => {
-      console.warn(`[stock] ⚠️ Could not DM clan owner ${owner.id} about pending sell ${result.txId}`);
-    });
+    await owner.send({ embeds: [embed], components: [row] })
+      .then(() => console.log(`[stock] 📨 DM'd owner ${owner.id} to confirm pending sell ${result.txId}`))
+      .catch(() => {
+        console.warn(`[stock] ⚠️ Could not DM clan owner ${owner.id} about pending sell ${result.txId}`);
+      });
+  } else {
+    console.warn(`[stock] ⚠️ No owner reachable to notify for pending sell ${result.txId} (guild ${guildId})`);
   }
 }
 

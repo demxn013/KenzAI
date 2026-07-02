@@ -47,6 +47,7 @@ async function grantInvestorRole(guild, discordId) {
 
   try {
     await member.roles.add(ensured.role.id);
+    console.log(`[investorRole] 🎖️ Granted INVESTOR role to ${discordId} in guild ${guild.id}${ensured.created ? " (role auto-created)" : ""}`);
     return { success: true, alreadyHad: false };
   } catch (err) {
     console.error(`[investorRole] ❌ Failed to grant INVESTOR role to ${discordId}:`, err.message);
@@ -66,6 +67,7 @@ async function revokeInvestorRoleIfZero(guild, discordId, remainingShares) {
 
   try {
     await member.roles.remove(role.id);
+    console.log(`[investorRole] 🗑️ Revoked INVESTOR role from ${discordId} in guild ${guild.id} (holdings hit 0)`);
     return { success: true, skipped: false };
   } catch (err) {
     console.error(`[investorRole] ❌ Failed to revoke INVESTOR role from ${discordId}:`, err.message);

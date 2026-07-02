@@ -59,10 +59,15 @@ function startBuyWatch(order, { onConfirmed, onTimeout } = {}) {
   const checkOnce = async () => {
     if (!pending.has(key)) return; // already resolved
     const res = await donutsmp.getPlayerStats(order.ign).catch(() => ({ ok: false }));
-    if (!res.ok) return;
+    if (!res.ok) {
+      console.log(`[pendingOrders] ⚠️ Balance check failed for "${order.ign}" (${key}) — will retry`);
+      return;
+    }
     const currentMoney = Number(res.stats?.money) || 0;
     const dropped = entry.baselineMoney - currentMoney;
+    console.log(`[pendingOrders] 🔎 Poll ${key}: balance ${currentMoney}, dropped ${dropped}/${entry.cost} needed`);
     if (dropped >= entry.cost) {
+      console.log(`[pendingOrders] ✅ Payment detected for ${key} (dropped ${dropped} >= ${entry.cost})`);
       clear(key);
       if (onConfirmed) await onConfirmed();
     }
@@ -71,10 +76,12 @@ function startBuyWatch(order, { onConfirmed, onTimeout } = {}) {
   entry.pollTimer = setInterval(checkOnce, DEFAULT_POLL_INTERVAL_MS);
   entry.timeoutTimer = setTimeout(async () => {
     if (!pending.has(key)) return;
+    console.log(`[pendingOrders] ⌛ Buy window expired for ${key} — no matching payment detected`);
     clear(key);
     if (onTimeout) await onTimeout();
   }, windowMs);
 
+  console.log(`[pendingOrders] 🕒 Watching ${key}: expecting a ${order.cost} drop for "${order.ign}" within ${windowMs / 1000}s`);
   return { success: true };
 }
 

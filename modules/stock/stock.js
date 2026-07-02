@@ -89,6 +89,40 @@ async function buildMarketView(clan, stock, mode) {
   return { embeds: [embed], files: [attachment], components: [buttons] };
 }
 
+/**
+ * Re-render an already-posted market message in place so it reflects fresh
+ * stock state (new price, reduced treasury, updated chart) right after a
+ * trade. Preserves whichever chart mode the message is currently showing.
+ * @param {import("discord.js").Message} message - the market post message
+ * @param {string} guildId
+ */
+async function refreshMarketMessage(message, guildId) {
+  if (!message) return;
+  const clans = readClans();
+  const clan = clans[guildId];
+  const stock = stocklogic.getStockRecord(guildId);
+  if (!clan || !stock) return;
+
+  // The toggle button's customId is stock_toggle_<nextMode>_<guildId>, so the
+  // mode currently on screen is the opposite of that "next" mode.
+  let mode = "ohlc";
+  for (const row of message.components || []) {
+    for (const comp of row.components || []) {
+      const cid = comp.customId || comp.custom_id || "";
+      if (cid.startsWith("stock_toggle_")) {
+        const nextMode = cid.slice("stock_toggle_".length).split("_")[0];
+        mode = nextMode === "line" ? "ohlc" : "line";
+      }
+    }
+  }
+
+  const payload = await buildMarketView(clan, stock, mode);
+  // attachments: [] drops the stale chart image so the new one replaces it.
+  await message.edit({ ...payload, attachments: [] })
+    .then(() => console.log(`[stock] 🔄 Refreshed market message for ${clan.abbr} (${guildId}) after trade`))
+    .catch((err) => console.warn(`[stock] ⚠️ Could not refresh market message: ${err.message}`));
+}
+
 // ---- /stock post ---------------------------------------------------------
 
 async function handlePost(interaction) {
@@ -111,7 +145,35 @@ async function handlePost(interaction) {
 
   const payload = await buildMarketView(result.clan, result.stock, "ohlc");
   console.log(`[stock] ✅ Posted ${result.clan.abbr} market (price ${result.stock.currentPrice}, treasury ${result.stock.treasuryShares})`);
-  return interaction.reply(payload);
+  await interaction.reply(payload);
+
+  // Remember where this post lives so trades can refresh it in place later
+  // (e.g. a sell confirmed from the owner's DM, which has no direct handle).
+  try {
+    const msg = await interaction.fetchReply();
+    const stock = stocklogic.getStockRecord(interaction.guild.id);
+    if (stock && msg) {
+      stock.lastPost = { channelId: msg.channelId, messageId: msg.id };
+      stocklogic.saveStockRecord(interaction.guild.id, stock);
+    }
+  } catch (err) {
+    console.warn(`[stock] ⚠️ Could not record market post location: ${err.message}`);
+  }
+}
+
+/** Refresh the last-posted market message for a guild via its stored ref. */
+async function refreshMarketByRef(client, guildId) {
+  const stock = stocklogic.getStockRecord(guildId);
+  if (!stock || !stock.lastPost) return;
+  const { channelId, messageId } = stock.lastPost;
+  try {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.messages) return;
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (message) await refreshMarketMessage(message, guildId);
+  } catch (err) {
+    console.warn(`[stock] ⚠️ Could not refresh stored market message for ${guildId}: ${err.message}`);
+  }
 }
 
 // ---- Toggle chart style ---------------------------------------------------
@@ -221,6 +283,9 @@ async function handleMarkPaid(interaction) {
   if (interaction.message?.editable) {
     await interaction.message.edit({ components: [] }).catch(() => {});
   }
+
+  // Refresh the public market post so the returned shares / new price show.
+  await refreshMarketByRef(interaction.client, guildId).catch(() => {});
 }
 
 // ---- Modals -----------------------------------------------------------
@@ -301,6 +366,15 @@ async function handleBuyModal(interaction, guildId) {
         await interaction.editReply({
           content: `✅ Payment confirmed! You now own **${shares}** more share(s) of **${clan.abbr}**.${roleNote}`,
         }).catch(() => {});
+
+        // Update the public market post in place so the new price / reduced
+        // shares available show immediately. interaction.message is the exact
+        // post the Buy button lives on; fall back to the stored ref if absent.
+        if (interaction.message) {
+          await refreshMarketMessage(interaction.message, guildId).catch(() => {});
+        } else {
+          await refreshMarketByRef(interaction.client, guildId).catch(() => {});
+        }
       },
       onTimeout: async () => {
         stocklogic.refundTreasuryShares(guildId, shares);

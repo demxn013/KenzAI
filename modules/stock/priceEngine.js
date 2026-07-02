@@ -13,7 +13,10 @@ const PRESSURE_FACTOR = 2.0;      // scales net buy/sell volume into a price nud
 const BAND_MIN_MULT = 0.4;        // price floor: 40% of base price
 const BAND_MAX_MULT = 2.5;        // price ceiling: 250% of base price
 const TRADE_IMPACT_FACTOR = 1.5;  // scales a trade's size into an immediate price move
-const MAX_TRADE_IMPACT = 0.05;    // cap a single trade's instant impact at ±5%
+// Cap a single trade's instant impact below the 2%+2% round-trip fee (~4.08%
+// break-even) so a buyer can never profit by selling into their own price
+// bump — buying then immediately selling is always a net loss.
+const MAX_TRADE_IMPACT = 0.035;
 const DEFAULT_CANDLE_INTERVAL_MINUTES = 60;
 const CANDLE_HISTORY_LIMIT = 200;
 

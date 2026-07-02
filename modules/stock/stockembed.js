@@ -3,7 +3,15 @@
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { formatMoney } = require("../servers/serverembed");
-const { TAX_RATE } = require("./stocklogic");
+const { TAX_RATE, SELL_COOLDOWN_MS } = require("./stocklogic");
+
+function holdPeriodLabel() {
+  const min = Math.round(SELL_COOLDOWN_MS / 60000);
+  if (min <= 0) return null;
+  if (min < 60) return `${min} minute${min === 1 ? "" : "s"}`;
+  const h = Math.round(min / 60);
+  return `${h} hour${h === 1 ? "" : "s"}`;
+}
 
 const DEMXN13_IGN = "DEMXN13";
 const UP_EMBED_COLOR = 0x0a0a0a;   // near-black (pure 0x000000 is treated as "no color" by Discord)
@@ -45,7 +53,8 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
           `Click **Buy**, enter your Minecraft IGN and share count, then send the ` +
           `exact amount to ${DEMXN13_IGN} (e.g. \`/pay ${DEMXN13_IGN} <amount>\`) within 60 seconds ` +
           `— the bot verifies the payment by watching your own in-game balance drop by that amount.\n` +
-          `A **${(TAX_RATE * 100).toFixed(0)}%** transaction fee applies to buys and sells.`,
+          `A **${(TAX_RATE * 100).toFixed(0)}%** transaction fee applies to buys and sells` +
+          (holdPeriodLabel() ? `, and shares must be held for **${holdPeriodLabel()}** before they can be sold.` : "."),
         inline: false,
       },
       {

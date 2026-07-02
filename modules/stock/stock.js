@@ -27,6 +27,7 @@ const pendingOrders = require("./pendingOrders");
 const investorRole = require("./investorRole");
 const { renderStockChart, renderStockLineChart, MAX_VISIBLE_CANDLES } = require("./chart");
 const donutsmp = require("../servers/donutsmp");
+const { num } = require("../servers/serverembed");
 const {
   DEMXN13_IGN,
   createMarketEmbed,
@@ -326,6 +327,15 @@ function parseShares(raw) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** Human-friendly "2h 5m" / "45m" from a millisecond duration. */
+function formatDuration(ms) {
+  const totalMin = Math.max(1, Math.ceil(ms / 60000));
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
 async function handleBuyModal(interaction, guildId) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -365,7 +375,7 @@ async function handleBuyModal(interaction, guildId) {
     return interaction.editReply({ content: `❌ Couldn't find \`${ign}\` on DonutSMP. Double-check the spelling and try again.` });
   }
 
-  const baselineMoney = Number(statsRes.stats?.money) || 0;
+  const baselineMoney = num(statsRes.stats?.money);
   console.log(`[stock] ⏱️ BUY watch started for ${interaction.user.id} (${ign}): total ${cost} (base ${base} + ${feePct}% fee ${tax}), baseline balance ${baselineMoney}, 60s window`);
 
   await interaction.editReply({
@@ -447,6 +457,11 @@ async function handleSellModal(interaction, guildId) {
   });
 
   if (!result.success) {
+    if (result.reason === "cooldown") {
+      return interaction.editReply({
+        content: `⏳ You bought shares too recently. To prevent instant flipping, shares must be held for a bit before selling — try again in **${formatDuration(result.cooldownMs)}**.`,
+      });
+    }
     return interaction.editReply({ content: "❌ You don't have enough unreserved shares to sell that many." });
   }
 

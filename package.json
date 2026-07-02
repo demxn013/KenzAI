@@ -12,13 +12,14 @@
     "db:parity": "node scripts/mysql-parity-compare.js"
   },
   "dependencies": {
-    "mysql2": "^3.14.1",
+    "@napi-rs/canvas": "^1.0.2",
     "@vibrant/core": "^4.0.0",
-    "discord-html-transcripts": "^3.3.0",
+    "discord-html-transcripts": "3.2.0",
     "discord.js": "^14.26.3",
     "dotenv": "^16.6.1",
     "fast-average-color-node": "^3.1.0",
     "jimp": "^1.6.1",
+    "mysql2": "^3.14.1",
     "node-vibrant": "^4.0.3"
   }
 }

@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { initDatabase } = require('./modules/database/bootstrap');
 const { startScheduler } = require('./modules/empire/draftscheduler');
 const { startRoleScheduler } = require('./modules/roles/roleScheduler');
+const { startStockScheduler } = require('./modules/stock/stockScheduler');
 const { setupPointsEvents } = require('./modules/points/pointsevents');
 const { startBotMonitor } = require('./modules/mcbot/botmonitor');
 const { startCosmeticsServer } = require('./modules/cosmetics/cosmeticsServer');
@@ -239,6 +240,9 @@ client.once('ready', async () => {
 
   console.log("🔄 Starting daily clan role refresh...");
   startRoleScheduler(client);
+
+  console.log("📈 Starting clan stock price scheduler...");
+  startStockScheduler();
 
   setupPointsEvents(client);
 

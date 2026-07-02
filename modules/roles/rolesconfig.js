@@ -105,7 +105,8 @@ async function addGuildRoles(guildId, guildName, guild) {
     }
 
     // Sort roles by position (higher position = higher priority)
-    const sortedRoles = Array.from(roles.cache.values())
+    // guild.roles.fetch() resolves to a Collection of roles directly (no .cache)
+    const sortedRoles = Array.from(roles.values())
       .filter(role => role.name !== "@everyone") // Exclude @everyone
       .sort((a, b) => b.position - a.position); // Highest position first
 
@@ -174,7 +175,8 @@ async function updateGuildRoles(guildId, guild) {
     }
 
     // Sort by position
-    const sortedRoles = Array.from(roles.cache.values())
+    // guild.roles.fetch() resolves to a Collection of roles directly (no .cache)
+    const sortedRoles = Array.from(roles.values())
       .filter(role => role.name !== "@everyone")
       .sort((a, b) => b.position - a.position);
 

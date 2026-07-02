@@ -21,6 +21,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const { readClans } = require("../database/clansPersistence");
+const { stores } = require("../database/stores");
 const stocklogic = require("./stocklogic");
 const pendingOrders = require("./pendingOrders");
 const investorRole = require("./investorRole");
@@ -35,6 +36,34 @@ const {
 
 const CHART_ATTACHMENT_NAME = "stockchart.png";
 const EMBLEMS_DIR = path.join(__dirname, "..", "images", "clanemblems");
+
+// /stock post is usable by a clan's own Discord owner OR anyone holding the
+// "Royalty" status role in the main Yazanaki Empire server. The role ID is
+// read live from roles.json (by name) with a known fallback — same lookup
+// used by modules/activity/activity.js and modules/clantracking/clan.js.
+const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
+const ROYALTY_ROLE_FALLBACK_ID = "1334642034472128654";
+
+function getRoyaltyRoleId() {
+  try {
+    const rolesConfig = stores.roles_config.readObject();
+    const statusRoles = rolesConfig?.guilds?.[YAZANAKI_EMPIRE_GUILD_ID]?.statusRoles || {};
+    const entry = Object.entries(statusRoles).find(([, r]) => r?.name === "Royalty");
+    if (entry) return entry[0];
+  } catch (err) {
+    console.warn("[stock] ⚠️ Could not read roles config for Royalty role:", err.message);
+  }
+  return ROYALTY_ROLE_FALLBACK_ID;
+}
+
+/** True if the user holds the Royalty role in the Yazanaki Empire server. */
+async function isYazanakiRoyalty(client, discordId) {
+  const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+  if (!guild) return false;
+  const member = await guild.members.fetch(discordId).catch(() => null);
+  if (!member) return false;
+  return member.roles.cache.has(getRoyaltyRoleId());
+}
 
 /** Absolute path to a clan's emblem PNG, or null if it doesn't exist. */
 function getEmblemPath(abbr) {
@@ -132,9 +161,11 @@ async function handlePost(interaction) {
     return interaction.reply({ content: "❌ This command only works in a clan's Discord server.", flags: MessageFlags.Ephemeral });
   }
 
-  if (interaction.user.id !== interaction.guild.ownerId) {
-    console.log(`[stock] 🚫 /stock post denied — ${interaction.user.id} is not owner of ${interaction.guild.id}`);
-    return interaction.reply({ content: "❌ Only this clan's Discord owner can post the stock market.", flags: MessageFlags.Ephemeral });
+  const isOwner = interaction.user.id === interaction.guild.ownerId;
+  const allowed = isOwner || await isYazanakiRoyalty(interaction.client, interaction.user.id);
+  if (!allowed) {
+    console.log(`[stock] 🚫 /stock post denied — ${interaction.user.id} is not owner of ${interaction.guild.id} nor Yazanaki Royalty`);
+    return interaction.reply({ content: "❌ Only this clan's Discord owner or Yazanaki Empire Royalty can post the stock market.", flags: MessageFlags.Ephemeral });
   }
 
   const result = stocklogic.getOrCreateStockRecord(interaction.guild.id);
@@ -319,7 +350,8 @@ async function handleBuyModal(interaction, guildId) {
     return interaction.editReply({ content: "❌ This clan's stock isn't set up yet." });
   }
 
-  const cost = shares * stock.currentPrice;
+  const { base, tax, total: cost } = stocklogic.computeBuyCost(shares, stock.currentPrice);
+  const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);
 
   const reserve = stocklogic.reserveTreasuryShares(guildId, shares);
   if (!reserve.success) {
@@ -334,12 +366,13 @@ async function handleBuyModal(interaction, guildId) {
   }
 
   const baselineMoney = Number(statsRes.stats?.money) || 0;
-  console.log(`[stock] ⏱️ BUY watch started for ${interaction.user.id} (${ign}): cost ${cost}, baseline balance ${baselineMoney}, 60s window`);
+  console.log(`[stock] ⏱️ BUY watch started for ${interaction.user.id} (${ign}): total ${cost} (base ${base} + ${feePct}% fee ${tax}), baseline balance ${baselineMoney}, 60s window`);
 
   await interaction.editReply({
     content:
       `💳 Send exactly \`${cost.toLocaleString()}\` to **${DEMXN13_IGN}** in-game ` +
-      `(e.g. \`/pay ${DEMXN13_IGN} ${cost}\`) within **60 seconds**. ` +
+      `(e.g. \`/pay ${DEMXN13_IGN} ${cost}\`) within **60 seconds**.\n` +
+      `That's \`${base.toLocaleString()}\` for **${shares}** share(s) + a \`${tax.toLocaleString()}\` (${feePct}%) transaction fee.\n` +
       `Don't make any other purchases or payments during this window — the bot confirms ` +
       `your order by watching \`${ign}\`'s own balance drop by that amount.`,
   });
@@ -348,7 +381,7 @@ async function handleBuyModal(interaction, guildId) {
     { guildId, discordId: interaction.user.id, ign, shares, cost, baselineMoney },
     {
       onConfirmed: async () => {
-        stocklogic.completeBuy({ guildId, discordId: interaction.user.id, ign, shares, pricePerShare: stock.currentPrice });
+        stocklogic.completeBuy({ guildId, discordId: interaction.user.id, ign, shares, pricePerShare: stock.currentPrice, paid: cost });
 
         let roleNote = "";
         const clanGuild = await interaction.client.guilds.fetch(guildId).catch(() => null);
@@ -417,11 +450,13 @@ async function handleSellModal(interaction, guildId) {
     return interaction.editReply({ content: "❌ You don't have enough unreserved shares to sell that many." });
   }
 
+  const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);
   await interaction.editReply({
     content:
-      `📉 Sell order placed for **${shares}** share(s) of **${clan.abbr}** ` +
-      `(payout: \`${result.payout.toLocaleString()}\`). ${clan.abbr}'s clan owner has been notified ` +
-      `to pay you in-game — they'll confirm once it's sent.`,
+      `📉 Sell order placed for **${shares}** share(s) of **${clan.abbr}**.\n` +
+      `You'll receive \`${result.payout.toLocaleString()}\` — that's \`${result.grossPayout.toLocaleString()}\` ` +
+      `minus a \`${result.tax.toLocaleString()}\` (${feePct}%) transaction fee. ` +
+      `${clan.abbr}'s clan owner has been notified to pay you in-game — they'll confirm once it's sent.`,
   });
 
   const clanGuild = await interaction.client.guilds.fetch(guildId).catch(() => null);
@@ -432,7 +467,7 @@ async function handleSellModal(interaction, guildId) {
       .setColor(0xed4245)
       .setDescription(
         `**${interaction.user.tag}** (IGN: \`${ign}\`) wants to sell **${shares}** share(s).\n` +
-        `Pay them \`${result.payout.toLocaleString()}\` in-game, then click below to confirm.`
+        `Pay them \`${result.payout.toLocaleString()}\` in-game (net of the ${feePct}% fee), then click below to confirm.`
       );
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()

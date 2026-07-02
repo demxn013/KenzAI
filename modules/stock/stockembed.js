@@ -99,13 +99,42 @@ function createPortfolioEmbed(discordId, holdings, clansById) {
     return embed;
   }
 
+  let totalInvested = 0;
+  let totalValue = 0;
+
   const fields = holdings.map((h) => {
     const clan = clansById[h.guildId];
     const label = clan ? `${clan.abbr}: ${clan.name}` : h.guildId;
-    return { name: label, value: `\`${h.shares.toLocaleString()}\` shares`, inline: true };
+    totalInvested += h.invested;
+    totalValue += h.currentValue;
+
+    const up = h.profit >= 0;
+    const arrow = up ? "🔺" : "🔻";
+    const sign = h.profit > 0 ? "+" : "";
+
+    const value = [
+      `Shares: \`${h.shares.toLocaleString()}\``,
+      `Avg buy price: \`${formatMoney(h.avgBuyPrice)}\``,
+      `Total paid: \`${formatMoney(h.invested)}\``,
+      `Current price: \`${formatMoney(h.currentPrice)}\``,
+      `Current value: \`${formatMoney(h.currentValue)}\``,
+      `P/L: ${arrow} \`${sign}${formatMoney(h.profit)}\` (${sign}${h.profitPercent.toFixed(2)}%)`,
+    ].join("\n");
+
+    return { name: label, value, inline: false };
   });
 
   embed.addFields(fields);
+
+  const totalProfit = totalValue - totalInvested;
+  const tUp = totalProfit >= 0;
+  const tSign = totalProfit > 0 ? "+" : "";
+  embed.setDescription(
+    `**Total paid:** \`${formatMoney(totalInvested)}\`\n` +
+    `**Current value:** \`${formatMoney(totalValue)}\`\n` +
+    `**Total P/L:** ${tUp ? "🔺" : "🔻"} \`${tSign}${formatMoney(totalProfit)}\``
+  );
+
   return embed;
 }
 

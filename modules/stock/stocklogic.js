@@ -23,6 +23,14 @@ const SERVER_PRICE_PER_SHARE = {
 // a margin on both sides so payouts are easier to cover.
 const TAX_RATE = 0.02;
 
+// Minimum time a member must hold shares after their most recent buy before
+// they can sell — blocks buying and immediately flipping for a profit.
+// Override with STOCK_SELL_COOLDOWN_MINUTES (default 1 hour).
+const SELL_COOLDOWN_MS = (() => {
+  const min = parseFloat(process.env.STOCK_SELL_COOLDOWN_MINUTES);
+  return Number.isFinite(min) && min >= 0 ? min * 60 * 1000 : 60 * 60 * 1000;
+})();
+
 /** Buy cost breakdown: base share value + fee the investor pays on top. */
 function computeBuyCost(shares, pricePerShare) {
   const base = shares * pricePerShare;
@@ -183,23 +191,37 @@ function getPortfolio(discordId) {
     });
 }
 
-/** Low-level holding write. `invested` is the cost basis of the held shares. */
-function writeHolding(guildId, discordId, shares, invested, ign) {
+/**
+ * Low-level holding write. `invested` is the cost basis of the held shares.
+ * `opts.lastBuyAt` (set on buys) records the most-recent purchase time for the
+ * sell cooldown; other writes (e.g. sells) preserve the existing value.
+ */
+function writeHolding(guildId, discordId, shares, invested, ign, opts = {}) {
   const all = stores.stock_holdings.readMap();
   const key = holdingKey(guildId, discordId);
+  const prev = all[key] || {};
   if (shares <= 0) {
     delete all[key];
   } else {
     all[key] = {
       guildId,
       discordId,
-      ign: ign || all[key]?.ign || null,
+      ign: ign || prev.ign || null,
       shares,
       invested: Math.max(0, Math.round(invested)),
+      lastBuyAt: opts.lastBuyAt !== undefined ? opts.lastBuyAt : (prev.lastBuyAt || null),
       updatedAt: new Date().toISOString(),
     };
   }
   stores.stock_holdings.writeMap(all);
+}
+
+/** Milliseconds left before this holder may sell (0 = may sell now). */
+function getSellCooldownRemaining(guildId, discordId) {
+  const h = getHoldingRecord(guildId, discordId);
+  if (!h || !h.lastBuyAt) return 0;
+  const elapsed = Date.now() - new Date(h.lastBuyAt).getTime();
+  return Math.max(0, SELL_COOLDOWN_MS - elapsed);
 }
 
 /** Shares already committed to unresolved pending sells for this holder. */
@@ -255,7 +277,7 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare, paid }) {
   const prevShares = existing ? Number(existing.shares) || 0 : 0;
   const prevInvested = existing ? Number(existing.invested) || 0 : 0;
   const investedAdd = Number(paid) > 0 ? Number(paid) : computeBuyCost(shares, pricePerShare).total;
-  writeHolding(guildId, discordId, prevShares + shares, prevInvested + investedAdd, ign);
+  writeHolding(guildId, discordId, prevShares + shares, prevInvested + investedAdd, ign, { lastBuyAt: new Date().toISOString() });
 
   const stock = getStockRecord(guildId);
   if (stock) {
@@ -284,6 +306,12 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare, paid }) {
 
 /** Create a durable pending sell awaiting owner confirmation. Does NOT move shares yet. */
 function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
+  const cooldown = getSellCooldownRemaining(guildId, discordId);
+  if (cooldown > 0) {
+    console.log(`[stocklogic] 🚫 Sell rejected for ${discordId} on ${guildId}: hold cooldown ${Math.ceil(cooldown / 1000)}s remaining`);
+    return { success: false, reason: "cooldown", cooldownMs: cooldown };
+  }
+
   const held = getHolding(guildId, discordId);
   const reserved = getReservedSellShares(guildId, discordId);
   if (held - reserved < shares) {
@@ -384,6 +412,8 @@ function computePriceChange(candles) {
 module.exports = {
   SHARES_PER_MEMBER,
   TAX_RATE,
+  SELL_COOLDOWN_MS,
+  getSellCooldownRemaining,
   computeBuyCost,
   computeSellPayout,
   computePriceChange,

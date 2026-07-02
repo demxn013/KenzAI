@@ -208,8 +208,10 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
 
   const stock = getStockRecord(guildId);
   if (stock) {
-    priceEngine.recordVolume(stock, "buy", shares);
+    const before = stock.currentPrice;
+    const after = priceEngine.applyTradeImpact(stock, "buy", shares);
     saveStockRecord(guildId, stock);
+    console.log(`[stocklogic] 💹 BUY impact: ${guildId} price ${before} → ${after}`);
   }
 
   const txId = logTransaction({
@@ -274,8 +276,10 @@ function markSellPaid(txId) {
   const stock = getStockRecord(pending.guildId);
   if (stock) {
     stock.treasuryShares = (Number(stock.treasuryShares) || 0) + debited;
-    priceEngine.recordVolume(stock, "sell", debited);
+    const before = stock.currentPrice;
+    const after = priceEngine.applyTradeImpact(stock, "sell", debited);
     saveStockRecord(pending.guildId, stock);
+    console.log(`[stocklogic] 💹 SELL impact: ${pending.guildId} price ${before} → ${after}`);
   }
 
   pending.status = "confirmed";

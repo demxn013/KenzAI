@@ -12,6 +12,8 @@ const MAX_STEP_PCT = 0.015;       // ±1.5% bounded random walk per tick
 const PRESSURE_FACTOR = 2.0;      // scales net buy/sell volume into a price nudge
 const BAND_MIN_MULT = 0.4;        // price floor: 40% of base price
 const BAND_MAX_MULT = 2.5;        // price ceiling: 250% of base price
+const TRADE_IMPACT_FACTOR = 1.5;  // scales a trade's size into an immediate price move
+const MAX_TRADE_IMPACT = 0.05;    // cap a single trade's instant impact at ±5%
 const DEFAULT_CANDLE_INTERVAL_MINUTES = 60;
 const CANDLE_HISTORY_LIMIT = 200;
 
@@ -39,6 +41,46 @@ function recordVolume(stock, type, shares) {
   if (type === "buy") stock.recentVolume.buys += n;
   else if (type === "sell") stock.recentVolume.sells += n;
   return stock;
+}
+
+/**
+ * Apply a trade's immediate, bounded market impact so the price (and the
+ * live candle the chart draws) reflect an investment right away instead of
+ * waiting for the next scheduler tick. Buys push the price up, sells push it
+ * down, scaled by trade size vs. outstanding shares and capped at
+ * MAX_TRADE_IMPACT. Not exploitable for free money — buys cost real in-game
+ * currency and sells pay out real currency.
+ * @param {object} stock
+ * @param {"buy"|"sell"} type
+ * @param {number} shares
+ * @param {Date} [now]
+ * @returns {number} the new currentPrice
+ */
+function applyTradeImpact(stock, type, shares, now = new Date()) {
+  ensureShape(stock);
+  const price = Number(stock.currentPrice) > 0
+    ? Number(stock.currentPrice)
+    : Number(stock.basePricePerShare) || 0;
+  if (price <= 0) return price;
+
+  const outstanding = Math.max(1, Number(stock.outstandingShares) || 1);
+  const n = Math.max(0, Number(shares) || 0);
+  const magnitude = Math.min(MAX_TRADE_IMPACT, (n / outstanding) * TRADE_IMPACT_FACTOR);
+  const dir = type === "sell" ? -1 : 1;
+
+  const next = Math.round(clampPrice(stock, price * (1 + dir * magnitude)));
+  stock.currentPrice = next;
+
+  // Reflect the move on the chart's current candle (open one if none yet).
+  const last = stock.candles[stock.candles.length - 1];
+  if (!last) {
+    openNewCandle(stock, next, now.toISOString());
+  } else {
+    last.h = Math.max(last.h, next);
+    last.l = Math.min(last.l, next);
+    last.c = next;
+  }
+  return next;
 }
 
 function clampPrice(stock, price) {
@@ -114,5 +156,6 @@ module.exports = {
   CANDLE_HISTORY_LIMIT,
   ensureShape,
   recordVolume,
+  applyTradeImpact,
   tick,
 };

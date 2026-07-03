@@ -3,6 +3,7 @@
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { formatMoney } = require("../servers/serverembed");
+const { serverDisplayName, serverCurrencyName, hasStatsApi } = require("../servers/serverRegistry");
 
 const DEMXN13_IGN = "DEMXN13";
 const UP_EMBED_COLOR = 0x0a0a0a;   // near-black (pure 0x000000 is treated as "no color" by Discord)
@@ -17,7 +18,9 @@ const DOWN_EMBED_COLOR = 0xd40000; // red
  * @param {{ absolute: number, percent: number, direction: "up"|"down"|"flat" }} priceChange
  */
 function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
-  const currencyLabel = stock.server === "donutsmp" ? "DonutSMP money" : stock.server;
+  const currencyLabel = serverCurrencyName(stock.server);
+  const serverLabel = serverDisplayName(stock.server);
+  const apiVerified = hasStatsApi(stock.server);
 
   const change = priceChange || { absolute: 0, percent: 0, direction: "flat" };
   const arrow = change.direction === "down" ? "🔻" : change.direction === "up" ? "🔺" : "▪️";
@@ -36,14 +39,18 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange) {
       { name: "📈 Price change", value: changeText, inline: false },
       { name: "🏦 Shares available", value: `\`${stock.treasuryShares.toLocaleString()}\``, inline: false },
       { name: "📊 Total shares outstanding", value: `\`${stock.outstandingShares.toLocaleString()}\``, inline: false },
-      { name: "🌐 Server", value: `\`${currencyLabel}\``, inline: false },
+      { name: "🌐 Server", value: `\`${serverLabel}\``, inline: false },
       {
         name: "💳 How to pay",
-        value:
-          `All payments must be sent **in-game** to **${DEMXN13_IGN}**. ` +
-          `Click **Buy**, enter your Minecraft IGN and share count, then send the ` +
-          `exact amount to ${DEMXN13_IGN} (e.g. \`/pay ${DEMXN13_IGN} <amount>\`) within 60 seconds ` +
-          `— the bot verifies the payment by watching your own in-game balance drop by that amount.`,
+        value: apiVerified
+          ? `All payments must be sent **in-game** to **${DEMXN13_IGN}**. ` +
+            `Click **Buy**, enter your Minecraft IGN and share count, then send the ` +
+            `exact amount to ${DEMXN13_IGN} (e.g. \`/pay ${DEMXN13_IGN} <amount>\`) within 60 seconds ` +
+            `— the bot verifies the payment by watching your own in-game balance drop by that amount.`
+          : `All payments must be sent **in-game** to **${DEMXN13_IGN}**. ` +
+            `Click **Buy**, enter your Minecraft IGN and share count, then send the ` +
+            `exact amount to ${DEMXN13_IGN} (e.g. \`/pay ${DEMXN13_IGN} <amount>\`). ` +
+            `Your shares are reserved and **Yazanaki staff** will confirm your payment and credit them.`,
         inline: false,
       },
       {

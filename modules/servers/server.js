@@ -8,6 +8,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const clanlogic = require("../clantracking/clanlogic");
 const { readMembers } = require("../membertracking/memberlogic");
 const donutsmp = require("./donutsmp");
+const { getServerClient, isClanLinkedToServer } = require("./serverRegistry");
 const {
   createServerListEmbed,
   createTeamEmbed,
@@ -165,60 +166,48 @@ module.exports = {
         return;
       }
 
-      // server_donutsmp -> show clans with DonutSMP team, buttons per clan
-      if (id === "server_donutsmp") {
-        console.log("[/server buttons] 🌐 Server: DonutSMP selected");
-        await interaction.deferUpdate();
-        const clans = clanlogic.readClans();
-        const withTeam = Object.entries(clans)
-          .filter(([, c]) => c.donutsmpTeamName)
-          .map(([guildId, c]) => ({ guildId, abbr: c.abbr, name: c.name }));
-        console.log(
-          "[/server buttons] 🏰 Clans with DonutSMP team:",
-          withTeam.length ? withTeam.map(c => `${c.abbr}(${c.guildId})`).join(", ") : "none"
-        );
-        const clanSelectOpts = { ...donutsmp.getClanSelectOptions(), embedColor: donutsmp.defaultEmbedColor };
-        const embed = createClanSelectEmbed("DonutSMP", withTeam, clanSelectOpts);
-        const row = new ActionRowBuilder();
-        for (const { guildId, abbr } of withTeam.slice(0, 5)) {
-          row.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`server_donutsmp_clan_${guildId}`)
-              .setLabel(abbr)
-              .setStyle(ButtonStyle.Secondary)
-          );
-        }
-        console.log(`[/server buttons] 📤 Sending DonutSMP clan select embed with ${row.components.length} clan button(s)`);
-        await interaction.editReply({
-          embeds: [embed],
-          components: row.components.length ? [row] : []
-        });
-        console.log("[/server buttons] ✅ Message updated");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+      // Button ids are generic across servers (server ids have no underscores):
+      //   server_<id>                     -> pick a server, list its linked clans
+      //   server_<id>_clan_<guildId>      -> a clan's team (from /server)
+      //   clan_server_<id>_<guildId>      -> a clan's team (from /clan view)
+      //   member_server_<id>_<mcUsername> -> a player's stats (from /member view)
+      // Servers with a stats API (DonutSMP today) use the live-stats path; the
+      // rest are label-only and show a roster built from accepted clan members.
+
+      if (id.startsWith("server_") && id.includes("_clan_")) {
+        const rest = id.slice("server_".length);
+        const sep = rest.indexOf("_clan_");
+        const serverId = rest.slice(0, sep);
+        const guildId = rest.slice(sep + "_clan_".length);
+        console.log(`[/server buttons] 🏰 ${serverId} team via /server for guild: ${guildId}`);
+        await handleClanServer(interaction, serverId, guildId);
         return;
       }
 
-      // server_donutsmp_clan_<guildId> -> same as clan_server_donutsmp_<guildId>
-      if (id.startsWith("server_donutsmp_clan_")) {
-        const guildId = id.slice("server_donutsmp_clan_".length);
-        console.log(`[/server buttons] 🏰 DonutSMP team via /server for guild: ${guildId}`);
-        await handleClanDonutSMP(interaction, guildId);
+      if (id.startsWith("server_")) {
+        const serverId = id.slice("server_".length);
+        console.log(`[/server buttons] 🌐 Server selected: ${serverId}`);
+        await handleServerSelected(interaction, serverId);
         return;
       }
 
-      // clan_server_donutsmp_<guildId>
-      if (id.startsWith("clan_server_donutsmp_")) {
-        const guildId = id.slice("clan_server_donutsmp_".length);
-        console.log(`[/server buttons] 🏰 DonutSMP team via /clan view for guild: ${guildId}`);
-        await handleClanDonutSMP(interaction, guildId);
+      if (id.startsWith("clan_server_")) {
+        const rest = id.slice("clan_server_".length);
+        const us = rest.indexOf("_"); // server id has no underscore; guildId is numeric
+        const serverId = rest.slice(0, us);
+        const guildId = rest.slice(us + 1);
+        console.log(`[/server buttons] 🏰 ${serverId} team via /clan view for guild: ${guildId}`);
+        await handleClanServer(interaction, serverId, guildId);
         return;
       }
 
-      // member_server_donutsmp_<mcUsername>
-      if (id.startsWith("member_server_donutsmp_")) {
-        const mcUsername = id.slice("member_server_donutsmp_".length);
-        console.log(`[/server buttons] 🎮 DonutSMP stats via /member view for: ${mcUsername}`);
-        await handleMemberDonutSMP(interaction, mcUsername);
+      if (id.startsWith("member_server_")) {
+        const rest = id.slice("member_server_".length);
+        const us = rest.indexOf("_"); // server id has no underscore
+        const serverId = rest.slice(0, us);
+        const mcUsername = rest.slice(us + 1);
+        console.log(`[/server buttons] 🎮 ${serverId} stats via /member view for: ${mcUsername}`);
+        await handleMemberServer(interaction, serverId, mcUsername);
         return;
       }
 
@@ -244,6 +233,127 @@ module.exports = {
     }
   }
 };
+
+/** Server button clicked in the /server list — show that server's linked clans. */
+async function handleServerSelected(interaction, serverId) {
+  const all = readServers();
+  const server = all && all[serverId];
+  if (!server || typeof server !== "object" || server.enabled === false) {
+    console.warn(`[/server buttons] ⚠️ Unknown or disabled server: ${serverId}`);
+    return interaction.reply({ content: "Unknown or disabled server.", ephemeral: true }).catch(() => {});
+  }
+  await interaction.deferUpdate();
+  const displayName = server.name || serverId;
+  const clans = clanlogic.readClans();
+  const linked = Object.entries(clans)
+    .filter(([, c]) => isClanLinkedToServer(c, serverId))
+    .map(([guildId, c]) => ({ guildId, abbr: c.abbr, name: c.name }));
+  console.log(
+    `[/server buttons] 🏰 Clans linked to ${serverId}:`,
+    linked.length ? linked.map(c => `${c.abbr}(${c.guildId})`).join(", ") : "none"
+  );
+  // Servers with an API client can supply select-embed styling; label-only use defaults.
+  const client = getServerClient(serverId);
+  const clanSelectOpts = client && client.getClanSelectOptions
+    ? { ...client.getClanSelectOptions(), embedColor: client.defaultEmbedColor }
+    : {};
+  const embed = createClanSelectEmbed(displayName, linked, clanSelectOpts);
+  const row = new ActionRowBuilder();
+  for (const { guildId, abbr } of linked.slice(0, 5)) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`server_${serverId}_clan_${guildId}`)
+        .setLabel(abbr)
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+  console.log(`[/server buttons] 📤 Sending ${displayName} clan select embed with ${row.components.length} clan button(s)`);
+  await interaction.editReply({ embeds: [embed], components: row.components.length ? [row] : [] });
+  console.log("[/server buttons] ✅ Message updated");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+}
+
+/** Route a clan-team button to the live-stats view (DonutSMP) or the roster view. */
+async function handleClanServer(interaction, serverId, guildId) {
+  // DonutSMP is the only server with a live stats API today; it gets the rich
+  // team-stats view. Every other (label-only) server shows a member roster.
+  if (serverId === "donutsmp") return handleClanDonutSMP(interaction, guildId);
+  return handleClanRoster(interaction, serverId, guildId);
+}
+
+/** Route a member-stats button to the live-stats view (DonutSMP) or a notice. */
+async function handleMemberServer(interaction, serverId, mcUsername) {
+  if (serverId === "donutsmp") return handleMemberDonutSMP(interaction, mcUsername);
+  const all = readServers();
+  const displayName = (all && all[serverId] && all[serverId].name) || serverId;
+  return interaction.reply({
+    content: `${displayName}: live player stats aren't available for this server yet.`,
+    ephemeral: true,
+  }).catch(() => {});
+}
+
+/** Label-only clan view: roster of accepted clan members (no live stats). */
+async function handleClanRoster(interaction, serverId, guildId) {
+  console.log(`[/server buttons] 📥 handleClanRoster: server=${serverId} guildId=${guildId}`);
+  await interaction.deferReply();
+  const all = readServers();
+  const displayName = (all && all[serverId] && all[serverId].name) || serverId;
+  const clans = clanlogic.readClans();
+  const clan = clans[guildId];
+  if (!clan || !isClanLinkedToServer(clan, serverId)) {
+    console.log("[/server buttons] ❌ Clan not found or not linked to this server");
+    return interaction.editReply({ content: `Clan not found or not linked to ${displayName}.`, ephemeral: true });
+  }
+
+  // No per-player API for label-only servers, so show the roster of accepted
+  // clan members (same member source as the DonutSMP roster fallback).
+  const members = readMembers();
+  const roster = [];
+  for (const [, m] of Object.entries(members)) {
+    if (!m.JoinedClan) continue;
+    if (m.JoinedClan === clan.name || m.JoinedClan === clan.abbr) {
+      const mc = m.minecraftUser || m.minecraftName;
+      if (mc) roster.push(String(mc).trim());
+    }
+  }
+  console.log(`[/server buttons] 👥 ${displayName} roster for ${clan.abbr}: ${roster.length} member(s)`);
+
+  const logo = getServerLogoAttachment(serverId);
+  let embedColor = 0x000000;
+  let logoBuffer = null;
+  if (logo) {
+    try {
+      logoBuffer = fs.readFileSync(logo.path);
+      embedColor = await getDominantColorFromBuffer(logoBuffer);
+    } catch (err) {
+      console.error("[/server buttons] ❌ Failed to read server logo:", err.message);
+    }
+  }
+
+  const rosterText = roster.length
+    ? roster.map(u => `• ${u}`).join("\n").slice(0, 1024)
+    : "_No accepted members are linked to this clan yet._";
+  const fields = [{ name: `Members (${roster.length})`, value: rosterText, inline: false }];
+  const embed = createTeamEmbed(displayName, clan.abbr, clan.name, fields, {
+    embedColor,
+    footer: `${displayName} roster • live stats aren't available for this server`,
+  });
+
+  if (logo && logoBuffer) {
+    try {
+      const attachment = new AttachmentBuilder(logoBuffer, { name: "serverlogo.png" });
+      embed.setThumbnail("attachment://serverlogo.png");
+      await interaction.editReply({ embeds: [embed], files: [attachment] });
+    } catch (err) {
+      console.error("[/server buttons] ❌ Failed to attach server logo:", err.message);
+      await interaction.editReply({ embeds: [embed] });
+    }
+  } else {
+    await interaction.editReply({ embeds: [embed] });
+  }
+  console.log("[/server buttons] ✅ Roster embed sent");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+}
 
 async function handleClanDonutSMP(interaction, guildId) {
   console.log(`[/server buttons] 📥 handleClanDonutSMP: guildId=${guildId}`);

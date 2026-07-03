@@ -5,7 +5,7 @@
 // than trying to resurrect a stale poll loop against a possibly-changed
 // balance baseline.
 
-const donutsmp = require("../servers/donutsmp");
+const { getServerClient } = require("../servers/serverRegistry");
 
 const DEFAULT_WINDOW_MS = 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 5 * 1000;
@@ -34,13 +34,20 @@ function clear(key) {
  * expected cost, within a 60s window. Calls exactly one of onConfirmed /
  * onTimeout / onError.
  *
- * @param {object} order - { guildId, discordId, ign, shares, cost, baselineMoney }
+ * @param {object} order - { guildId, discordId, ign, shares, cost, baselineMoney, serverId }
  * @param {object} callbacks - { onConfirmed(), onTimeout() }
  * @returns {{ success: boolean, reason?: string }}
  */
 function startBuyWatch(order, { onConfirmed, onTimeout } = {}) {
   const key = orderKey(order.guildId, order.discordId);
   if (pending.has(key)) return { success: false, reason: "already_pending" };
+
+  // Resolve the stats-API client for this order's server. Only servers with a
+  // client can be balance-watched (the caller only starts a watch for those).
+  const client = getServerClient(order.serverId);
+  if (!client || typeof client.getPlayerStats !== "function") {
+    return { success: false, reason: "no_api_client" };
+  }
 
   const windowMs = DEFAULT_WINDOW_MS;
   const expiresAt = Date.now() + windowMs;
@@ -58,7 +65,7 @@ function startBuyWatch(order, { onConfirmed, onTimeout } = {}) {
 
   const checkOnce = async () => {
     if (!pending.has(key)) return; // already resolved
-    const res = await donutsmp.getPlayerStats(order.ign).catch(() => ({ ok: false }));
+    const res = await client.getPlayerStats(order.ign).catch(() => ({ ok: false }));
     if (!res.ok) {
       console.log(`[pendingOrders] ⚠️ Balance check failed for "${order.ign}" (${key}) — will retry`);
       return;

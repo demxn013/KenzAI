@@ -16,6 +16,22 @@ function toSqlDate(v) {
   return null;
 }
 
+/** clan.serverLinks (array) -> JSON string for the server_links TEXT column. */
+function serverLinksToSql(v) {
+  return JSON.stringify(Array.isArray(v) ? v : []);
+}
+
+/** server_links column (JSON string / null) -> array. */
+function serverLinksFromSql(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Convert a clans.json entry to a flat SQL parameter object.
  */
@@ -32,6 +48,7 @@ function clanToRow(guildId, clan) {
     residents:          typeof c.residents === "number" ? c.residents : 0,
     application_mode:   c.applicationMode  || "manual",
     donutsmp_team_name: c.donutsmpTeamName || null,
+    server_links:       serverLinksToSql(c.serverLinks),
   };
 }
 
@@ -50,6 +67,7 @@ function rowToClan(row) {
     residents:        row.residents         || 0,
     applicationMode:  row.application_mode  || "manual",
     donutsmpTeamName: row.donutsmp_team_name || null,
+    serverLinks:      serverLinksFromSql(row.server_links),
   };
 }
 
@@ -133,11 +151,11 @@ async function _upsertClan(conn, guildId, clan) {
     `INSERT INTO clans (
        guild_id, abbr, name, joined_empire,
        yazanaki_role_id, clan_role_id, invite, residents,
-       application_mode, donutsmp_team_name
+       application_mode, donutsmp_team_name, server_links
      ) VALUES (
        :guild_id, :abbr, :name, :joined_empire,
        :yazanaki_role_id, :clan_role_id, :invite, :residents,
-       :application_mode, :donutsmp_team_name
+       :application_mode, :donutsmp_team_name, :server_links
      )
      ON DUPLICATE KEY UPDATE
        abbr               = VALUES(abbr),
@@ -148,7 +166,8 @@ async function _upsertClan(conn, guildId, clan) {
        invite             = VALUES(invite),
        residents          = VALUES(residents),
        application_mode   = VALUES(application_mode),
-       donutsmp_team_name = VALUES(donutsmp_team_name)`,
+       donutsmp_team_name = VALUES(donutsmp_team_name),
+       server_links       = VALUES(server_links)`,
     r
   );
 }

@@ -13,10 +13,16 @@ const priceEngine = require("./priceEngine");
 const SHARES_PER_MEMBER = 1000;
 
 // Price per share is a fixed business rule per Minecraft server, not an
-// editable config value — currently only DonutSMP clans are live (ONF).
+// editable config value.
 const SERVER_PRICE_PER_SHARE = {
   donutsmp: 100000,
+  elementalmc: 100000,
+  freshsmp: 5000,
 };
+
+// When a clan is linked to several servers, its stock is tied to one of them,
+// chosen by this priority (DonutSMP first — it has a live payment API).
+const SERVER_PRIORITY = ["donutsmp", "elementalmc", "freshsmp"];
 
 function holdingKey(guildId, discordId) {
   return `${guildId}:${discordId}`;
@@ -26,9 +32,20 @@ function genTxId() {
   return `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
-/** Which server key a clan is linked to. Only "donutsmp" exists today. */
+/**
+ * Which single server key a clan's stock is tied to. DonutSMP (via its
+ * donutsmpTeamName link) wins; otherwise the highest-priority priced server in
+ * clan.serverLinks. Returns null if the clan isn't linked to any priced server.
+ * The stock record persists its server at creation, so this only decides the
+ * initial binding.
+ */
 function getClanServerId(clan) {
-  if (clan && clan.donutsmpTeamName) return "donutsmp";
+  if (!clan) return null;
+  if (clan.donutsmpTeamName) return "donutsmp";
+  const links = Array.isArray(clan.serverLinks) ? clan.serverLinks : [];
+  for (const id of SERVER_PRIORITY) {
+    if (links.includes(id) && (SERVER_PRICE_PER_SHARE[id] || 0) > 0) return id;
+  }
   return null;
 }
 
@@ -333,6 +350,80 @@ function markSellPaid(txId) {
   return { success: true, remainingHoldings: held - debited };
 }
 
+// ---- Manual (staff-confirmed) buys -------------------------------------
+// For servers without a stats API to auto-detect payment (FreshSMP/ElementalMC),
+// buys can't be balance-watched. Instead we reserve the treasury shares up front,
+// record a durable pending buy, and let staff confirm the DEMXN13 payment. Mirrors
+// the pending-sell flow. Shares are reserved by the caller before createPendingBuy.
+
+/** Create a durable pending BUY awaiting staff payment confirmation. */
+function createPendingBuy({ guildId, discordId, ign, shares, pricePerShare }) {
+  const all = stores.stock_pending_buys.readMap();
+  const txId = genTxId();
+  all[txId] = {
+    txId,
+    guildId,
+    discordId,
+    ign,
+    shares,
+    pricePerShare,
+    cost: shares * pricePerShare,
+    status: "pending_payment",
+    createdAt: new Date().toISOString(),
+  };
+  stores.stock_pending_buys.writeMap(all);
+  console.log(`[stocklogic] 🧾 BUY pending: ${discordId} (${ign}) buying ${shares} share(s) of ${guildId}, cost ${shares * pricePerShare} [tx ${txId}] — awaiting staff confirmation`);
+  return { success: true, txId, cost: shares * pricePerShare };
+}
+
+function getPendingBuy(txId) {
+  const all = stores.stock_pending_buys.readMap();
+  return all[txId] || null;
+}
+
+/** Staff confirmed the buyer paid DEMXN13 — finalize the buy (shares already reserved). */
+function markBuyPaid(txId) {
+  const all = stores.stock_pending_buys.readMap();
+  const pending = all[txId];
+  if (!pending || pending.status !== "pending_payment") {
+    console.warn(`[stocklogic] ⚠️ markBuyPaid: tx ${txId} not found or already confirmed`);
+    return { success: false, reason: "not_found" };
+  }
+
+  const buyTxId = completeBuy({
+    guildId: pending.guildId,
+    discordId: pending.discordId,
+    ign: pending.ign,
+    shares: pending.shares,
+    pricePerShare: pending.pricePerShare,
+  });
+
+  pending.status = "confirmed";
+  stores.stock_pending_buys.writeMap(all);
+  console.log(`[stocklogic] ✅ BUY paid: ${pending.discordId} (${pending.ign}) got ${pending.shares} share(s) of ${pending.guildId} [tx ${txId} -> buy ${buyTxId}]`);
+  return {
+    success: true,
+    guildId: pending.guildId,
+    discordId: pending.discordId,
+    ign: pending.ign,
+    shares: pending.shares,
+  };
+}
+
+/** Staff rejected / buyer never paid — refund the reserved treasury shares. */
+function cancelPendingBuy(txId) {
+  const all = stores.stock_pending_buys.readMap();
+  const pending = all[txId];
+  if (!pending || pending.status !== "pending_payment") {
+    return { success: false, reason: "not_found" };
+  }
+  refundTreasuryShares(pending.guildId, pending.shares);
+  delete all[txId];
+  stores.stock_pending_buys.writeMap(all);
+  console.log(`[stocklogic] ↩️ BUY cancelled: refunded ${pending.shares} reserved share(s) to ${pending.guildId} treasury [tx ${txId}]`);
+  return { success: true, guildId: pending.guildId, discordId: pending.discordId, shares: pending.shares };
+}
+
 /**
  * Compare the first visible candle's open to the latest close, over
  * whatever window is currently charted (up to the last MAX_VISIBLE_CANDLES).
@@ -370,4 +461,9 @@ module.exports = {
   createPendingSell,
   getPendingSell,
   markSellPaid,
+  createPendingBuy,
+  getPendingBuy,
+  markBuyPaid,
+  cancelPendingBuy,
+  SERVER_PRICE_PER_SHARE,
 };

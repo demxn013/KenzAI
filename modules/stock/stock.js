@@ -16,6 +16,7 @@ const {
   AttachmentBuilder,
   EmbedBuilder,
   MessageFlags,
+  PermissionsBitField,
 } = require("discord.js");
 
 const path = require("path");
@@ -25,13 +26,18 @@ const stocklogic = require("./stocklogic");
 const pendingOrders = require("./pendingOrders");
 const investorRole = require("./investorRole");
 const { renderStockChart, renderStockLineChart, MAX_VISIBLE_CANDLES } = require("./chart");
-const donutsmp = require("../servers/donutsmp");
+const { serverDisplayName, hasStatsApi, getServerClient } = require("../servers/serverRegistry");
 const {
   DEMXN13_IGN,
   createMarketEmbed,
   createMarketButtons,
   createPortfolioEmbed,
 } = require("./stockembed");
+
+/** Staff = Discord Administrator (the DEMXN13 operators who confirm payments). */
+function isAdmin(interaction) {
+  return interaction.member?.permissions?.has(PermissionsBitField.Flags.Administrator);
+}
 
 const CHART_ATTACHMENT_NAME = "stockchart.png";
 const EMBLEMS_DIR = path.join(__dirname, "..", "images", "clanemblems");
@@ -45,7 +51,7 @@ function getEmblemPath(abbr) {
 
 const REASON_MESSAGES = {
   clan_not_registered: "This server isn't a registered Yazanaki Empire clan. Use `/clan add` first.",
-  no_server_linked: "This clan isn't linked to a Minecraft server yet. Use `/clan edit server:donutsmp` first.",
+  no_server_linked: "This clan isn't linked to a Minecraft server yet. Use `/clan edit` with a server (e.g. `donutsmp`, `elementalmc`, `freshsmp`) first.",
   no_server_price_configured: "The linked server has no share price configured yet — ask staff to set one.",
 };
 
@@ -69,7 +75,7 @@ function replyReason(interaction, reason, fallback = "Something went wrong.") {
 async function buildMarketView(clan, stock, mode) {
   const visible = (stock.candles || []).slice(-MAX_VISIBLE_CANDLES);
   const priceChange = stocklogic.computePriceChange(visible);
-  const serverLabel = stock.server === "donutsmp" ? "DonutSMP" : stock.server;
+  const serverLabel = serverDisplayName(stock.server);
 
   const chartOpts = {
     clanAbbr: clan.abbr,
@@ -236,6 +242,14 @@ async function buttonHandler(interaction) {
     return handleMarkPaid(interaction);
   }
 
+  if (interaction.customId.startsWith("stock_markbuypaid_")) {
+    return handleMarkBuyPaid(interaction);
+  }
+
+  if (interaction.customId.startsWith("stock_cancelbuy_")) {
+    return handleCancelBuy(interaction);
+  }
+
   const toggleMatch = interaction.customId.match(/^stock_toggle_(ohlc|line)_(\d+)$/);
   if (toggleMatch) {
     return handleToggle(interaction, toggleMatch[1], toggleMatch[2]);
@@ -288,6 +302,77 @@ async function handleMarkPaid(interaction) {
   await refreshMarketByRef(interaction.client, guildId).catch(() => {});
 }
 
+// Staff confirm a manual buy (payment landed in DEMXN13) — credit the shares.
+async function handleMarkBuyPaid(interaction) {
+  const rest = interaction.customId.slice("stock_markbuypaid_".length);
+  const sepIndex = rest.indexOf("_");
+  const guildId = rest.slice(0, sepIndex);
+  const txId = rest.slice(sepIndex + 1);
+
+  console.log(`[stock] 💵 Buy-confirm clicked by ${interaction.user.tag} (${interaction.user.id}) for tx ${txId} (guild ${guildId})`);
+
+  if (!isAdmin(interaction)) {
+    console.log(`[stock] 🚫 Buy-confirm denied — ${interaction.user.id} is not staff`);
+    return interaction.reply({ content: "❌ Only Yazanaki staff (server admins) can confirm a buy payment.", flags: MessageFlags.Ephemeral });
+  }
+
+  const result = stocklogic.markBuyPaid(txId);
+  if (!result.success) {
+    return interaction.reply({ content: "❌ This buy order was already confirmed/rejected or no longer exists.", flags: MessageFlags.Ephemeral });
+  }
+
+  // Grant the INVESTOR role to the buyer (best effort — they may not be in the guild).
+  const clanGuild = await interaction.client.guilds.fetch(guildId).catch(() => null);
+  if (clanGuild) {
+    await investorRole.grantInvestorRole(clanGuild, result.discordId).catch(() => {});
+  }
+
+  await interaction.reply({
+    content: `✅ Confirmed — credited **${result.shares}** share(s) to <@${result.discordId}> (IGN \`${result.ign}\`).`,
+    flags: MessageFlags.Ephemeral,
+  });
+
+  if (interaction.message?.editable) {
+    await interaction.message.edit({ components: [] }).catch(() => {});
+  }
+  await refreshMarketByRef(interaction.client, guildId).catch(() => {});
+
+  // Best-effort DM the buyer that their shares are credited.
+  try {
+    const buyer = await interaction.client.users.fetch(result.discordId);
+    await buyer.send(`✅ Your purchase of **${result.shares}** share(s) was confirmed by staff — the shares are now in your portfolio.`).catch(() => {});
+  } catch {}
+}
+
+// Staff reject a manual buy (payment never landed) — release the reserved shares.
+async function handleCancelBuy(interaction) {
+  const rest = interaction.customId.slice("stock_cancelbuy_".length);
+  const sepIndex = rest.indexOf("_");
+  const guildId = rest.slice(0, sepIndex);
+  const txId = rest.slice(sepIndex + 1);
+
+  console.log(`[stock] ✖️ Buy-reject clicked by ${interaction.user.tag} (${interaction.user.id}) for tx ${txId} (guild ${guildId})`);
+
+  if (!isAdmin(interaction)) {
+    return interaction.reply({ content: "❌ Only Yazanaki staff (server admins) can reject a buy.", flags: MessageFlags.Ephemeral });
+  }
+
+  const result = stocklogic.cancelPendingBuy(txId);
+  if (!result.success) {
+    return interaction.reply({ content: "❌ This buy order was already confirmed/rejected or no longer exists.", flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.reply({
+    content: `↩️ Buy rejected — ${result.shares} reserved share(s) returned to the treasury.`,
+    flags: MessageFlags.Ephemeral,
+  });
+
+  if (interaction.message?.editable) {
+    await interaction.message.edit({ components: [] }).catch(() => {});
+  }
+  await refreshMarketByRef(interaction.client, guildId).catch(() => {});
+}
+
 // ---- Modals -----------------------------------------------------------
 
 function parseShares(raw) {
@@ -326,11 +411,51 @@ async function handleBuyModal(interaction, guildId) {
     return interaction.editReply({ content: `❌ Only ${stock.treasuryShares.toLocaleString()} share(s) are available in the treasury.` });
   }
 
-  const statsRes = await donutsmp.getPlayerStats(ign).catch(() => ({ ok: false }));
+  const serverName = serverDisplayName(stock.server);
+
+  // Servers without a stats API (FreshSMP/ElementalMC) can't auto-detect the
+  // payment, so the buyer pays DEMXN13 and Yazanaki staff confirm it manually.
+  if (!hasStatsApi(stock.server)) {
+    const pendingBuy = stocklogic.createPendingBuy({
+      guildId, discordId: interaction.user.id, ign, shares, pricePerShare: stock.currentPrice,
+    });
+
+    await interaction.editReply({
+      content:
+        `💳 Send exactly \`${cost.toLocaleString()}\` to **${DEMXN13_IGN}** in-game ` +
+        `(e.g. \`/pay ${DEMXN13_IGN} ${cost}\`). Your **${shares}** share(s) of **${clan.abbr}** are ` +
+        `reserved — Yazanaki staff will confirm your payment and credit them shortly.`,
+    });
+
+    const staffEmbed = new EmbedBuilder()
+      .setTitle(`🧾 Pending Buy — ${clan.abbr} (${serverName})`)
+      .setColor(0xfaa61a)
+      .setDescription(
+        `**${interaction.user.tag}** (IGN: \`${ign}\`) wants to buy **${shares}** share(s) for ` +
+        `\`${cost.toLocaleString()}\` ${serverName} money.\n` +
+        `Confirm once **${DEMXN13_IGN}** has received the payment, or reject to release the reserved shares.`
+      );
+    const staffRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`stock_markbuypaid_${guildId}_${pendingBuy.txId}`).setLabel("Confirm Payment (staff)").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`stock_cancelbuy_${guildId}_${pendingBuy.txId}`).setLabel("Reject").setStyle(ButtonStyle.Danger),
+    );
+    if (interaction.channel?.send) {
+      await interaction.channel.send({ embeds: [staffEmbed], components: [staffRow] })
+        .then(() => console.log(`[stock] 📨 Posted staff buy-confirm for pending buy ${pendingBuy.txId} (guild ${guildId})`))
+        .catch((err) => console.warn(`[stock] ⚠️ Could not post staff buy-confirm for ${pendingBuy.txId}:`, err.message));
+    } else {
+      console.warn(`[stock] ⚠️ No channel to post staff buy-confirm for ${pendingBuy.txId}`);
+    }
+    return;
+  }
+
+  // ── API server (DonutSMP): auto-confirm by watching the buyer's balance ──
+  const client = getServerClient(stock.server);
+  const statsRes = await client.getPlayerStats(ign).catch(() => ({ ok: false }));
   if (!statsRes.ok) {
-    console.log(`[stock] ❌ BUY aborted — could not fetch DonutSMP stats for "${ign}"; refunding ${shares} reserved share(s)`);
+    console.log(`[stock] ❌ BUY aborted — could not fetch ${serverName} stats for "${ign}"; refunding ${shares} reserved share(s)`);
     stocklogic.refundTreasuryShares(guildId, shares);
-    return interaction.editReply({ content: `❌ Couldn't find \`${ign}\` on DonutSMP. Double-check the spelling and try again.` });
+    return interaction.editReply({ content: `❌ Couldn't find \`${ign}\` on ${serverName}. Double-check the spelling and try again.` });
   }
 
   const baselineMoney = Number(statsRes.stats?.money) || 0;
@@ -345,7 +470,7 @@ async function handleBuyModal(interaction, guildId) {
   });
 
   pendingOrders.startBuyWatch(
-    { guildId, discordId: interaction.user.id, ign, shares, cost, baselineMoney },
+    { guildId, discordId: interaction.user.id, ign, shares, cost, baselineMoney, serverId: stock.server },
     {
       onConfirmed: async () => {
         stocklogic.completeBuy({ guildId, discordId: interaction.user.id, ign, shares, pricePerShare: stock.currentPrice });

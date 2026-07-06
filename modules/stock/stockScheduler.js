@@ -1,5 +1,8 @@
 // modules/stock/stockScheduler.js
-// Periodic price-movement tick for every clan that has a stock record.
+// Periodic candle-roll tick for every clan that has a stock record. This does
+// NOT change any prices — prices only move on buys/sells. The tick simply
+// rolls the chart's candle buckets forward over time at the current price so
+// the graph keeps a proper time axis (flat while there's no trading).
 // Modeled 1:1 on modules/roles/roleScheduler.js: an initial delay to let
 // caches settle after startup, then a recurring interval.
 
@@ -23,7 +26,7 @@ function getIntervalMs() {
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : DEFAULT_TICK_MINUTES * 60 * 1000;
 }
 
-/** Tick every clan's stock price once. Safe to call manually. */
+/** Roll every clan's chart candles forward once (no price change). Safe to call manually. */
 function tickAllStocks() {
   if (running) {
     console.log("[stockScheduler] ⏭️ Previous tick still running, skipping this cycle");

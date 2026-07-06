@@ -121,7 +121,6 @@ function getOrCreateStockRecord(guildId) {
       lastResidentsSeen: 0,
       candleIntervalMinutes: priceEngine.DEFAULT_CANDLE_INTERVAL_MINUTES,
       candles: [],
-      recentVolume: { buys: 0, sells: 0, windowStart: new Date().toISOString() },
       createdAt: new Date().toISOString(),
       lastTickAt: null,
     };

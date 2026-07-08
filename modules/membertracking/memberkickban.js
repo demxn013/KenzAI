@@ -252,12 +252,22 @@ async function removeAllYazanakiRoles(discordId, client, options = {}) {
 }
 
 /**
- * Remove the member's clan-membership role from their clan discord server.
+ * Remove the member's clan roles from their clan discord server.
+ *
+ * The clan membership role (`clanRoleId`) sits at a fixed spot in the clan's
+ * role hierarchy; the clan's *internal rank* roles (Count, Lord, Mayor, …) are
+ * positioned ABOVE it. On a kick we strip the clan role AND every role the
+ * member holds that sits at or above the clan role's position, so those higher
+ * internal ranks are cleaned up too.
+ *
+ * Everything BELOW the clan role — colour roles, personal / self-assigned
+ * roles, anything unrelated to the clan — is left intact. `@everyone` and
+ * managed roles (bot / integration / Nitro-boost roles, which Discord forbids
+ * removing) are always skipped.
  *
  * NOTE: roles.json auto-imports *every* role of a clan guild into `rankRoles`,
- * so removing that whole list used to strip ALL of a member's roles (colours,
- * self-assigned/personal roles, etc.). We now remove only the clan membership
- * role (`clanRoleId`) and leave every unrelated role intact.
+ * so we deliberately key off live Discord role positions here rather than that
+ * list, to avoid stripping unrelated low roles.
  */
 async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
   if (!clanGuildId) return 0;
@@ -269,25 +279,73 @@ async function removeAllClanRoles(discordId, clanGuildId, clanData, client) {
       return 0;
     }
 
+    // Ensure the guild's role list is populated so role positions resolve.
+    await clanGuild.roles.fetch().catch(() => null);
+
     const member = await clanGuild.members.fetch(discordId).catch(() => null);
     if (!member) {
       console.warn(`[memberkickban] ⚠️ Member ${discordId} not in clan guild ${clanGuildId}`);
       return 0;
     }
 
-    let removedCount = 0;
-
-    // Remove only the clan membership role (clanRoleId). All other roles
-    // (colour roles, personal roles, anything unrelated to the clan) are kept.
-    if (clanData?.clanRoleId && member.roles.cache.has(clanData.clanRoleId)) {
-      await member.roles.remove(clanData.clanRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clanRoleId:`, err.message));
-      removedCount++;
-      console.log(`[memberkickban] 🎭 Removed clan member role (clanRoleId) in clan discord`);
-    } else {
-      console.log(`[memberkickban] ℹ️ No clan membership role to remove in guild ${clanGuildId}`);
+    const clanRoleId = clanData?.clanRoleId;
+    if (!clanRoleId) {
+      console.log(`[memberkickban] ℹ️ No clan membership role configured for guild ${clanGuildId}`);
+      return 0;
     }
 
-    console.log(`[memberkickban] ✅ Removed ${removedCount} clan role(s) from ${discordId} in guild ${clanGuildId} (unrelated roles preserved)`);
+    let removedCount = 0;
+
+    // Find the clan membership role to learn its position in the hierarchy.
+    const clanRole =
+      clanGuild.roles.cache.get(clanRoleId) ||
+      (await clanGuild.roles.fetch(clanRoleId).catch(() => null));
+
+    if (!clanRole) {
+      // Clan role no longer exists in the guild — fall back to removing it by ID
+      // if the member still somehow holds it.
+      if (member.roles.cache.has(clanRoleId)) {
+        await member.roles.remove(clanRoleId).catch(err => console.warn(`[memberkickban] ⚠️ Could not remove clanRoleId:`, err.message));
+        removedCount++;
+        console.log(`[memberkickban] 🎭 Removed clan member role (clanRoleId) in clan discord`);
+      } else {
+        console.log(`[memberkickban] ℹ️ Clan role ${clanRoleId} not found in guild ${clanGuildId}`);
+      }
+      return removedCount;
+    }
+
+    const clanPosition = clanRole.position;
+
+    // The clan role itself + every role the member holds at or above its
+    // position (the internal ranks). Skip @everyone (id === guild.id) and
+    // managed roles, which Discord does not allow removing.
+    const rolesToRemove = member.roles.cache.filter(
+      (role) =>
+        role.id !== clanGuild.id &&
+        !role.managed &&
+        role.position >= clanPosition
+    );
+
+    if (rolesToRemove.size === 0) {
+      console.log(`[memberkickban] ℹ️ No clan role or higher roles to remove in guild ${clanGuildId}`);
+      return 0;
+    }
+
+    for (const role of rolesToRemove.values()) {
+      const removed = await member.roles
+        .remove(role.id)
+        .then(() => true)
+        .catch((err) => {
+          console.warn(`[memberkickban] ⚠️ Could not remove role "${role.name}" (${role.id}):`, err.message);
+          return false;
+        });
+      if (removed) {
+        removedCount++;
+        console.log(`[memberkickban] 🎭 Removed clan role "${role.name}" (position ${role.position}) in clan discord`);
+      }
+    }
+
+    console.log(`[memberkickban] ✅ Removed ${removedCount} clan role(s) (clan role + higher internal ranks) from ${discordId} in guild ${clanGuildId} (lower/unrelated roles preserved)`);
     return removedCount;
 
   } catch (err) {

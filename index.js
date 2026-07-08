@@ -241,7 +241,7 @@ client.once('ready', async () => {
   console.log("🔄 Starting daily clan role refresh...");
   startRoleScheduler(client);
 
-  console.log("📈 Starting clan stock price scheduler...");
+  console.log("📈 Starting clan stock candle scheduler...");
   startStockScheduler();
 
   setupPointsEvents(client);

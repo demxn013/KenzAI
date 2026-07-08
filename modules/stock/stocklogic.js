@@ -18,6 +18,33 @@ const SERVER_PRICE_PER_SHARE = {
   donutsmp: 100000,
 };
 
+// A flat transaction fee kept by the empire owner (DEMXN13) on every trade:
+// buys cost this much extra, sells pay out this much less. It gives the owner
+// a margin on both sides so payouts are easier to cover.
+const TAX_RATE = 0.02;
+
+// Minimum time a member must hold shares after their most recent buy before
+// they can sell — blocks buying and immediately flipping for a profit.
+// Override with STOCK_SELL_COOLDOWN_MINUTES (default 1 hour).
+const SELL_COOLDOWN_MS = (() => {
+  const min = parseFloat(process.env.STOCK_SELL_COOLDOWN_MINUTES);
+  return Number.isFinite(min) && min >= 0 ? min * 60 * 1000 : 60 * 60 * 1000;
+})();
+
+/** Buy cost breakdown: base share value + fee the investor pays on top. */
+function computeBuyCost(shares, pricePerShare) {
+  const base = shares * pricePerShare;
+  const tax = Math.round(base * TAX_RATE);
+  return { base, tax, total: base + tax };
+}
+
+/** Sell payout breakdown: base share value − fee withheld from the payout. */
+function computeSellPayout(shares, pricePerShare) {
+  const base = shares * pricePerShare;
+  const tax = Math.round(base * TAX_RATE);
+  return { base, tax, net: base - tax };
+}
+
 function holdingKey(guildId, discordId) {
   return `${guildId}:${discordId}`;
 }
@@ -94,7 +121,6 @@ function getOrCreateStockRecord(guildId) {
       lastResidentsSeen: 0,
       candleIntervalMinutes: priceEngine.DEFAULT_CANDLE_INTERVAL_MINUTES,
       candles: [],
-      recentVolume: { buys: 0, sells: 0, windowStart: new Date().toISOString() },
       createdAt: new Date().toISOString(),
       lastTickAt: null,
     };
@@ -164,23 +190,37 @@ function getPortfolio(discordId) {
     });
 }
 
-/** Low-level holding write. `invested` is the cost basis of the held shares. */
-function writeHolding(guildId, discordId, shares, invested, ign) {
+/**
+ * Low-level holding write. `invested` is the cost basis of the held shares.
+ * `opts.lastBuyAt` (set on buys) records the most-recent purchase time for the
+ * sell cooldown; other writes (e.g. sells) preserve the existing value.
+ */
+function writeHolding(guildId, discordId, shares, invested, ign, opts = {}) {
   const all = stores.stock_holdings.readMap();
   const key = holdingKey(guildId, discordId);
+  const prev = all[key] || {};
   if (shares <= 0) {
     delete all[key];
   } else {
     all[key] = {
       guildId,
       discordId,
-      ign: ign || all[key]?.ign || null,
+      ign: ign || prev.ign || null,
       shares,
       invested: Math.max(0, Math.round(invested)),
+      lastBuyAt: opts.lastBuyAt !== undefined ? opts.lastBuyAt : (prev.lastBuyAt || null),
       updatedAt: new Date().toISOString(),
     };
   }
   stores.stock_holdings.writeMap(all);
+}
+
+/** Milliseconds left before this holder may sell (0 = may sell now). */
+function getSellCooldownRemaining(guildId, discordId) {
+  const h = getHoldingRecord(guildId, discordId);
+  if (!h || !h.lastBuyAt) return 0;
+  const elapsed = Date.now() - new Date(h.lastBuyAt).getTime();
+  return Math.max(0, SELL_COOLDOWN_MS - elapsed);
 }
 
 /** Shares already committed to unresolved pending sells for this holder. */
@@ -226,12 +266,17 @@ function refundTreasuryShares(guildId, shares) {
   return true;
 }
 
-/** Finalize a confirmed buy: shares already reserved out of treasury. */
-function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
+/**
+ * Finalize a confirmed buy: shares already reserved out of treasury.
+ * `paid` is the actual amount the investor sent (base + 2% fee); it becomes
+ * the cost basis so the portfolio's avg buy price includes the fee.
+ */
+function completeBuy({ guildId, discordId, ign, shares, pricePerShare, paid }) {
   const existing = getHoldingRecord(guildId, discordId);
   const prevShares = existing ? Number(existing.shares) || 0 : 0;
   const prevInvested = existing ? Number(existing.invested) || 0 : 0;
-  writeHolding(guildId, discordId, prevShares + shares, prevInvested + shares * pricePerShare, ign);
+  const investedAdd = Number(paid) > 0 ? Number(paid) : computeBuyCost(shares, pricePerShare).total;
+  writeHolding(guildId, discordId, prevShares + shares, prevInvested + investedAdd, ign, { lastBuyAt: new Date().toISOString() });
 
   const stock = getStockRecord(guildId);
   if (stock) {
@@ -241,6 +286,7 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
     console.log(`[stocklogic] 💹 BUY impact: ${guildId} price ${before} → ${after}`);
   }
 
+  const { base, tax } = computeBuyCost(shares, pricePerShare);
   const txId = logTransaction({
     guildId,
     discordId,
@@ -248,15 +294,23 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare }) {
     type: "buy",
     shares,
     pricePerShare,
-    total: shares * pricePerShare,
+    base,
+    tax,
+    total: investedAdd,
     status: "confirmed",
   });
-  console.log(`[stocklogic] ✅ BUY confirmed: ${discordId} (${ign}) bought ${shares} share(s) of ${guildId} @ ${pricePerShare} = ${shares * pricePerShare} [tx ${txId}]`);
+  console.log(`[stocklogic] ✅ BUY confirmed: ${discordId} (${ign}) bought ${shares} share(s) of ${guildId} @ ${pricePerShare} (base ${base} + tax ${tax} = ${investedAdd}) [tx ${txId}]`);
   return txId;
 }
 
 /** Create a durable pending sell awaiting owner confirmation. Does NOT move shares yet. */
 function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
+  const cooldown = getSellCooldownRemaining(guildId, discordId);
+  if (cooldown > 0) {
+    console.log(`[stocklogic] 🚫 Sell rejected for ${discordId} on ${guildId}: hold cooldown ${Math.ceil(cooldown / 1000)}s remaining`);
+    return { success: false, reason: "cooldown", cooldownMs: cooldown };
+  }
+
   const held = getHolding(guildId, discordId);
   const reserved = getReservedSellShares(guildId, discordId);
   if (held - reserved < shares) {
@@ -264,6 +318,7 @@ function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
     return { success: false, reason: "insufficient_holdings" };
   }
 
+  const { base, tax, net } = computeSellPayout(shares, pricePerShare);
   const all = stores.stock_pending_sells.readMap();
   const txId = genTxId();
   all[txId] = {
@@ -273,13 +328,15 @@ function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
     ign,
     shares,
     pricePerShare,
-    payout: shares * pricePerShare,
+    grossPayout: base,
+    tax,
+    payout: net,
     status: "pending_payment",
     createdAt: new Date().toISOString(),
   };
   stores.stock_pending_sells.writeMap(all);
-  console.log(`[stocklogic] 📉 SELL pending: ${discordId} (${ign}) selling ${shares} share(s) of ${guildId}, payout ${shares * pricePerShare} [tx ${txId}] — awaiting owner payment`);
-  return { success: true, txId, payout: shares * pricePerShare };
+  console.log(`[stocklogic] 📉 SELL pending: ${discordId} (${ign}) selling ${shares} share(s) of ${guildId}, net payout ${net} (gross ${base} − tax ${tax}) [tx ${txId}] — awaiting owner payment`);
+  return { success: true, txId, payout: net, grossPayout: base, tax };
 }
 
 function getPendingSell(txId) {
@@ -353,6 +410,11 @@ function computePriceChange(candles) {
 
 module.exports = {
   SHARES_PER_MEMBER,
+  TAX_RATE,
+  SELL_COOLDOWN_MS,
+  getSellCooldownRemaining,
+  computeBuyCost,
+  computeSellPayout,
   computePriceChange,
   getClanServerId,
   getStockRecord,

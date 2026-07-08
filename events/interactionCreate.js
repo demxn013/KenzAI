@@ -120,6 +120,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // Onboarding flow buttons (next / joined)
+        if (interaction.customId.startsWith("onb|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "onboarding");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // ── /shop category buttons (badges / capes / pets) ───
         if (
           interaction.customId === "shop_badge" ||

@@ -12,6 +12,7 @@
 const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const L = require("./squadronlogic");
 const { renderTree } = require("./squadrontree");
+const { readMembers } = require("../database/membersPersistence");
 
 const GUILD_ID = L.YAZANAKI_EMPIRE_GUILD_ID;
 const ATTACHMENT = "squadron.png";
@@ -43,15 +44,28 @@ function colorByTierFor(guild, rankRoleData) {
   return out;
 }
 
-/** info(id) => { name, avatarURL, present } from a fetched members collection. */
-function infoFrom(members) {
+/**
+ * Card name = the member's linked Minecraft username (from members.json), with
+ * their Discord display name as a fallback for anyone without a linked account.
+ */
+function cardNameFor(id, guildMembers, memberData) {
+  const rec = memberData[id];
+  if (rec && rec.minecraftUser) return rec.minecraftUser;
+  const gm = guildMembers.get(id);
+  return gm ? gm.displayName : `Unknown (${id})`;
+}
+
+/**
+ * info(id) => { name, avatarURL, present }. Name is the Minecraft username;
+ * the card image is the member's Discord profile picture.
+ */
+function infoFrom(guildMembers, memberData) {
   return (id) => {
-    const m = members.get(id);
-    if (!m) return { name: `Unknown (${id})`, avatarURL: null, present: false };
+    const gm = guildMembers.get(id);
     return {
-      name: m.displayName,
-      avatarURL: m.displayAvatarURL({ extension: "png", size: 64, forceStatic: true }),
-      present: true,
+      name: cardNameFor(id, guildMembers, memberData),
+      avatarURL: gm ? gm.displayAvatarURL({ extension: "png", size: 64, forceStatic: true }) : null,
+      present: !!gm,
     };
   };
 }
@@ -146,7 +160,8 @@ async function handleView(interaction, guild, colorByTier) {
   const target = interaction.options.getUser("member") || interaction.user;
 
   const members = await guild.members.fetch().catch(() => guild.members.cache);
-  const built = L.buildChainModel(target.id, { info: infoFrom(members), colorByTier });
+  const memberData = readMembers();
+  const built = L.buildChainModel(target.id, { info: infoFrom(members, memberData), colorByTier });
 
   if (!built) {
     return interaction.editReply({
@@ -157,7 +172,7 @@ async function handleView(interaction, guild, colorByTier) {
   const hg = members.get(built.tree.highGeneralId);
   const buffer = await renderTree(built.model, {
     title: "Your Chain of Command",
-    subtitle: `${target.username} • ${built.tree.name || (hg ? `${hg.displayName}'s Command` : "Squadron")}`,
+    subtitle: `${cardNameFor(target.id, members, memberData)} • ${built.tree.name || (hg ? `${hg.displayName}'s Command` : "Squadron")}`,
     highlightId: built.selfId,
   });
 
@@ -185,7 +200,8 @@ async function handleTree(interaction, guild, colorByTier) {
   }
 
   const members = await guild.members.fetch().catch(() => guild.members.cache);
-  const model = L.buildTreeModel(squadron, L.readInvites(), { info: infoFrom(members), colorByTier });
+  const memberData = readMembers();
+  const model = L.buildTreeModel(squadron, L.readInvites(), { info: infoFrom(members, memberData), colorByTier });
 
   const hg = members.get(squadron.highGeneralId);
   const rows = L.listTrees().find((r) => r.squadron.id === squadron.id);

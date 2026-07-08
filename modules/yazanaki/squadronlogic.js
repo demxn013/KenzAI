@@ -285,18 +285,32 @@ async function ensureHighGeneralTrees(client) {
     const members = await guild.members.fetch().catch(() => null);
     if (!members) return { created: 0 };
 
+    // Build every missing tree in a single in-memory map and write ONCE. Doing a
+    // writeSquadrons() per tree would schedule that many concurrent MySQL
+    // replaceAll syncs on the same table and deadlock (they race each other).
+    const squadrons = readSquadrons();
     let created = 0;
     for (const m of members.values()) {
       if (m.user?.bot) continue;
       if (!m.roles.cache.has(highGeneralRoleId)) continue;
-      if (findMemberTree(m.id)) continue;
-      const res = createTree(m.id, null, m.id);
-      if (res.ok) {
-        created++;
-        console.log(`[squadronlogic] 🎖️ Backfilled squadron ${res.id} for High General ${m.user.tag} (${m.id})`);
-      }
+      if (findMemberTree(m.id, squadrons)) continue; // pass the in-progress map so we don't duplicate
+      const id = genTreeId();
+      squadrons[id] = {
+        id,
+        guildId: YAZANAKI_EMPIRE_GUILD_ID,
+        highGeneralId: m.id,
+        name: null,
+        createdBy: m.id,
+        createdAt: new Date().toISOString(),
+        nodes: {},
+      };
+      created++;
+      console.log(`[squadronlogic] 🎖️ Backfilled squadron ${id} for High General ${m.user.tag} (${m.id})`);
     }
-    if (created) console.log(`[squadronlogic] ✅ Ensured ${created} High General tree(s)`);
+    if (created) {
+      writeSquadrons(squadrons); // single write -> single MySQL sync
+      console.log(`[squadronlogic] ✅ Ensured ${created} High General tree(s)`);
+    }
     return { created };
   } catch (err) {
     console.error("[squadronlogic] ❌ ensureHighGeneralTrees failed:", err.message);
@@ -430,24 +444,27 @@ function detachRecruitsFor(removedIds) {
 // ---- recruit resolution ----------------------------------------------------
 
 /**
- * Resolve (and persist) which Imperial Army soldier a recruit sits under, based
- * on who invited them:
+ * Core placement decision operating purely on in-memory maps (no store I/O).
+ * Mutates invites[recruitId] and returns true if anything changed. Shared by
+ * resolveRecruitPlacement (single write) and reconcilePending (one batched
+ * write) so bulk reconciles don't fire many concurrent MySQL syncs (which
+ * deadlock on the same table).
+ *
+ * Placement rule, based on who invited the recruit:
  *   inviter is a soldier            -> directly under that soldier
  *   inviter is Captain/General/HG   -> least-loaded soldier in the inviter's subtree
  *   inviter is a placed recruit     -> the same soldier the inviting recruit is under
  *   otherwise / no soldier available -> pending
  */
-function resolveRecruitPlacement(recruitId) {
-  const invites = readInvites();
+function _resolvePlacementInto(recruitId, invites, squadrons) {
   const rec = invites[recruitId];
-  if (!rec || !rec.inviterId) return { ok: false, reason: "no_inviter" };
+  if (!rec || !rec.inviterId) return false;
 
   // Manual placements are left untouched as long as they stay valid.
-  if (rec.manual && rec.status === "placed" && rec.soldierId && allSoldierIds().has(rec.soldierId)) {
-    return { ok: true, status: "placed", soldierId: rec.soldierId, treeId: rec.treeId };
+  if (rec.manual && rec.status === "placed" && rec.soldierId && allSoldierIds(squadrons).has(rec.soldierId)) {
+    return false;
   }
 
-  const squadrons = readSquadrons();
   const inviterId = rec.inviterId;
   let soldierId = null;
   let treeId = null;
@@ -476,17 +493,28 @@ function resolveRecruitPlacement(recruitId) {
     }
   }
 
-  if (soldierId) {
-    rec.soldierId = soldierId;
-    rec.treeId = treeId;
-    rec.status = "placed";
-  } else {
-    rec.soldierId = null;
-    rec.treeId = null;
-    rec.status = "pending";
+  const newStatus = soldierId ? "placed" : "pending";
+  const newSoldier = soldierId || null;
+  const newTree = soldierId ? treeId : null;
+  if (rec.status === newStatus && rec.soldierId === newSoldier && rec.treeId === newTree) {
+    return false;
   }
-  writeInvites(invites);
-  return { ok: true, status: rec.status, soldierId, treeId };
+  rec.status = newStatus;
+  rec.soldierId = newSoldier;
+  rec.treeId = newTree;
+  return true;
+}
+
+/** Resolve (and persist) a single recruit's Imperial Army soldier. */
+function resolveRecruitPlacement(recruitId) {
+  const invites = readInvites();
+  const rec = invites[recruitId];
+  if (!rec || !rec.inviterId) return { ok: false, reason: "no_inviter" };
+
+  const squadrons = readSquadrons();
+  const changed = _resolvePlacementInto(recruitId, invites, squadrons);
+  if (changed) writeInvites(invites);
+  return { ok: true, status: rec.status, soldierId: rec.soldierId, treeId: rec.treeId };
 }
 
 /** Soldier id with the fewest placed recruits; stable tie-break by id. */
@@ -506,15 +534,16 @@ function leastLoadedSoldier(soldierIds, invites) {
  */
 function reconcilePending() {
   const invites = readInvites();
-  const validSoldiers = allSoldierIds();
-  const toResolve = [];
+  const squadrons = readSquadrons();
+  const validSoldiers = allSoldierIds(squadrons);
+  let changed = 0;
   for (const [id, rec] of Object.entries(invites)) {
     if (!rec || !rec.inviterId) continue;
     const stale = rec.status !== "placed" || !rec.soldierId || !validSoldiers.has(rec.soldierId);
-    if (stale) toResolve.push(id);
+    if (stale && _resolvePlacementInto(id, invites, squadrons)) changed++;
   }
-  for (const id of toResolve) resolveRecruitPlacement(id);
-  return toResolve.length;
+  if (changed) writeInvites(invites); // one write -> one MySQL sync
+  return changed;
 }
 
 /**

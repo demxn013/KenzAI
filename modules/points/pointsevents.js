@@ -127,6 +127,20 @@ async function handleGuildMemberAdd(member) {
   // ✅ Use the invite's inviter field directly — works for ALL invites, not just /points invite ones
   const inviterId = usedInvite.inviter?.id;
   if (!inviterId) return;
+
+  // Record invite attribution for the military squadron system so a recruit can
+  // later be auto-sorted under whoever invited them. Best-effort; a clan-guild
+  // attribution takes precedence over an Empire-guild one (handled downstream).
+  try {
+    require("../yazanaki/squadronlogic").recordInvite(member.id, {
+      inviterId,
+      guildId: guild.id,
+      clanAbbr: getClanAbbrevForGuild(guild.id),
+    });
+  } catch (err) {
+    console.warn("[pointsevents] ⚠️ squadron recordInvite failed:", err.message);
+  }
+
   if (!isMember(inviterId)) return;
 
   const clanAbbrev = getClanAbbrevForGuild(guild.id);

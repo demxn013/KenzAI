@@ -363,6 +363,33 @@ const stores = {
     })
   ),
 
+  // Military chain-of-command trees — one record per High General's tree.
+  // The officer skeleton lives in data.nodes; recruits are resolved, not stored.
+  military_squadrons: defineStore(
+    "military_squadrons",
+    "military_squadrons.json",
+    "military_squadrons",
+    "squadron_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      name: str(v.name),
+      high_general_id: str(v.highGeneralId),
+    })
+  ),
+
+  // Recruit invite attribution — keyed by the invited member's Discord ID.
+  // inviterId captured at join; soldierId/treeId are the resolved placement.
+  military_invites: defineStore(
+    "military_invites",
+    "military_invites.json",
+    "military_invites",
+    "discord_id",
+    (id, v) => ({
+      inviter_id: str(v.inviterId),
+      soldier_id: str(v.soldierId),
+    })
+  ),
+
   // audit_log.json is a JSON ARRAY — adapt array <-> map (keyed by log_id).
   judiciary_audit_log: defineStore(
     "judiciary_audit_log",

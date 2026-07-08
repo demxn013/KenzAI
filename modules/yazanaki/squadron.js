@@ -161,6 +161,11 @@ async function handleView(interaction, guild, colorByTier) {
 
   const members = await guild.members.fetch().catch(() => guild.members.cache);
   const memberData = readMembers();
+
+  // Self-heal: a High General who somehow has no tree yet gets one on the spot.
+  const targetMember = members.get(target.id);
+  if (targetMember && !L.findMemberTree(target.id)) L.ensureTreeForMember(targetMember);
+
   const built = L.buildChainModel(target.id, { info: infoFrom(members, memberData), colorByTier });
 
   if (!built) {
@@ -192,15 +197,21 @@ async function handleTree(interaction, guild, colorByTier) {
   await interaction.deferReply();
   const target = interaction.options.getUser("high_general") || interaction.user;
 
-  const squadron = L.findMemberTree(target.id);
+  const members = await guild.members.fetch().catch(() => guild.members.cache);
+  const memberData = readMembers();
+
+  let squadron = L.findMemberTree(target.id);
+  if (!squadron) {
+    // Self-heal: if the target holds the High General role, create their tree now.
+    const targetMember = members.get(target.id);
+    if (targetMember) squadron = L.ensureTreeForMember(targetMember);
+  }
   if (!squadron) {
     return interaction.editReply({
-      content: `No squadron found for **${target.username}**. High Generals get a tree via \`/squadron add\` (add them as a High General).`,
+      content: `No squadron found for **${target.username}**. Only **High Generals** lead a squadron — a tree is created automatically when a member gets the High General role.`,
     });
   }
 
-  const members = await guild.members.fetch().catch(() => guild.members.cache);
-  const memberData = readMembers();
   const model = L.buildTreeModel(squadron, L.readInvites(), { info: infoFrom(members, memberData), colorByTier });
 
   const hg = members.get(squadron.highGeneralId);

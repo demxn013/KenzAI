@@ -250,6 +250,61 @@ function createTree(hgId, name, createdBy) {
 }
 
 /**
+ * Ensure a member who holds the High General role has their own tree. Creates
+ * an empty one if missing. Returns the tree object (existing or new), or null
+ * if the member isn't a High General / couldn't be created.
+ * @param {GuildMember} member
+ */
+function ensureTreeForMember(member) {
+  if (!member || !member.id) return null;
+  const existing = findMemberTree(member.id);
+  if (existing) return existing;
+
+  const { highGeneralRoleId } = getGovRoleIds();
+  if (!highGeneralRoleId) return null;
+  if (!member.roles?.cache?.has(highGeneralRoleId)) return null;
+
+  const res = createTree(member.id, null, member.id);
+  if (!res.ok) return null;
+  return readSquadrons()[res.id] || null;
+}
+
+/**
+ * Backfill: make sure every current High General in the Empire guild has a tree.
+ * Safe to run repeatedly (idempotent). Returns the number of trees created.
+ * @param {Client} client
+ */
+async function ensureHighGeneralTrees(client) {
+  try {
+    const guild = await client.guilds.fetch(YAZANAKI_EMPIRE_GUILD_ID).catch(() => null);
+    if (!guild) return { created: 0 };
+
+    const { highGeneralRoleId } = getGovRoleIds();
+    if (!highGeneralRoleId) return { created: 0 };
+
+    const members = await guild.members.fetch().catch(() => null);
+    if (!members) return { created: 0 };
+
+    let created = 0;
+    for (const m of members.values()) {
+      if (m.user?.bot) continue;
+      if (!m.roles.cache.has(highGeneralRoleId)) continue;
+      if (findMemberTree(m.id)) continue;
+      const res = createTree(m.id, null, m.id);
+      if (res.ok) {
+        created++;
+        console.log(`[squadronlogic] 🎖️ Backfilled squadron ${res.id} for High General ${m.user.tag} (${m.id})`);
+      }
+    }
+    if (created) console.log(`[squadronlogic] ✅ Ensured ${created} High General tree(s)`);
+    return { created };
+  } catch (err) {
+    console.error("[squadronlogic] ❌ ensureHighGeneralTrees failed:", err.message);
+    return { created: 0 };
+  }
+}
+
+/**
  * Place an officer (general | captain | imperial_army) under a parent.
  * Validates adjacency + capacity. Blocks if the member is already in a tree.
  */
@@ -719,6 +774,8 @@ module.exports = {
   allSoldierIds,
   // mutations
   createTree,
+  ensureTreeForMember,
+  ensureHighGeneralTrees,
   placeOfficer,
   placeRecruitManual,
   removeMember,

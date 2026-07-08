@@ -235,6 +235,11 @@ client.once('ready', async () => {
 
   await initDatabase();
 
+  console.log("🎖️ Ensuring squadrons exist for all High Generals...");
+  require("./modules/yazanaki/squadronlogic")
+    .ensureHighGeneralTrees(client)
+    .catch((err) => console.warn("⚠️ Squadron backfill failed:", err.message));
+
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
 

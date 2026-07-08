@@ -401,7 +401,16 @@ module.exports.acceptApplicant = async function (discordId, client = null) {
   
   // Save the complete member entry
   writeMembers(members);
-  
+
+  // ✅ Slot the newly-accepted recruit into the military chain of command,
+  // under the Imperial Army soldier tied to whoever invited them. Best-effort:
+  // squadron issues must never block acceptance.
+  try {
+    require("../yazanaki/squadronlogic").resolveRecruitPlacement(discordId);
+  } catch (err) {
+    console.warn(`[acceptedapps] ⚠️ Squadron recruit placement failed:`, err.message);
+  }
+
   const mode = config.TESTING_MODE ? "TESTING" : "PRODUCTION";
   const duration = config.TESTING_MODE 
     ? `${config.DRAFT_DURATION_MINUTES} minutes`

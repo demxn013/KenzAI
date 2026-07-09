@@ -103,9 +103,9 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName("tree")
-        .setDescription("Show a full squadron tree as an image")
+        .setDescription("Show a member's full squadron tree, highlighting them")
         .addUserOption((o) =>
-          o.setName("high_general").setDescription("The tree's High General (or any member of it). Defaults to your tree.")
+          o.setName("member").setDescription("Anyone in a squadron — shows their tree and highlights them. Defaults to you.")
         )
     )
     .addSubcommand((s) => s.setName("list").setDescription("List all squadrons and their sizes"))
@@ -195,40 +195,49 @@ async function handleView(interaction, guild, colorByTier) {
 
 async function handleTree(interaction, guild, colorByTier) {
   await interaction.deferReply();
-  const target = interaction.options.getUser("high_general") || interaction.user;
+  const target = interaction.options.getUser("member") || interaction.user;
 
   const members = await guild.members.fetch().catch(() => guild.members.cache);
   const memberData = readMembers();
 
+  // Find the squadron this member belongs to — whether they're the High General,
+  // an officer node, or a placed recruit (recruits live in the invites store,
+  // not in the tree's nodes).
   let squadron = L.findMemberTree(target.id);
   if (!squadron) {
-    // Self-heal: if the target holds the High General role, create their tree now.
+    const rec = L.readInvites()[target.id];
+    if (rec && rec.treeId) squadron = L.readSquadrons()[rec.treeId] || null;
+  }
+  if (!squadron) {
+    // Self-heal: a High General with no tree yet gets one on the spot.
     const targetMember = members.get(target.id);
     if (targetMember) squadron = L.ensureTreeForMember(targetMember);
   }
   if (!squadron) {
     return interaction.editReply({
-      content: `No squadron found for **${target.username}**. Only **High Generals** lead a squadron — a tree is created automatically when a member gets the High General role.`,
+      content: `**${target.username}** isn't in a squadron yet. An officer can place them with \`/squadron add\`.`,
     });
   }
 
   const model = L.buildTreeModel(squadron, L.readInvites(), { info: infoFrom(members, memberData), colorByTier });
 
   const hg = members.get(squadron.highGeneralId);
+  const treeName = squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron");
   const rows = L.listTrees().find((r) => r.squadron.id === squadron.id);
   const c = rows ? rows.counts : { general: 0, captain: 0, imperial_army: 0 };
   const recruits = rows ? rows.recruits : 0;
 
   const buffer = await renderTree(model, {
-    title: squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron"),
+    title: treeName,
     subtitle: `${c.general} Generals · ${c.captain} Captains · ${c.imperial_army} Soldiers · ${recruits} Recruits`,
-    highlightId: interaction.user.id,
+    highlightId: target.id,
   });
 
   const file = new AttachmentBuilder(buffer, { name: ATTACHMENT });
   const embed = new EmbedBuilder()
-    .setTitle(`⚔️ ${squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron")}`)
+    .setTitle(`⚔️ ${treeName}`)
     .setColor(BLACK)
+    .setDescription(`Highlighting <@${target.id}>`)
     .setImage(`attachment://${ATTACHMENT}`)
     .setFooter({ text: "Yazanaki Empire • Military" });
 

@@ -8,6 +8,10 @@ const {
   EmbedBuilder,
   PermissionsBitField,
   ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
 } = require("discord.js");
 
 const draftConfig = require("../empire/draftconfig");
@@ -100,15 +104,6 @@ module.exports = {
         .addChannelOption((opt) =>
           opt.setName("channel").setDescription("The channel to feature").setRequired(true)
         )
-        .addStringOption((opt) =>
-          opt.setName("title").setDescription("Short title for this step").setRequired(true)
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("description")
-            .setDescription("What this channel is for / why it matters")
-            .setRequired(true)
-        )
     )
     .addSubcommand((sub) =>
       sub
@@ -161,41 +156,44 @@ module.exports = {
     }
 
     // --------------------------------------------------------
-    // add-channel
+    // add-channel — collect the title + (multi-line) info via a modal so
+    // formatting/line breaks are preserved (slash options are single-line).
     // --------------------------------------------------------
     if (sub === "add-channel") {
       const channel = interaction.options.getChannel("channel");
-      const title = interaction.options.getString("title");
-      const description = interaction.options.getString("description");
 
-      const entry = { channelId: channel.id, title, description };
-      const { updated } = config.addChannel(scope, resolved.guildId, entry);
+      // Pre-fill any existing config so editing keeps the current text.
+      const existing = config
+        .getTour(scope, resolved.guildId)
+        .find((e) => e.channelId === channel.id);
 
-      // Soft warnings — never block configuration.
-      const notes = [];
-      const isPostable =
-        channel.type === ChannelType.GuildText ||
-        channel.type === ChannelType.GuildAnnouncement;
-      if (!isPostable) {
-        notes.push(
-          "⚠️ This isn't a standard text channel, so onboarding will show it as a **jump link** in the applicant's ticket instead of posting a message inside it."
-        );
-      } else {
-        const me = interaction.guild.members.me;
-        const perms = me ? channel.permissionsFor(me) : null;
-        if (perms && !perms.has(PermissionsBitField.Flags.SendMessages)) {
-          notes.push(
-            "⚠️ I don't have **Send Messages** permission in that channel — grant it or onboarding will fall back to a jump link in the ticket."
-          );
-        }
-      }
+      const modal = new ModalBuilder()
+        .setCustomId(`onbcfg|add|${scope}|${channel.id}`)
+        .setTitle("Channel onboarding info");
 
-      return interaction.reply({
-        content:
-          `✅ ${updated ? "Updated" : "Added"} <#${channel.id}> in the **${resolved.label}** onboarding tour.` +
-          (notes.length ? `\n\n${notes.join("\n")}` : ""),
-        ephemeral: true,
-      });
+      const titleInput = new TextInputBuilder()
+        .setCustomId("title")
+        .setLabel("Title (short heading for this step)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(200)
+        .setValue((existing?.title || channel.name || "").slice(0, 200));
+
+      const infoInput = new TextInputBuilder()
+        .setCustomId("information")
+        .setLabel("Information (what this channel is about)")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(4000)
+        .setPlaceholder("Explain the channel. Line breaks and markdown are kept.");
+      if (existing?.description) infoInput.setValue(existing.description.slice(0, 4000));
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(titleInput),
+        new ActionRowBuilder().addComponents(infoInput)
+      );
+
+      return interaction.showModal(modal);
     }
 
     // --------------------------------------------------------
@@ -228,10 +226,17 @@ module.exports = {
       } else {
         embed.setDescription(
           tour
-            .map(
-              (e, i) =>
-                `**${i + 1}. ${e.title}** — <#${e.channelId}>\n> ${e.description || "_(no description)_"}`
-            )
+            .map((e, i) => {
+              // Collapse multi-line info into a single-line, capped preview so
+              // the list stays scannable (the full text renders during the tour).
+              const raw = (e.description || "").replace(/\s*\n\s*/g, " ").trim();
+              const preview = raw
+                ? raw.length > 150
+                  ? `${raw.slice(0, 150)}…`
+                  : raw
+                : "_(no info)_";
+              return `**${i + 1}. ${e.title}** — <#${e.channelId}>\n> ${preview}`;
+            })
             .join("\n\n")
         );
       }
@@ -243,5 +248,67 @@ module.exports = {
   // Route onboarding button clicks (onb|...) to the flow engine.
   async buttonHandler(interaction) {
     return flow.handleButton(interaction);
+  },
+
+  // Handle /onboarding config modals (onbcfg|...): saving a channel's
+  // title + multi-line information into the tour config.
+  async modalHandler(interaction) {
+    if (!interaction.customId.startsWith("onbcfg|")) return;
+
+    const royalty = await hasRoyaltyRole(interaction);
+    if (!royalty) {
+      return interaction.reply({
+        content: "❌ You need the **Royalty** role in the Yazanaki Empire discord to use this command.",
+        ephemeral: true,
+      });
+    }
+
+    const [, action, scope, channelId] = interaction.customId.split("|");
+    if (action !== "add") return;
+
+    const resolved = resolveScope(interaction, scope);
+    if (!resolved.ok) {
+      return interaction.reply({ content: resolved.error, ephemeral: true });
+    }
+
+    const title = interaction.fields.getTextInputValue("title").trim();
+    const information = interaction.fields.getTextInputValue("information");
+
+    const { updated } = config.addChannel(scope, resolved.guildId, {
+      channelId,
+      title,
+      description: information,
+    });
+
+    // Soft warnings — never block configuration.
+    const notes = [];
+    const channel =
+      interaction.guild?.channels?.cache.get(channelId) ||
+      (await interaction.guild?.channels?.fetch(channelId).catch(() => null));
+    if (channel) {
+      const isPostable =
+        channel.type === ChannelType.GuildText ||
+        channel.type === ChannelType.GuildAnnouncement;
+      if (!isPostable) {
+        notes.push(
+          "⚠️ This isn't a standard text channel, so onboarding will show it as a **jump link** in the applicant's ticket instead of posting a message inside it."
+        );
+      } else {
+        const me = interaction.guild.members.me;
+        const perms = me ? channel.permissionsFor(me) : null;
+        if (perms && !perms.has(PermissionsBitField.Flags.SendMessages)) {
+          notes.push(
+            "⚠️ I don't have **Send Messages** permission in that channel — grant it or onboarding will fall back to a jump link in the ticket."
+          );
+        }
+      }
+    }
+
+    return interaction.reply({
+      content:
+        `✅ ${updated ? "Updated" : "Added"} <#${channelId}> in the **${resolved.label}** onboarding tour.` +
+        (notes.length ? `\n\n${notes.join("\n")}` : ""),
+      ephemeral: true,
+    });
   },
 };

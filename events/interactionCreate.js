@@ -255,6 +255,13 @@ module.exports = {
           return await cmd.modalHandler(interaction);
         }
 
+        // Onboarding config modals (add-channel title + info)
+        if (interaction.customId.startsWith("onbcfg|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "onboarding");
+          return await cmd.modalHandler(interaction);
+        }
+
         // Stock market modals (buy/sell)
         if (
           interaction.customId.startsWith("stock_buy_modal_") ||

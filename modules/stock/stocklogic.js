@@ -313,9 +313,10 @@ function createPendingSell({ guildId, discordId, ign, shares, pricePerShare }) {
 
   const held = getHolding(guildId, discordId);
   const reserved = getReservedSellShares(guildId, discordId);
-  if (held - reserved < shares) {
-    console.log(`[stocklogic] 🚫 Sell rejected for ${discordId} on ${guildId}: wanted ${shares}, only ${held - reserved} sellable (held ${held}, reserved ${reserved})`);
-    return { success: false, reason: "insufficient_holdings" };
+  const sellable = held - reserved;
+  if (shares > sellable) {
+    console.log(`[stocklogic] 🚫 Sell rejected for ${discordId} on ${guildId}: wanted ${shares}, only ${sellable} sellable (held ${held}, reserved ${reserved})`);
+    return { success: false, reason: "insufficient_holdings", sellable, held, reserved };
   }
 
   const { base, tax, net } = computeSellPayout(shares, pricePerShare);
@@ -356,7 +357,16 @@ function markSellPaid(txId) {
   const existing = getHoldingRecord(pending.guildId, pending.discordId);
   const held = existing ? Number(existing.shares) || 0 : 0;
   const heldInvested = existing ? Number(existing.invested) || 0 : 0;
+  // Never debit (or pay out for) more shares than the seller still owns.
   const debited = Math.min(held, pending.shares);
+  // Pay only for the shares actually debited, at the price locked when the
+  // sell was placed. In the normal case debited === pending.shares so this
+  // equals pending.payout; it self-corrects if the holding shrank meanwhile.
+  const { net: payout } = computeSellPayout(debited, pending.pricePerShare);
+  if (debited !== pending.shares) {
+    console.warn(`[stocklogic] ⚠️ markSellPaid ${txId}: seller holds ${held}, pending was ${pending.shares}; debiting ${debited} and paying ${payout}`);
+  }
+
   // Remove the sold shares' weighted-average cost basis from `invested`.
   const avgCost = held > 0 ? heldInvested / held : 0;
   const remainingShares = held - debited;
@@ -373,6 +383,8 @@ function markSellPaid(txId) {
   }
 
   pending.status = "confirmed";
+  pending.paidShares = debited;
+  pending.paidPayout = payout;
   stores.stock_pending_sells.writeMap(all);
 
   logTransaction({
@@ -382,12 +394,12 @@ function markSellPaid(txId) {
     type: "sell",
     shares: debited,
     pricePerShare: pending.pricePerShare,
-    total: pending.payout,
+    total: payout,
     status: "confirmed",
   });
 
-  console.log(`[stocklogic] ✅ SELL paid: ${pending.discordId} (${pending.ign}) sold ${debited} share(s) of ${pending.guildId} for ${pending.payout} [tx ${txId}] — ${held - debited} share(s) remaining`);
-  return { success: true, remainingHoldings: held - debited };
+  console.log(`[stocklogic] ✅ SELL paid: ${pending.discordId} (${pending.ign}) sold ${debited} share(s) of ${pending.guildId} for ${payout} [tx ${txId}] — ${remainingShares} share(s) remaining`);
+  return { success: true, remainingHoldings: remainingShares, debited, payout };
 }
 
 /**

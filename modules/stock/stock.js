@@ -462,7 +462,18 @@ async function handleSellModal(interaction, guildId) {
         content: `⏳ You bought shares too recently. To prevent instant flipping, shares must be held for a bit before selling — try again in **${formatDuration(result.cooldownMs)}**.`,
       });
     }
-    return interaction.editReply({ content: "❌ You don't have enough unreserved shares to sell that many." });
+    if (result.reason === "insufficient_holdings") {
+      const sellable = Math.max(0, result.sellable || 0);
+      const reservedNote = result.reserved > 0
+        ? ` (you hold ${result.held.toLocaleString()}, but ${result.reserved.toLocaleString()} are tied up in pending sell orders)`
+        : "";
+      return interaction.editReply({
+        content: sellable > 0
+          ? `❌ You can only sell up to **${sellable.toLocaleString()}** share(s) of ${clan.abbr}${reservedNote}.`
+          : `❌ You don't own any ${clan.abbr} shares available to sell${reservedNote}.`,
+      });
+    }
+    return interaction.editReply({ content: "❌ You can't sell that many shares." });
   }
 
   const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);

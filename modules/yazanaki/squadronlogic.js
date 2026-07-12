@@ -16,6 +16,7 @@
 
 const { stores } = require("../database/stores");
 const { loadRolesConfig } = require("../roles/rolesconfig");
+const { readMembers } = require("../database/membersPersistence");
 
 const YAZANAKI_EMPIRE_GUILD_ID = "1220847061797179524";
 
@@ -466,13 +467,25 @@ function detachRecruitsFor(removedIds) {
  *   inviter is a placed recruit     -> the same soldier the inviting recruit is under
  *   otherwise / no soldier available -> pending
  */
-function _resolvePlacementInto(recruitId, invites, squadrons) {
+function _resolvePlacementInto(recruitId, invites, squadrons, members) {
   const rec = invites[recruitId];
   if (!rec || !rec.inviterId) return false;
 
   // Manual placements are left untouched as long as they stay valid.
   if (rec.manual && rec.status === "placed" && rec.soldierId && allSoldierIds(squadrons).has(rec.soldierId)) {
     return false;
+  }
+
+  // Only accepted members who currently hold the Recruit rank belong in a tree.
+  // military_invites records EVERY join through an invite link, so without this
+  // gate people who were invited but never accepted (or who left, or were
+  // promoted past Recruit) would be placed as phantom recruits.
+  if (!isRecruitMember(recruitId, members)) {
+    const changed = rec.status === "placed" || !!rec.soldierId || !!rec.treeId;
+    rec.status = "pending";
+    rec.soldierId = null;
+    rec.treeId = null;
+    return changed;
   }
 
   const inviterId = rec.inviterId;
@@ -515,6 +528,13 @@ function _resolvePlacementInto(recruitId, invites, squadrons) {
   return true;
 }
 
+/** True if the member is an accepted member currently holding the Recruit rank. */
+function isRecruitMember(id, members) {
+  const m = members && members[id];
+  if (!m) return false;
+  return String(m.YazanakiRank || "").trim().toLowerCase() === "recruit";
+}
+
 /** Resolve (and persist) a single recruit's Imperial Army soldier. */
 function resolveRecruitPlacement(recruitId) {
   const invites = readInvites();
@@ -522,7 +542,8 @@ function resolveRecruitPlacement(recruitId) {
   if (!rec || !rec.inviterId) return { ok: false, reason: "no_inviter" };
 
   const squadrons = readSquadrons();
-  const changed = _resolvePlacementInto(recruitId, invites, squadrons);
+  const members = readMembers();
+  const changed = _resolvePlacementInto(recruitId, invites, squadrons, members);
   if (changed) writeInvites(invites);
   return { ok: true, status: rec.status, soldierId: rec.soldierId, treeId: rec.treeId };
 }
@@ -545,12 +566,20 @@ function leastLoadedSoldier(soldierIds, invites) {
 function reconcilePending() {
   const invites = readInvites();
   const squadrons = readSquadrons();
+  const members = readMembers();
   const validSoldiers = allSoldierIds(squadrons);
   let changed = 0;
   for (const [id, rec] of Object.entries(invites)) {
     if (!rec || !rec.inviterId) continue;
-    const stale = rec.status !== "placed" || !rec.soldierId || !validSoldiers.has(rec.soldierId);
-    if (stale && _resolvePlacementInto(id, invites, squadrons)) changed++;
+    // Re-evaluate anything not cleanly placed under a valid soldier, and any
+    // currently-placed record whose invitee is no longer an eligible recruit
+    // (so phantom placements from earlier get cleaned up).
+    const stale =
+      rec.status !== "placed" ||
+      !rec.soldierId ||
+      !validSoldiers.has(rec.soldierId) ||
+      !isRecruitMember(id, members);
+    if (stale && _resolvePlacementInto(id, invites, squadrons, members)) changed++;
   }
   if (changed) writeInvites(invites); // one write -> one MySQL sync
   return changed;
@@ -664,7 +693,7 @@ function buildTreeModel(squadron, invites = readInvites(), opts = {}) {
     }
     if (node.tier === TIER.IMPERIAL_ARMY) {
       const recs = Object.entries(invites)
-        .filter(([, r]) => r && r.status === "placed" && r.soldierId === node.id && r.treeId === squadron.id)
+        .filter(([rid, r]) => r && r.status === "placed" && r.soldierId === node.id && r.treeId === squadron.id && !nodes[rid])
         .map(([rid]) => make(rid, TIER.RECRUIT));
       recs.sort((a, b) => a.name.localeCompare(b.name));
       for (const r of recs) node.children.push(r);

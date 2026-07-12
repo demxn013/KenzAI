@@ -124,6 +124,15 @@ module.exports = {
         .setName("remove")
         .setDescription("Remove a member from their squadron")
         .addUserOption((o) => o.setName("member").setDescription("The member to remove").setRequired(true))
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("rename")
+        .setDescription("Set a squadron's name")
+        .addUserOption((o) =>
+          o.setName("high_general").setDescription("The squadron's High General (or any member of it)").setRequired(true)
+        )
+        .addStringOption((o) => o.setName("name").setDescription("The new squadron name").setRequired(true))
     ),
 
   async execute(interaction) {
@@ -144,6 +153,7 @@ module.exports = {
       if (sub === "list") return await handleList(interaction, guild);
       if (sub === "add") return await handleAdd(interaction, guild, rankRoleData);
       if (sub === "remove") return await handleRemove(interaction, guild);
+      if (sub === "rename") return await handleRename(interaction, guild);
     } catch (err) {
       console.error("[/squadron] ❌", err);
       const msg = "❌ Something went wrong while handling that command.";
@@ -235,9 +245,9 @@ async function handleTree(interaction, guild, colorByTier) {
 
   const file = new AttachmentBuilder(buffer, { name: ATTACHMENT });
   const embed = new EmbedBuilder()
-    .setTitle(`⚔️ ${treeName}`)
+    .setTitle(treeName)
     .setColor(BLACK)
-    .setDescription(`Highlighting <@${target.id}>`)
+    .setDescription(`Lead by: <@${squadron.highGeneralId}>`)
     .setImage(`attachment://${ATTACHMENT}`)
     .setFooter({ text: "Yazanaki Empire • Military" });
 
@@ -402,6 +412,33 @@ async function handleRemove(interaction, guild) {
       ? ` Their ${res.removed - 1} subordinate(s) were unassigned.`
       : "";
   return interaction.editReply({ content: `✅ Removed <@${targetUser.id}> from the chain of command.${note}` });
+}
+
+// ---- rename ----------------------------------------------------------------
+
+async function handleRename(interaction, guild) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const target = interaction.options.getUser("high_general", true);
+  const name = interaction.options.getString("name", true);
+
+  const caller = await callerEmpireMember(guild, interaction.user.id);
+  if (!caller) {
+    return interaction.editReply({ content: "❌ You must be a member of the Yazanaki Empire to manage squadrons." });
+  }
+
+  const tree = L.findMemberTree(target.id);
+  if (!tree) {
+    return interaction.editReply({ content: `❌ <@${target.id}> isn't in any squadron.` });
+  }
+
+  const perm = L.canManage(caller, tree);
+  if (!perm.allowed) return interaction.editReply({ content: denyMessage(perm) });
+
+  const res = L.renameTree(tree.id, name);
+  if (!res.ok) return interaction.editReply({ content: "❌ Could not rename that squadron." });
+
+  return interaction.editReply({ content: `✅ Squadron renamed to **${res.name}**.` });
 }
 
 function denyMessage(perm) {

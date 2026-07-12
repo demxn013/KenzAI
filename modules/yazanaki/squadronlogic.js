@@ -318,6 +318,16 @@ async function ensureHighGeneralTrees(client) {
   }
 }
 
+/** Set (or clear) a squadron's display name. */
+function renameTree(treeId, name) {
+  const squadrons = readSquadrons();
+  if (!squadrons[treeId]) return { ok: false, error: "not_found" };
+  const clean = name && String(name).trim() ? String(name).trim().slice(0, 100) : null;
+  squadrons[treeId].name = clean;
+  writeSquadrons(squadrons);
+  return { ok: true, name: clean };
+}
+
 /**
  * Place an officer (general | captain | imperial_army) under a parent.
  * Validates adjacency + capacity. Blocks if the member is already in a tree.
@@ -805,6 +815,7 @@ module.exports = {
   createTree,
   ensureTreeForMember,
   ensureHighGeneralTrees,
+  renameTree,
   placeOfficer,
   placeRecruitManual,
   removeMember,

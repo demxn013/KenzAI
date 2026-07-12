@@ -235,6 +235,23 @@ client.once('ready', async () => {
 
   await initDatabase();
 
+  console.log("🎖️ Ensuring squadrons exist for all High Generals...");
+  const squadronLogic = require("./modules/yazanaki/squadronlogic");
+  squadronLogic
+    .ensureHighGeneralTrees(client)
+    .then(() => {
+      // Clean up recruit placements: drops phantoms (people invited but never
+      // accepted, or who left / were promoted past Recruit) and slots in any
+      // pending recruits that now have a soldier.
+      try {
+        const n = squadronLogic.reconcilePending();
+        if (n) console.log(`🎖️ Reconciled ${n} recruit placement(s)`);
+      } catch (e) {
+        console.warn("⚠️ Squadron reconcile failed:", e.message);
+      }
+    })
+    .catch((err) => console.warn("⚠️ Squadron backfill failed:", err.message));
+
   console.log("🎖️ Starting draft system...");
   startScheduler(client);
 

@@ -103,9 +103,9 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName("tree")
-        .setDescription("Show a full squadron tree as an image")
+        .setDescription("Show a member's full squadron tree, highlighting them")
         .addUserOption((o) =>
-          o.setName("high_general").setDescription("The tree's High General (or any member of it). Defaults to your tree.")
+          o.setName("member").setDescription("Anyone in a squadron — shows their tree and highlights them. Defaults to you.")
         )
     )
     .addSubcommand((s) => s.setName("list").setDescription("List all squadrons and their sizes"))
@@ -124,6 +124,15 @@ module.exports = {
         .setName("remove")
         .setDescription("Remove a member from their squadron")
         .addUserOption((o) => o.setName("member").setDescription("The member to remove").setRequired(true))
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("rename")
+        .setDescription("Set a squadron's name")
+        .addUserOption((o) =>
+          o.setName("high_general").setDescription("The squadron's High General (or any member of it)").setRequired(true)
+        )
+        .addStringOption((o) => o.setName("name").setDescription("The new squadron name").setRequired(true))
     ),
 
   async execute(interaction) {
@@ -144,6 +153,7 @@ module.exports = {
       if (sub === "list") return await handleList(interaction, guild);
       if (sub === "add") return await handleAdd(interaction, guild, rankRoleData);
       if (sub === "remove") return await handleRemove(interaction, guild);
+      if (sub === "rename") return await handleRename(interaction, guild);
     } catch (err) {
       console.error("[/squadron] ❌", err);
       const msg = "❌ Something went wrong while handling that command.";
@@ -195,40 +205,49 @@ async function handleView(interaction, guild, colorByTier) {
 
 async function handleTree(interaction, guild, colorByTier) {
   await interaction.deferReply();
-  const target = interaction.options.getUser("high_general") || interaction.user;
+  const target = interaction.options.getUser("member") || interaction.user;
 
   const members = await guild.members.fetch().catch(() => guild.members.cache);
   const memberData = readMembers();
 
+  // Find the squadron this member belongs to — whether they're the High General,
+  // an officer node, or a placed recruit (recruits live in the invites store,
+  // not in the tree's nodes).
   let squadron = L.findMemberTree(target.id);
   if (!squadron) {
-    // Self-heal: if the target holds the High General role, create their tree now.
+    const rec = L.readInvites()[target.id];
+    if (rec && rec.treeId) squadron = L.readSquadrons()[rec.treeId] || null;
+  }
+  if (!squadron) {
+    // Self-heal: a High General with no tree yet gets one on the spot.
     const targetMember = members.get(target.id);
     if (targetMember) squadron = L.ensureTreeForMember(targetMember);
   }
   if (!squadron) {
     return interaction.editReply({
-      content: `No squadron found for **${target.username}**. Only **High Generals** lead a squadron — a tree is created automatically when a member gets the High General role.`,
+      content: `**${target.username}** isn't in a squadron yet. An officer can place them with \`/squadron add\`.`,
     });
   }
 
   const model = L.buildTreeModel(squadron, L.readInvites(), { info: infoFrom(members, memberData), colorByTier });
 
   const hg = members.get(squadron.highGeneralId);
+  const treeName = squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron");
   const rows = L.listTrees().find((r) => r.squadron.id === squadron.id);
   const c = rows ? rows.counts : { general: 0, captain: 0, imperial_army: 0 };
   const recruits = rows ? rows.recruits : 0;
 
   const buffer = await renderTree(model, {
-    title: squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron"),
+    title: treeName,
     subtitle: `${c.general} Generals · ${c.captain} Captains · ${c.imperial_army} Soldiers · ${recruits} Recruits`,
-    highlightId: interaction.user.id,
+    highlightId: target.id,
   });
 
   const file = new AttachmentBuilder(buffer, { name: ATTACHMENT });
   const embed = new EmbedBuilder()
-    .setTitle(`⚔️ ${squadron.name || (hg ? `${hg.displayName}'s Command` : "Squadron")}`)
+    .setTitle(treeName)
     .setColor(BLACK)
+    .setDescription(`Lead by: <@${squadron.highGeneralId}>`)
     .setImage(`attachment://${ATTACHMENT}`)
     .setFooter({ text: "Yazanaki Empire • Military" });
 
@@ -393,6 +412,33 @@ async function handleRemove(interaction, guild) {
       ? ` Their ${res.removed - 1} subordinate(s) were unassigned.`
       : "";
   return interaction.editReply({ content: `✅ Removed <@${targetUser.id}> from the chain of command.${note}` });
+}
+
+// ---- rename ----------------------------------------------------------------
+
+async function handleRename(interaction, guild) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const target = interaction.options.getUser("high_general", true);
+  const name = interaction.options.getString("name", true);
+
+  const caller = await callerEmpireMember(guild, interaction.user.id);
+  if (!caller) {
+    return interaction.editReply({ content: "❌ You must be a member of the Yazanaki Empire to manage squadrons." });
+  }
+
+  const tree = L.findMemberTree(target.id);
+  if (!tree) {
+    return interaction.editReply({ content: `❌ <@${target.id}> isn't in any squadron.` });
+  }
+
+  const perm = L.canManage(caller, tree);
+  if (!perm.allowed) return interaction.editReply({ content: denyMessage(perm) });
+
+  const res = L.renameTree(tree.id, name);
+  if (!res.ok) return interaction.editReply({ content: "❌ Could not rename that squadron." });
+
+  return interaction.editReply({ content: `✅ Squadron renamed to **${res.name}**.` });
 }
 
 function denyMessage(perm) {

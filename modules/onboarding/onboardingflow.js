@@ -46,6 +46,35 @@ function writeState(ticketChannelId, onboarding) {
   cache.set(ticketChannelId, entry);
 }
 
+function guildIdOf(channel) {
+  return (channel && (channel.guildId || (channel.guild && channel.guild.id))) || null;
+}
+
+/**
+ * After an advance, reply (ephemerally) with a Link button that jumps the
+ * applicant straight to the next step's message. This is how we "send" them to
+ * the next channel — a single button can't be both a link and an action button,
+ * so the jump link is delivered right after they click the action button.
+ */
+async function sendNextJump(interaction, client, loc) {
+  try {
+    if (!loc || !loc.guildId || !loc.channelId || !loc.messageId) return;
+    const url = `https://discord.com/channels/${loc.guildId}/${loc.channelId}/${loc.messageId}`;
+    let label = "➡️ Go to the next step";
+    const ch = await client.channels.fetch(loc.channelId).catch(() => null);
+    if (ch && ch.name) label = `➡️ Go to #${ch.name}`;
+    if (label.length > 80) label = label.slice(0, 80);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(label).setURL(url)
+    );
+    await interaction
+      .followUp({ content: "✅ Nice — here's your next step:", components: [row], ephemeral: true })
+      .catch(() => {});
+  } catch (_) {
+    /* best-effort — the next step is already posted and pings them anyway */
+  }
+}
+
 function normalizeMode(mode) {
   // Legacy "timed" (never implemented) and anything unknown → manual.
   return mode === "automatic" ? "automatic" : "manual";
@@ -163,7 +192,7 @@ async function renderIntro(ticketChannel, discordId) {
     embeds: [embed],
     components: [row],
   });
-  return { channelId: ticketChannel.id, messageId: msg.id };
+  return { channelId: ticketChannel.id, messageId: msg.id, guildId: guildIdOf(ticketChannel) };
 }
 
 async function renderCommands(ticketChannel, discordId) {
@@ -194,7 +223,7 @@ async function renderCommands(ticketChannel, discordId) {
     embeds: [embed],
     components: [row],
   });
-  return { channelId: ticketChannel.id, messageId: msg.id };
+  return { channelId: ticketChannel.id, messageId: msg.id, guildId: guildIdOf(ticketChannel) };
 }
 
 function tourEmbed(entry, index, total, scopeLabel, postedInChannel) {
@@ -244,7 +273,7 @@ async function postTourStep(client, ticketChannel, state, discordId, entry, phas
     const msg = await target
       .send({ content: `<@${discordId}>`, embeds: [embed], components: [row] })
       .catch(() => null);
-    if (msg) return { channelId: target.id, messageId: msg.id };
+    if (msg) return { channelId: target.id, messageId: msg.id, guildId: guildIdOf(target) };
   }
 
   // Fallback: post in the ticket with a jump link (handles forums/categories/
@@ -255,7 +284,7 @@ async function postTourStep(client, ticketChannel, state, discordId, entry, phas
     embeds: [embed],
     components: [row],
   });
-  return { channelId: ticketChannel.id, messageId: msg.id };
+  return { channelId: ticketChannel.id, messageId: msg.id, guildId: guildIdOf(ticketChannel) };
 }
 
 async function renderJoinYazanaki(ticketChannel, discordId) {
@@ -281,7 +310,7 @@ async function renderJoinYazanaki(ticketChannel, discordId) {
     embeds: [embed],
     components: [row],
   });
-  return { channelId: ticketChannel.id, messageId: msg.id };
+  return { channelId: ticketChannel.id, messageId: msg.id, guildId: guildIdOf(ticketChannel) };
 }
 
 // ============================================================
@@ -358,10 +387,11 @@ async function renderComplete(client, ticketChannel, state, discordId) {
   const clanName = clan?.name || "your clan";
   const mode = normalizeMode(clan?.applicationMode);
 
+  let embed;
   if (mode === "automatic") {
     const result = await autoAccept(client, ticketChannel, state, discordId);
     if (result.success) {
-      const embed = new EmbedBuilder()
+      embed = new EmbedBuilder()
         .setTitle("✅ Application Accepted")
         .setColor(0x00ff00)
         .setDescription(
@@ -370,39 +400,42 @@ async function renderComplete(client, ticketChannel, state, discordId) {
             "appropriate roles. Welcome!"
         )
         .setTimestamp();
-      await ticketChannel.send({ content: `<@${discordId}>`, embeds: [embed] }).catch(() => {});
-      return;
+    } else {
+      // Auto-accept failed — fall back to the manual message and let staff handle it.
+      console.warn(`[onboarding] ⚠️ Auto-accept failed for ${discordId}: ${result.reason}`);
+      embed = new EmbedBuilder()
+        .setTitle("🎉 Onboarding Complete!")
+        .setColor(defaults.EMBED_COLOR)
+        .setDescription(
+          [
+            `Nice work, <@${discordId}>! You now know the basics about **${clanName}**, KenzAI's commands, and the Yazanaki Empire.`,
+            "",
+            "We couldn't finish accepting you automatically, so a higher-up will review and accept you shortly. Please be patient!",
+          ].join("\n")
+        )
+        .setTimestamp();
     }
-    // Auto-accept failed — fall back to the manual message and let staff handle it.
-    console.warn(`[onboarding] ⚠️ Auto-accept failed for ${discordId}: ${result.reason}`);
-    const embed = new EmbedBuilder()
+  } else {
+    // Manual mode.
+    embed = new EmbedBuilder()
       .setTitle("🎉 Onboarding Complete!")
       .setColor(defaults.EMBED_COLOR)
       .setDescription(
         [
           `Nice work, <@${discordId}>! You now know the basics about **${clanName}**, KenzAI's commands, and the Yazanaki Empire.`,
           "",
-          "We couldn't finish accepting you automatically, so a higher-up will review and accept you shortly. Please be patient!",
+          "A higher-up will now review your application and accept you soon — please be patient. Thanks for onboarding!",
         ].join("\n")
       )
       .setTimestamp();
-    await ticketChannel.send({ content: `<@${discordId}>`, embeds: [embed] }).catch(() => {});
-    return;
   }
 
-  // Manual mode.
-  const embed = new EmbedBuilder()
-    .setTitle("🎉 Onboarding Complete!")
-    .setColor(defaults.EMBED_COLOR)
-    .setDescription(
-      [
-        `Nice work, <@${discordId}>! You now know the basics about **${clanName}**, KenzAI's commands, and the Yazanaki Empire.`,
-        "",
-        "A higher-up will now review your application and accept you soon — please be patient. Thanks for onboarding!",
-      ].join("\n")
-    )
-    .setTimestamp();
-  await ticketChannel.send({ content: `<@${discordId}>`, embeds: [embed] }).catch(() => {});
+  const sent = await ticketChannel
+    .send({ content: `<@${discordId}>`, embeds: [embed] })
+    .catch(() => null);
+  return sent
+    ? { channelId: ticketChannel.id, messageId: sent.id, guildId: guildIdOf(ticketChannel) }
+    : null;
 }
 
 // ============================================================
@@ -420,15 +453,18 @@ async function renderCurrent(client, ticketChannel, state, discordId) {
     }
   }
 
+  let loc = null;
   switch (state.phase) {
     case "intro":
-      state.activeMessage = await renderIntro(ticketChannel, discordId);
+      loc = await renderIntro(ticketChannel, discordId);
+      state.activeMessage = loc;
       break;
     case "commands":
-      state.activeMessage = await renderCommands(ticketChannel, discordId);
+      loc = await renderCommands(ticketChannel, discordId);
+      state.activeMessage = loc;
       break;
     case "clanTour":
-      state.activeMessage = await postTourStep(
+      loc = await postTourStep(
         client,
         ticketChannel,
         state,
@@ -436,12 +472,14 @@ async function renderCurrent(client, ticketChannel, state, discordId) {
         tourFor(state, "clanTour")[state.tourIndex],
         "clanTour"
       );
+      state.activeMessage = loc;
       break;
     case "joinYazanaki":
-      state.activeMessage = await renderJoinYazanaki(ticketChannel, discordId);
+      loc = await renderJoinYazanaki(ticketChannel, discordId);
+      state.activeMessage = loc;
       break;
     case "empireTour":
-      state.activeMessage = await postTourStep(
+      loc = await postTourStep(
         client,
         ticketChannel,
         state,
@@ -449,13 +487,15 @@ async function renderCurrent(client, ticketChannel, state, discordId) {
         tourFor(state, "empireTour")[state.tourIndex],
         "empireTour"
       );
+      state.activeMessage = loc;
       break;
     case "complete":
       state.completedAt = new Date().toISOString();
       state.activeMessage = null;
-      await renderComplete(client, ticketChannel, state, discordId);
+      loc = await renderComplete(client, ticketChannel, state, discordId);
       break;
   }
+  return loc;
 }
 
 // ============================================================
@@ -548,8 +588,9 @@ async function handleButton(interaction) {
     await interaction.deferUpdate().catch(() => {});
     state.joinedYazanaki = true;
     enterPhase(state, "empireTour");
-    await renderCurrent(client, ticketChannel, state, discordId);
+    const loc = await renderCurrent(client, ticketChannel, state, discordId);
     writeState(ticketChannelId, state);
+    await sendNextJump(interaction, client, loc);
     return;
   }
 
@@ -557,8 +598,9 @@ async function handleButton(interaction) {
   if (action === "next") {
     await interaction.deferUpdate().catch(() => {});
     nextStep(state);
-    await renderCurrent(client, ticketChannel, state, discordId);
+    const loc = await renderCurrent(client, ticketChannel, state, discordId);
     writeState(ticketChannelId, state);
+    await sendNextJump(interaction, client, loc);
     return;
   }
 

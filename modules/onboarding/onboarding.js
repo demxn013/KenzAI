@@ -83,6 +83,40 @@ function resolveScope(interaction, scope) {
   };
 }
 
+/**
+ * Build the title + multi-line information modal for a channel, pre-filled from
+ * `existing` when editing. Shared by add-channel and edit-channel; the submit is
+ * handled by modalHandler (customId `onbcfg|add|<scope>|<channelId>`).
+ */
+function buildInfoModal(scope, channel, existing) {
+  const modal = new ModalBuilder()
+    .setCustomId(`onbcfg|add|${scope}|${channel.id}`)
+    .setTitle("Channel onboarding info");
+
+  const titleInput = new TextInputBuilder()
+    .setCustomId("title")
+    .setLabel("Title (short heading for this step)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(200)
+    .setValue((existing?.title || channel.name || "").slice(0, 200));
+
+  const infoInput = new TextInputBuilder()
+    .setCustomId("information")
+    .setLabel("Information (what this channel is about)")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(4000)
+    .setPlaceholder("Explain the channel. Line breaks and markdown are kept.");
+  if (existing?.description) infoInput.setValue(existing.description.slice(0, 4000));
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(titleInput),
+    new ActionRowBuilder().addComponents(infoInput)
+  );
+  return modal;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("onboarding")
@@ -103,6 +137,24 @@ module.exports = {
         )
         .addChannelOption((opt) =>
           opt.setName("channel").setDescription("The channel to feature").setRequired(true)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("edit-channel")
+        .setDescription("Edit the title/info of a channel already in an onboarding tour")
+        .addStringOption((opt) =>
+          opt
+            .setName("scope")
+            .setDescription("Which tour the channel is in")
+            .setRequired(true)
+            .addChoices(
+              { name: "This clan's server", value: "clan" },
+              { name: "Yazanaki Empire (shared)", value: "empire" }
+            )
+        )
+        .addChannelOption((opt) =>
+          opt.setName("channel").setDescription("The channel to edit").setRequired(true)
         )
     )
     .addSubcommand((sub) =>
@@ -161,39 +213,29 @@ module.exports = {
     // --------------------------------------------------------
     if (sub === "add-channel") {
       const channel = interaction.options.getChannel("channel");
-
-      // Pre-fill any existing config so editing keeps the current text.
+      // Pre-fill any existing config so re-adding keeps the current text.
       const existing = config
         .getTour(scope, resolved.guildId)
         .find((e) => e.channelId === channel.id);
+      return interaction.showModal(buildInfoModal(scope, channel, existing));
+    }
 
-      const modal = new ModalBuilder()
-        .setCustomId(`onbcfg|add|${scope}|${channel.id}`)
-        .setTitle("Channel onboarding info");
-
-      const titleInput = new TextInputBuilder()
-        .setCustomId("title")
-        .setLabel("Title (short heading for this step)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(200)
-        .setValue((existing?.title || channel.name || "").slice(0, 200));
-
-      const infoInput = new TextInputBuilder()
-        .setCustomId("information")
-        .setLabel("Information (what this channel is about)")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true)
-        .setMaxLength(4000)
-        .setPlaceholder("Explain the channel. Line breaks and markdown are kept.");
-      if (existing?.description) infoInput.setValue(existing.description.slice(0, 4000));
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(titleInput),
-        new ActionRowBuilder().addComponents(infoInput)
-      );
-
-      return interaction.showModal(modal);
+    // --------------------------------------------------------
+    // edit-channel — same modal as add, but only for channels already in the
+    // tour (pre-filled with their current title/info).
+    // --------------------------------------------------------
+    if (sub === "edit-channel") {
+      const channel = interaction.options.getChannel("channel");
+      const existing = config
+        .getTour(scope, resolved.guildId)
+        .find((e) => e.channelId === channel.id);
+      if (!existing) {
+        return interaction.reply({
+          content: `ℹ️ <#${channel.id}> isn't in the **${resolved.label}** onboarding tour yet. Add it with \`/onboarding add-channel\`.`,
+          ephemeral: true,
+        });
+      }
+      return interaction.showModal(buildInfoModal(scope, channel, existing));
     }
 
     // --------------------------------------------------------

@@ -25,11 +25,17 @@ const {
 const cache = require("../data/cache");
 const config = require("./onboardingconfig");
 const defaults = require("./onboardingdefaults");
+const transcript = require("../tickets/transcript");
 const { readClans } = require("../database/clansPersistence");
 const { saveApplicant, getApplicant } = require("../applications/applicants");
 const { acceptApplicant, checkInYazanaki } = require("../applications/acceptedapplicants");
 
 const ORDER = ["intro", "commands", "clanTour", "joinYazanaki", "empireTour", "complete"];
+
+// How long to leave an auto-accepted ticket open before closing it
+// (generating a transcript + deleting the channel). Automatic mode only.
+const AUTO_CLOSE_DELAY_MS = 30 * 1000; // 30 seconds
+const AUTO_CLOSE_SECONDS = Math.round(AUTO_CLOSE_DELAY_MS / 1000);
 
 // ============================================================
 // STATE HELPERS (persisted on the ticket's cache entry)
@@ -381,6 +387,28 @@ async function autoAccept(client, ticketChannel, state, discordId) {
   return result;
 }
 
+/**
+ * Close an auto-accepted ticket: generate the transcript and delete the
+ * channel. Reuses modules/tickets/transcript.js, which only needs
+ * `interaction.guild` and `interaction.user` — so we pass a synthetic
+ * interaction with the bot as the closer.
+ */
+async function closeAcceptedTicket(client, ticketChannel) {
+  return transcript.generate(
+    { guild: ticketChannel.guild, user: client.user },
+    ticketChannel,
+    "Application automatically accepted after onboarding."
+  );
+}
+
+function scheduleAutoClose(client, ticketChannel) {
+  setTimeout(() => {
+    closeAcceptedTicket(client, ticketChannel).catch((err) =>
+      console.warn(`[onboarding] ⚠️ Auto-close failed:`, err?.message)
+    );
+  }, AUTO_CLOSE_DELAY_MS);
+}
+
 async function renderComplete(client, ticketChannel, state, discordId) {
   const clans = readClans();
   const clan = clans[state.clanGuildId];
@@ -388,16 +416,19 @@ async function renderComplete(client, ticketChannel, state, discordId) {
   const mode = normalizeMode(clan?.applicationMode);
 
   let embed;
+  let scheduleClose = false;
   if (mode === "automatic") {
     const result = await autoAccept(client, ticketChannel, state, discordId);
     if (result.success) {
+      scheduleClose = true;
       embed = new EmbedBuilder()
         .setTitle("✅ Application Accepted")
         .setColor(0x00ff00)
         .setDescription(
           "Congratulations! You've completed onboarding and your application to the " +
             "Yazanaki Empire has been **automatically accepted**. You've been given the " +
-            "appropriate roles. Welcome!"
+            "appropriate roles. Welcome!\n\n" +
+            `_This ticket will close automatically in ${AUTO_CLOSE_SECONDS} seconds._`
         )
         .setTimestamp();
     } else {
@@ -433,6 +464,10 @@ async function renderComplete(client, ticketChannel, state, discordId) {
   const sent = await ticketChannel
     .send({ content: `<@${discordId}>`, embeds: [embed] })
     .catch(() => null);
+
+  // Auto-accepted tickets close themselves after a short delay.
+  if (scheduleClose) scheduleAutoClose(client, ticketChannel);
+
   return sent
     ? { channelId: ticketChannel.id, messageId: sent.id, guildId: guildIdOf(ticketChannel) }
     : null;
@@ -612,4 +647,5 @@ module.exports = {
   handleButton,
   // exported for potential reuse/testing
   normalizeMode,
+  closeAcceptedTicket,
 };

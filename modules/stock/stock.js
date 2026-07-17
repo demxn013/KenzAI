@@ -33,6 +33,8 @@ const {
   createMarketEmbed,
   createMarketButtons,
   createPortfolioEmbed,
+  createSellPositionMenu,
+  cooldownNote,
 } = require("./stockembed");
 
 const CHART_ATTACHMENT_NAME = "stockchart.png";
@@ -227,19 +229,26 @@ async function handleToggle(interaction, mode, guildId) {
 // ---- /stock portfolio -----------------------------------------------------
 
 async function handlePortfolio(interaction) {
-  const holdings = stocklogic.getPortfolio(interaction.user.id);
-  console.log(`[stock] 📁 /stock portfolio by ${interaction.user.tag} — ${holdings.length} holding(s)`);
+  const positions = stocklogic.getUserPositions(interaction.user.id);
+  console.log(`[stock] 📁 /stock portfolio by ${interaction.user.tag} — ${positions.length} position(s)`);
   const clans = readClans();
-  const embed = createPortfolioEmbed(interaction.user.id, holdings, clans);
-  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  const embed = createPortfolioEmbed(positions, clans);
+  const note = cooldownNote(positions);
+  if (note) embed.setFooter({ text: note });
+
+  const components = [];
+  const sellMenu = createSellPositionMenu(positions, clans);
+  if (sellMenu) components.push(sellMenu);
+
+  return interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
 }
 
 // ---- Buttons --------------------------------------------------------------
 
-function buildOrderModal(kind, guildId) {
-  const modal = new ModalBuilder()
-    .setCustomId(`stock_${kind}_modal_${guildId}`)
-    .setTitle(kind === "buy" ? "Buy Clan Stock" : "Sell Clan Stock")
+function buildBuyModal(guildId) {
+  return new ModalBuilder()
+    .setCustomId(`stock_buy_modal_${guildId}`)
+    .setTitle("Buy Clan Stock")
     .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -252,13 +261,33 @@ function buildOrderModal(kind, guildId) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("shares")
-          .setLabel(kind === "buy" ? "How many shares to buy" : "How many shares to sell")
+          .setLabel("How many shares to buy")
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setPlaceholder("e.g., 5")
       )
     );
-  return modal;
+}
+
+/** Show the user their positions in one clan with a per-position sell menu. */
+async function handleSellButton(interaction, guildId) {
+  const clans = readClans();
+  const positions = stocklogic.getUserPositionsInClan(guildId, interaction.user.id);
+  const abbr = clans[guildId]?.abbr || "this clan";
+  console.log(`[stock] 🧾 Sell picker opened by ${interaction.user.tag} for ${guildId} — ${positions.length} position(s)`);
+
+  const embed = createPortfolioEmbed(positions, clans, {
+    title: `📉 Sell your ${abbr} positions`,
+    scopeNote: `You don't own any ${abbr} positions to sell yet.`,
+  });
+  const note = cooldownNote(positions);
+  if (note) embed.setFooter({ text: note });
+
+  const components = [];
+  const sellMenu = createSellPositionMenu(positions, clans);
+  if (sellMenu) components.push(sellMenu);
+
+  return interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
 }
 
 async function buttonHandler(interaction) {
@@ -275,13 +304,87 @@ async function buttonHandler(interaction) {
 
   if (interaction.customId.startsWith("stock_buy_")) {
     const guildId = interaction.customId.slice("stock_buy_".length);
-    return interaction.showModal(buildOrderModal("buy", guildId));
+    return interaction.showModal(buildBuyModal(guildId));
   }
 
   if (interaction.customId.startsWith("stock_sell_")) {
     const guildId = interaction.customId.slice("stock_sell_".length);
-    return interaction.showModal(buildOrderModal("sell", guildId));
+    return handleSellButton(interaction, guildId);
   }
+}
+
+/** Select-menu handler: sell (close) the chosen position. */
+async function selectMenuHandler(interaction) {
+  if (interaction.customId !== "stock_sellpos") return;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const positionId = interaction.values?.[0];
+  const result = stocklogic.createPendingSellForPosition(positionId, interaction.user.id);
+
+  if (!result.success) {
+    const messages = {
+      not_found: "❌ That position no longer exists or isn't yours.",
+      already_pending: "⏳ That position already has a pending sell — waiting on the clan owner to pay out.",
+      no_stock_record: "❌ This clan's stock isn't set up right now.",
+      cooldown: `⏳ You bought this position too recently. To prevent instant flipping, it must be held a bit before selling — try again in **${formatDuration(result.cooldownMs || 0)}**.`,
+    };
+    return interaction.editReply({ content: messages[result.reason] || "❌ Couldn't place that sell order." });
+  }
+
+  const clans = readClans();
+  const clan = clans[result.guildId];
+  const abbr = clan?.abbr || "the clan";
+  const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);
+  const pnl = result.payout - result.buyCost;
+  const pnlText = `${pnl >= 0 ? "🔺 +" : "🔻 "}${pnl.toLocaleString()}`;
+
+  await interaction.editReply({
+    content:
+      `📉 Sell order placed to close a **${abbr}** position (**${result.shares.toLocaleString()}** share(s)).\n` +
+      `You'll receive \`${result.payout.toLocaleString()}\` — \`${result.grossPayout.toLocaleString()}\` minus a ` +
+      `\`${result.tax.toLocaleString()}\` (${feePct}%) fee. P/L vs. what you paid: ${pnlText}.\n` +
+      `${abbr}'s clan owner has been notified to pay you in-game — they'll confirm once it's sent.`,
+  });
+
+  await notifyOwnerOfSell(interaction.client, result.guildId, {
+    txId: result.txId,
+    shares: result.shares,
+    payout: result.payout,
+    sellerTag: interaction.user.tag,
+    ign: interaction.user.id, // display fallback; IGN shown below from position
+  }, clan);
+}
+
+/** DM the clan owner a Mark-Paid prompt for a pending sell. */
+async function notifyOwnerOfSell(client, guildId, info, clan) {
+  const abbr = clan?.abbr || guildId;
+  const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);
+  const clanGuild = await client.guilds.fetch(guildId).catch(() => null);
+  const owner = clanGuild ? await clanGuild.fetchOwner().catch(() => null) : null;
+  const pending = stocklogic.getPendingSell(info.txId);
+  const ign = pending?.ign || "unknown";
+
+  if (!owner) {
+    console.warn(`[stock] ⚠️ No owner reachable to notify for pending sell ${info.txId} (guild ${guildId})`);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📉 Pending Sell — ${abbr}`)
+    .setColor(0xed4245)
+    .setDescription(
+      `**${info.sellerTag}** (IGN: \`${ign}\`) is closing a position of **${info.shares.toLocaleString()}** share(s).\n` +
+      `Pay them \`${info.payout.toLocaleString()}\` in-game (net of the ${feePct}% fee), then click below to confirm.`
+    );
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`stock_markpaid_${guildId}_${info.txId}`)
+      .setLabel("Mark Paid")
+      .setStyle(ButtonStyle.Success)
+  );
+  await owner.send({ embeds: [embed], components: [row] })
+    .then(() => console.log(`[stock] 📨 DM'd owner ${owner.id} to confirm pending sell ${info.txId}`))
+    .catch(() => console.warn(`[stock] ⚠️ Could not DM clan owner ${owner.id} about pending sell ${info.txId}`));
 }
 
 async function handleMarkPaid(interaction) {
@@ -307,10 +410,10 @@ async function handleMarkPaid(interaction) {
     return interaction.reply({ content: "❌ This sell order was already confirmed or no longer exists.", flags: MessageFlags.Ephemeral });
   }
 
-  const pending = stocklogic.getPendingSell(txId);
-  await investorRole.revokeInvestorRoleIfZero(clanGuild, pending?.discordId, result.remainingHoldings);
+  // Revoke the INVESTOR role only once the seller has NO positions left in this clan.
+  await investorRole.revokeInvestorRoleIfZero(clanGuild, result.discordId, result.remainingPositions);
 
-  await interaction.reply({ content: "✅ Sell order marked as paid. Shares returned to the treasury.", flags: MessageFlags.Ephemeral });
+  await interaction.reply({ content: "✅ Sell order marked as paid. The position was closed and its shares returned to the treasury.", flags: MessageFlags.Ephemeral });
 
   if (interaction.message?.editable) {
     await interaction.message.edit({ components: [] }).catch(() => {});
@@ -429,96 +532,10 @@ async function handleBuyModal(interaction, guildId) {
   );
 }
 
-async function handleSellModal(interaction, guildId) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  const ign = interaction.fields.getTextInputValue("ign").trim();
-  const shares = parseShares(interaction.fields.getTextInputValue("shares"));
-
-  console.log(`[stock] 🧾 SELL request: ${interaction.user.tag} (${interaction.user.id}) wants to sell ${shares ?? "?"} share(s) of ${guildId} as IGN "${ign}"`);
-
-  if (!shares) {
-    return interaction.editReply({ content: "❌ Enter a whole number of shares greater than 0." });
-  }
-
-  const clans = readClans();
-  const clan = clans[guildId];
-  const stock = stocklogic.getStockRecord(guildId);
-  if (!clan || !stock) {
-    return interaction.editReply({ content: "❌ This clan's stock isn't set up yet." });
-  }
-
-  const result = stocklogic.createPendingSell({
-    guildId,
-    discordId: interaction.user.id,
-    ign,
-    shares,
-    pricePerShare: stock.currentPrice,
-  });
-
-  if (!result.success) {
-    if (result.reason === "cooldown") {
-      return interaction.editReply({
-        content: `⏳ You bought shares too recently. To prevent instant flipping, shares must be held for a bit before selling — try again in **${formatDuration(result.cooldownMs)}**.`,
-      });
-    }
-    if (result.reason === "insufficient_holdings") {
-      const sellable = Math.max(0, result.sellable || 0);
-      const reservedNote = result.reserved > 0
-        ? ` (you hold ${result.held.toLocaleString()}, but ${result.reserved.toLocaleString()} are tied up in pending sell orders)`
-        : "";
-      return interaction.editReply({
-        content: sellable > 0
-          ? `❌ You can only sell up to **${sellable.toLocaleString()}** share(s) of ${clan.abbr}${reservedNote}.`
-          : `❌ You don't own any ${clan.abbr} shares available to sell${reservedNote}.`,
-      });
-    }
-    return interaction.editReply({ content: "❌ You can't sell that many shares." });
-  }
-
-  const feePct = (stocklogic.TAX_RATE * 100).toFixed(0);
-  await interaction.editReply({
-    content:
-      `📉 Sell order placed for **${shares}** share(s) of **${clan.abbr}**.\n` +
-      `You'll receive \`${result.payout.toLocaleString()}\` — that's \`${result.grossPayout.toLocaleString()}\` ` +
-      `minus a \`${result.tax.toLocaleString()}\` (${feePct}%) transaction fee. ` +
-      `${clan.abbr}'s clan owner has been notified to pay you in-game — they'll confirm once it's sent.`,
-  });
-
-  const clanGuild = await interaction.client.guilds.fetch(guildId).catch(() => null);
-  const owner = clanGuild ? await clanGuild.fetchOwner().catch(() => null) : null;
-  if (owner) {
-    const embed = new EmbedBuilder()
-      .setTitle(`📉 Pending Sell — ${clan.abbr}`)
-      .setColor(0xed4245)
-      .setDescription(
-        `**${interaction.user.tag}** (IGN: \`${ign}\`) wants to sell **${shares}** share(s).\n` +
-        `Pay them \`${result.payout.toLocaleString()}\` in-game (net of the ${feePct}% fee), then click below to confirm.`
-      );
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`stock_markpaid_${guildId}_${result.txId}`)
-        .setLabel("Mark Paid")
-        .setStyle(ButtonStyle.Success)
-    );
-    await owner.send({ embeds: [embed], components: [row] })
-      .then(() => console.log(`[stock] 📨 DM'd owner ${owner.id} to confirm pending sell ${result.txId}`))
-      .catch(() => {
-        console.warn(`[stock] ⚠️ Could not DM clan owner ${owner.id} about pending sell ${result.txId}`);
-      });
-  } else {
-    console.warn(`[stock] ⚠️ No owner reachable to notify for pending sell ${result.txId} (guild ${guildId})`);
-  }
-}
-
 async function modalHandler(interaction) {
   if (interaction.customId.startsWith("stock_buy_modal_")) {
     const guildId = interaction.customId.slice("stock_buy_modal_".length);
     return handleBuyModal(interaction, guildId);
-  }
-  if (interaction.customId.startsWith("stock_sell_modal_")) {
-    const guildId = interaction.customId.slice("stock_sell_modal_".length);
-    return handleSellModal(interaction, guildId);
   }
 }
 
@@ -541,4 +558,5 @@ module.exports = {
 
   buttonHandler,
   modalHandler,
+  selectMenuHandler,
 };

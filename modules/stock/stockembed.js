@@ -1,7 +1,7 @@
 // modules/stock/stockembed.js
 // Embed builders for the clan stock market (/stock post, /stock portfolio).
 
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require("discord.js");
 const { formatMoney } = require("../servers/serverembed");
 const { TAX_RATE, SELL_COOLDOWN_MS } = require("./stocklogic");
 
@@ -99,54 +99,102 @@ function createMarketButtons(guildId, mode = "ohlc") {
   );
 }
 
-/** Ephemeral portfolio view for a member's holdings across all clans. */
-function createPortfolioEmbed(discordId, holdings, clansById) {
+function clanLabel(clansById, guildId) {
+  const clan = clansById[guildId];
+  return clan ? `${clan.abbr}` : guildId;
+}
+
+function durationLabel(ms) {
+  const totalMin = Math.max(1, Math.ceil(ms / 60000));
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * Ephemeral view of a member's positions (each buy is its own line). Shared by
+ * /stock portfolio (all clans) and the market Sell button (one clan).
+ * @param {Array} positions - enriched positions from stocklogic.getUserPositions
+ * @param {object} clansById
+ * @param {{ title?: string, scopeNote?: string }} [opts]
+ */
+function createPortfolioEmbed(positions, clansById, opts = {}) {
   const embed = new EmbedBuilder()
-    .setTitle("📊 Your Stock Portfolio")
+    .setTitle(opts.title || "📊 Your Stock Portfolio")
     .setColor(UP_EMBED_COLOR);
 
-  if (!holdings.length) {
-    embed.setDescription("You don't own any clan stock yet. Find a clan's `/stock` post to invest!");
+  if (!positions.length) {
+    embed.setDescription(opts.scopeNote || "You don't own any clan stock yet. Find a clan's `/stock` post to invest!");
     return embed;
   }
 
-  let totalInvested = 0;
-  let totalValue = 0;
+  let totalPaid = 0;
+  let totalNet = 0;
 
-  const fields = holdings.map((h) => {
-    const clan = clansById[h.guildId];
-    const label = clan ? `${clan.abbr}: ${clan.name}` : h.guildId;
-    totalInvested += h.invested;
-    totalValue += h.currentValue;
+  const fields = positions.slice(0, 25).map((p, i) => {
+    totalPaid += p.buyCost;
+    totalNet += p.netIfSold;
 
-    const up = h.profit >= 0;
+    const up = p.pnl >= 0;
     const arrow = up ? "🔺" : "🔻";
-    const sign = h.profit > 0 ? "+" : "";
+    const sign = p.pnl > 0 ? "+" : "";
+    const statusNote = p.status === "pending" ? " ⏳ *pending sale*" : "";
 
     const value = [
-      `Shares: \`${h.shares.toLocaleString()}\``,
-      `Avg buy price: \`${formatMoney(h.avgBuyPrice)}\``,
-      `Total paid: \`${formatMoney(h.invested)}\``,
-      `Current price: \`${formatMoney(h.currentPrice)}\``,
-      `Current value: \`${formatMoney(h.currentValue)}\``,
-      `P/L: ${arrow} \`${sign}${formatMoney(h.profit)}\` (${sign}${h.profitPercent.toFixed(2)}%)`,
+      `\`${p.shares.toLocaleString()}\` shares · bought @ \`${formatMoney(p.buyPricePerShare)}\``,
+      `Paid: \`${formatMoney(p.buyCost)}\``,
+      `Now @ \`${formatMoney(p.currentPrice)}\` → if sold: \`${formatMoney(p.netIfSold)}\``,
+      `P/L: ${arrow} \`${sign}${formatMoney(p.pnl)}\` (${sign}${p.pnlPercent.toFixed(2)}%)`,
     ].join("\n");
 
-    return { name: label, value, inline: false };
+    return { name: `#${i + 1} · Buy · ${clanLabel(clansById, p.guildId)}${statusNote}`, value, inline: false };
   });
 
   embed.addFields(fields);
 
-  const totalProfit = totalValue - totalInvested;
-  const tUp = totalProfit >= 0;
-  const tSign = totalProfit > 0 ? "+" : "";
+  const totalPnl = totalNet - totalPaid;
+  const tUp = totalPnl >= 0;
+  const tSign = totalPnl > 0 ? "+" : "";
   embed.setDescription(
-    `**Total paid:** \`${formatMoney(totalInvested)}\`\n` +
-    `**Current value:** \`${formatMoney(totalValue)}\`\n` +
-    `**Total P/L:** ${tUp ? "🔺" : "🔻"} \`${tSign}${formatMoney(totalProfit)}\``
+    `**Total paid:** \`${formatMoney(totalPaid)}\`\n` +
+    `**Value if all sold:** \`${formatMoney(totalNet)}\`\n` +
+    `**Total P/L:** ${tUp ? "🔺" : "🔻"} \`${tSign}${formatMoney(totalPnl)}\``
   );
 
   return embed;
+}
+
+/**
+ * A select menu to close (sell) a specific position. Only positions that are
+ * open and past their hold cooldown are offered.
+ * @param {Array} positions - enriched positions
+ * @param {object} clansById
+ * @returns {ActionRowBuilder|null} null if nothing is sellable right now
+ */
+function createSellPositionMenu(positions, clansById) {
+  const sellable = positions.filter((p) => p.status === "open" && p.cooldownMs <= 0).slice(0, 25);
+  if (!sellable.length) return null;
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("stock_sellpos")
+    .setPlaceholder("Sell a position…")
+    .addOptions(
+      sellable.map((p, i) => ({
+        label: `Sell ${p.shares.toLocaleString()} × ${clanLabel(clansById, p.guildId)} (@ ${formatMoney(p.buyPricePerShare)})`.slice(0, 100),
+        description: `Now worth ${formatMoney(p.netIfSold)} · P/L ${p.pnl >= 0 ? "+" : ""}${formatMoney(p.pnl)}`.slice(0, 100),
+        value: p.positionId,
+      }))
+    );
+
+  return new ActionRowBuilder().addComponents(menu);
+}
+
+/** Short note listing positions still in their hold cooldown (for context). */
+function cooldownNote(positions) {
+  const cooling = positions.filter((p) => p.status === "open" && p.cooldownMs > 0);
+  if (!cooling.length) return null;
+  return `⏳ ${cooling.length} position(s) still in their hold period and can't be sold yet (earliest in ${durationLabel(Math.min(...cooling.map((p) => p.cooldownMs)))}).`;
 }
 
 module.exports = {
@@ -154,4 +202,6 @@ module.exports = {
   createMarketEmbed,
   createMarketButtons,
   createPortfolioEmbed,
+  createSellPositionMenu,
+  cooldownNote,
 };

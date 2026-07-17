@@ -188,6 +188,13 @@ module.exports = {
     // ----------------------------------------------------------
     if (interaction.isStringSelectMenu()) {
       try {
+        // Stock market — sell-a-position select menu
+        if (interaction.customId === "stock_sellpos") {
+          const cmd = client.commands.get("stock");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "stock");
+          return await cmd.selectMenuHandler(interaction);
+        }
+
         // /shop buy select
         if (interaction.customId === "shop_buy_select") {
           const cmd = client.commands.get("shop");

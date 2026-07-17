@@ -120,6 +120,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // Onboarding flow buttons (next / joined)
+        if (interaction.customId.startsWith("onb|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "onboarding");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // ── /shop category buttons (badges / capes / pets) ───
         if (
           interaction.customId === "shop_badge" ||
@@ -245,6 +252,13 @@ module.exports = {
         ) {
           const cmd = client.commands.get("application");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "application");
+          return await cmd.modalHandler(interaction);
+        }
+
+        // Onboarding config modals (add-channel title + info)
+        if (interaction.customId.startsWith("onbcfg|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "onboarding");
           return await cmd.modalHandler(interaction);
         }
 

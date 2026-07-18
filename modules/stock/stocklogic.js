@@ -183,8 +183,11 @@ function listShares(guildId, amount) {
   const n = Math.min(Math.max(0, Math.floor(amount)), available);
   if (n <= 0) return { success: false, reason: "nothing_to_list", available };
   stock.sharesForSale = (Number(stock.sharesForSale) || 0) + n;
+  // Listing adds supply to the market — nudge the price down like a sell.
+  const before = stock.currentPrice;
+  const after = priceEngine.applyTradeImpact(stock, "sell", n);
   saveStockRecord(guildId, stock);
-  console.log(`[stocklogic] 🏷️ List: ${guildId} listed ${n} share(s) for sale (now ${stock.sharesForSale} available)`);
+  console.log(`[stocklogic] 🏷️ List: ${guildId} listed ${n} share(s) for sale (now ${stock.sharesForSale} available); price ${before} → ${after}`);
   return { success: true, listed: n, sharesForSale: stock.sharesForSale };
 }
 

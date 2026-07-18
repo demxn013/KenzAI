@@ -29,9 +29,9 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange, ctx = 
   const currencyLabel = stock.server === "donutsmp" ? "DonutSMP money" : stock.server;
   const sharesForSale = Number(stock.sharesForSale) || 0;
   const outstanding = Number(stock.outstandingShares) || 0;
-  const ownerHolding = Number(ctx.ownerHolding) || 0;
+  const ownerHolding = Number(ctx.ownerHolding) || 0;      // total the owner owns
+  const ownerKept = Math.max(0, ownerHolding - sharesForSale); // not listed for sale
   const investorHeld = Math.max(0, outstanding - ownerHolding);
-  const payTo = ctx.ownerIgn || `${clan.abbr}'s owner`;
 
   const change = priceChange || { absolute: 0, percent: 0, direction: "flat" };
   const arrow = change.direction === "down" ? "🔻" : change.direction === "up" ? "🔺" : "▪️";
@@ -54,8 +54,8 @@ function createMarketEmbed(clan, stock, chartAttachmentName, priceChange, ctx = 
     .addFields(
       { name: "💰 Price per share", value: `\`${formatMoney(stock.currentPrice)}\` ${currencyLabel}`, inline: false },
       { name: "📈 Price change", value: changeText, inline: false },
-      { name: "🛒 Shares for sale (buy these)", value: `\`${sharesForSale.toLocaleString()}\``, inline: false },
-      { name: "👑 Owner holds", value: `\`${ownerHolding.toLocaleString()}\``, inline: false },
+      { name: "🛒 For sale (buy these)", value: `\`${sharesForSale.toLocaleString()}\``, inline: false },
+      { name: "👑 Owner keeps (not for sale)", value: `\`${ownerKept.toLocaleString()}\``, inline: false },
       { name: "👥 Held by investors", value: `\`${investorHeld.toLocaleString()}\``, inline: false },
       { name: "📊 Total shares", value: `\`${outstanding.toLocaleString()}\``, inline: false },
       { name: "💳 How to buy", value: payValue, inline: false },
@@ -125,19 +125,38 @@ function durationLabel(ms) {
  * @param {{ title?: string, scopeNote?: string }} [opts]
  */
 function createPortfolioEmbed(positions, clansById, opts = {}) {
+  const ownerHoldings = opts.ownerHoldings || [];
   const embed = new EmbedBuilder()
     .setTitle(opts.title || "📊 Your Stock Portfolio")
     .setColor(UP_EMBED_COLOR);
 
-  if (!positions.length) {
+  if (!positions.length && !ownerHoldings.length) {
     embed.setDescription(opts.scopeNote || "You don't own any clan stock yet. Find a clan's `/stock` post to invest!");
+    return embed;
+  }
+
+  // Owner holdings first — the clan's shares you own as its owner.
+  const ownerFields = ownerHoldings.slice(0, 10).map((oh) => {
+    const kept = Math.max(0, oh.ownerHolding - oh.sharesForSale);
+    return {
+      name: `👑 ${clanLabel(clansById, oh.guildId)} — your clan (owner)`,
+      value:
+        `You own \`${oh.ownerHolding.toLocaleString()}\` shares · worth \`${formatMoney(oh.marketValue)}\` @ \`${formatMoney(oh.currentPrice)}\`\n` +
+        `\`${oh.sharesForSale.toLocaleString()}\` listed for sale · \`${kept.toLocaleString()}\` kept — use **Sell** on the market post to list more.`,
+      inline: false,
+    };
+  });
+
+  if (!positions.length) {
+    embed.addFields(ownerFields);
+    embed.setDescription("You don't hold any *bought* positions, but you own your own clan's shares:");
     return embed;
   }
 
   let totalPaid = 0;
   let totalNet = 0;
 
-  const fields = positions.slice(0, 25).map((p, i) => {
+  const fields = positions.slice(0, 25 - ownerFields.length).map((p, i) => {
     totalPaid += p.buyCost;
     totalNet += p.netIfSold;
 
@@ -156,7 +175,7 @@ function createPortfolioEmbed(positions, clansById, opts = {}) {
     return { name: `#${i + 1} · Buy · ${clanLabel(clansById, p.guildId)}${pendingNote}`, value, inline: false };
   });
 
-  embed.addFields(fields);
+  embed.addFields([...ownerFields, ...fields]);
 
   const totalPnl = totalNet - totalPaid;
   const tUp = totalPnl >= 0;

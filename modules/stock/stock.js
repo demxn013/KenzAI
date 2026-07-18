@@ -246,11 +246,34 @@ async function handleToggle(interaction, mode, guildId) {
 
 // ---- /stock portfolio -----------------------------------------------------
 
+/** Clans the given user owns (as guild owner) with their derived holding. */
+function getOwnerHoldings(client, userId) {
+  const all = stores.clan_stocks.readMap();
+  const out = [];
+  for (const gid of Object.keys(all)) {
+    const stock = all[gid];
+    const guild = client.guilds.cache.get(gid);
+    if (!guild || guild.ownerId !== userId) continue;
+    const ownerHolding = stocklogic.getOwnerHolding(stock);
+    if (ownerHolding <= 0) continue;
+    const currentPrice = Number(stock.currentPrice) || 0;
+    out.push({
+      guildId: gid,
+      ownerHolding,
+      sharesForSale: Number(stock.sharesForSale) || 0,
+      currentPrice,
+      marketValue: ownerHolding * currentPrice,
+    });
+  }
+  return out;
+}
+
 async function handlePortfolio(interaction) {
   const positions = stocklogic.getUserPositions(interaction.user.id);
-  console.log(`[stock] 📁 /stock portfolio by ${interaction.user.tag} — ${positions.length} position(s)`);
+  const ownerHoldings = getOwnerHoldings(interaction.client, interaction.user.id);
+  console.log(`[stock] 📁 /stock portfolio by ${interaction.user.tag} — ${positions.length} position(s), ${ownerHoldings.length} owned clan(s)`);
   const clans = readClans();
-  const embed = createPortfolioEmbed(positions, clans);
+  const embed = createPortfolioEmbed(positions, clans, { ownerHoldings });
   const note = cooldownNote(positions);
   if (note) embed.setFooter({ text: note });
 
@@ -455,7 +478,12 @@ async function handleListQtyModal(interaction, guildId) {
   }
 
   await interaction.editReply({ content: `✅ Listed **${result.listed.toLocaleString()}** share(s) for sale — **${result.sharesForSale.toLocaleString()}** now available for investors to buy.` });
-  await refreshMarketByRef(interaction.client, guildId).catch(() => {});
+  // The Sell button lives on the market post, so interaction.message is it.
+  if (interaction.message) {
+    await refreshMarketMessage(interaction.message, guildId).catch(() => {});
+  } else {
+    await refreshMarketByRef(interaction.client, guildId).catch(() => {});
+  }
 }
 
 /** DM the clan owner a Mark-Paid prompt for a pending sell. */

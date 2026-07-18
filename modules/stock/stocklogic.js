@@ -18,9 +18,10 @@ const SERVER_PRICE_PER_SHARE = {
   donutsmp: 100000,
 };
 
-// A flat transaction fee kept by the empire owner (DEMXN13) on every trade:
-// buys cost this much extra, sells pay out this much less. It gives the owner
-// a margin on both sides so payouts are easier to cover.
+// A flat transaction fee the CLAN OWNER keeps on every trade (they are the
+// market maker — investors pay the clan owner, not the empire): buyers pay
+// this much extra on top, sellers are paid this much less. It gives the clan
+// owner a margin on both sides.
 const TAX_RATE = 0.02;
 
 // Minimum time a member must hold shares after their most recent buy before
@@ -79,9 +80,9 @@ function reconcileResidents(stock, clan) {
   const lastSeen = Number(stock.lastResidentsSeen) || 0;
   const delta = residents - lastSeen;
   if (delta > 0) {
-    const newShares = delta * SHARES_PER_MEMBER;
-    stock.treasuryShares = (Number(stock.treasuryShares) || 0) + newShares;
-    stock.outstandingShares = (Number(stock.outstandingShares) || 0) + newShares;
+    // New member shares are added to total supply — all owned by the clan
+    // owner. They do NOT auto-list for sale; the owner lists what they choose.
+    stock.outstandingShares = (Number(stock.outstandingShares) || 0) + delta * SHARES_PER_MEMBER;
   }
   stock.lastResidentsSeen = residents;
   return stock;
@@ -112,8 +113,8 @@ function getOrCreateStockRecord(guildId) {
       server: serverId,
       basePricePerShare,
       currentPrice: basePricePerShare,
-      treasuryShares: 0,
-      outstandingShares: 0,
+      sharesForSale: 0,        // shares the owner has listed and are buyable now
+      outstandingShares: 0,     // total supply (all owned by owner minus investor holdings)
       lastResidentsSeen: 0,
       candleIntervalMinutes: priceEngine.DEFAULT_CANDLE_INTERVAL_MINUTES,
       candles: [],
@@ -126,11 +127,11 @@ function getOrCreateStockRecord(guildId) {
     console.log(`[stocklogic] 🆕 Created stock record for ${clan.abbr} (${guildId}) on ${serverId} @ ${basePricePerShare}/share`);
   }
 
-  const before = Number(stock.treasuryShares) || 0;
+  const before = Number(stock.outstandingShares) || 0;
   reconcileResidents(stock, clan);
-  const added = (Number(stock.treasuryShares) || 0) - before;
+  const added = (Number(stock.outstandingShares) || 0) - before;
   if (added > 0) {
-    console.log(`[stocklogic] 📈 Reconciled ${clan.abbr}: +${added} treasury shares (now ${stock.treasuryShares}, outstanding ${stock.outstandingShares})`);
+    console.log(`[stocklogic] 📈 Reconciled ${clan.abbr}: +${added} shares to owner (outstanding now ${stock.outstandingShares})`);
   }
 
   saveStockRecord(guildId, stock);
@@ -140,12 +141,51 @@ function getOrCreateStockRecord(guildId) {
 
 /** Explicit hook called right after a member is accepted into a clan. */
 function onResidentAdded(guildId) {
-  console.log(`[stocklogic] 👤 Resident added to clan ${guildId} — issuing ${SHARES_PER_MEMBER} shares to treasury`);
+  console.log(`[stocklogic] 👤 Resident added to clan ${guildId} — issuing ${SHARES_PER_MEMBER} shares to the owner`);
   const result = getOrCreateStockRecord(guildId);
   if (!result.success) {
     console.warn(`[stocklogic] ⚠️ Could not issue shares for ${guildId}: ${result.reason}`);
   }
   return result.success;
+}
+
+// ---- Ownership split ---------------------------------------------------
+// The clan owner owns every share not held by investors. Of the owner's
+// shares, `sharesForSale` are listed and buyable; the rest are unlisted.
+
+/** Total shares currently held by investors (across all their positions). */
+function getInvestorHeldTotal(guildId) {
+  const all = stores.stock_holdings.readMap();
+  return Object.values(all)
+    .filter((p) => p && p.positionId && p.guildId === guildId)
+    .reduce((sum, p) => sum + (Number(p.shares) || 0), 0);
+}
+
+/** Shares the clan owner owns (= total supply − investor holdings). */
+function getOwnerHolding(stock) {
+  const outstanding = Number(stock?.outstandingShares) || 0;
+  return Math.max(0, outstanding - getInvestorHeldTotal(stock.guildId));
+}
+
+/** Owner shares not yet listed for sale (can still be listed). */
+function getOwnerUnlisted(stock) {
+  return Math.max(0, getOwnerHolding(stock) - (Number(stock.sharesForSale) || 0));
+}
+
+/**
+ * Owner lists more of their shares for sale (adds to the buyable pool).
+ * @returns {{ success, listed?, sharesForSale?, reason?, available? }}
+ */
+function listShares(guildId, amount) {
+  const stock = getStockRecord(guildId);
+  if (!stock) return { success: false, reason: "no_stock_record" };
+  const available = getOwnerUnlisted(stock);
+  const n = Math.min(Math.max(0, Math.floor(amount)), available);
+  if (n <= 0) return { success: false, reason: "nothing_to_list", available };
+  stock.sharesForSale = (Number(stock.sharesForSale) || 0) + n;
+  saveStockRecord(guildId, stock);
+  console.log(`[stocklogic] 🏷️ List: ${guildId} listed ${n} share(s) for sale (now ${stock.sharesForSale} available)`);
+  return { success: true, listed: n, sharesForSale: stock.sharesForSale };
 }
 
 // ---- Positions ---------------------------------------------------------
@@ -189,11 +229,13 @@ function getPositionCooldownRemaining(position) {
 /** Add live valuation + P&L figures to a position for display. */
 function enrichPosition(p) {
   const shares = Number(p.shares) || 0;
+  const pendingShares = Number(p.pendingShares) || 0;
+  const sellableShares = Math.max(0, shares - pendingShares);
   const buyCost = Number(p.buyCost) || 0;
   const stock = getStockRecord(p.guildId);
   const currentPrice = stock ? Number(stock.currentPrice) || 0 : 0;
   const currentValue = shares * currentPrice;
-  const netIfSold = computeSellPayout(shares, currentPrice).net; // payout after fee
+  const netIfSold = computeSellPayout(shares, currentPrice).net; // payout after fee (whole position)
   const pnl = netIfSold - buyCost;
   const pnlPercent = buyCost > 0 ? (pnl / buyCost) * 100 : 0;
   return {
@@ -202,10 +244,11 @@ function enrichPosition(p) {
     discordId: p.discordId,
     ign: p.ign,
     shares,
+    pendingShares,
+    sellableShares,
     buyPricePerShare: Number(p.buyPricePerShare) || 0,
     buyCost,
     openedAt: p.openedAt,
-    status: p.status || "open",
     currentPrice,
     currentValue,
     netIfSold,
@@ -235,10 +278,10 @@ function createPosition({ guildId, discordId, ign, shares, buyPricePerShare, buy
     discordId,
     ign: ign || null,
     shares,
+    pendingShares: 0,
     buyPricePerShare: Math.round(buyPricePerShare),
     buyCost: Math.max(0, Math.round(buyCost)),
     openedAt: new Date().toISOString(),
-    status: "open",
   };
   stores.stock_holdings.writeMap(all);
   return positionId;
@@ -253,29 +296,30 @@ function logTransaction(entry) {
 }
 
 /**
- * Reserve treasury shares for a pending buy order (optimistic — prevents two
- * concurrent buys from both passing an availability check). Refund with
- * refundTreasuryShares() on timeout/failure.
+ * Reserve listed-for-sale shares for a pending buy order (optimistic —
+ * prevents two concurrent buys from both passing an availability check).
+ * Refund with refundSaleShares() on timeout/failure.
  */
-function reserveTreasuryShares(guildId, shares) {
+function reserveSaleShares(guildId, shares) {
   const stock = getStockRecord(guildId);
   if (!stock) return { success: false, reason: "no_stock_record" };
-  if ((Number(stock.treasuryShares) || 0) < shares) {
-    console.log(`[stocklogic] 🚫 Reserve rejected for ${guildId}: wanted ${shares}, only ${stock.treasuryShares} in treasury`);
-    return { success: false, reason: "insufficient_treasury" };
+  const available = Number(stock.sharesForSale) || 0;
+  if (available < shares) {
+    console.log(`[stocklogic] 🚫 Reserve rejected for ${guildId}: wanted ${shares}, only ${available} listed for sale`);
+    return { success: false, reason: "insufficient_available", available };
   }
-  stock.treasuryShares -= shares;
+  stock.sharesForSale -= shares;
   saveStockRecord(guildId, stock);
-  console.log(`[stocklogic] 🔒 Reserved ${shares} share(s) for ${guildId} (treasury now ${stock.treasuryShares})`);
+  console.log(`[stocklogic] 🔒 Reserved ${shares} listed share(s) for ${guildId} (${stock.sharesForSale} still available)`);
   return { success: true };
 }
 
-function refundTreasuryShares(guildId, shares) {
+function refundSaleShares(guildId, shares) {
   const stock = getStockRecord(guildId);
   if (!stock) return false;
-  stock.treasuryShares = (Number(stock.treasuryShares) || 0) + shares;
+  stock.sharesForSale = (Number(stock.sharesForSale) || 0) + shares;
   saveStockRecord(guildId, stock);
-  console.log(`[stocklogic] 🔓 Refunded ${shares} reserved share(s) to ${guildId} treasury (now ${stock.treasuryShares})`);
+  console.log(`[stocklogic] 🔓 Refunded ${shares} reserved share(s) to ${guildId} sale pool (now ${stock.sharesForSale})`);
   return true;
 }
 
@@ -306,17 +350,15 @@ function completeBuy({ guildId, discordId, ign, shares, pricePerShare, paid }) {
 }
 
 /**
- * Initiate the sale of an ENTIRE position at the current market price. Marks
- * the position pending and creates a durable pending-sell awaiting owner
- * payment. Payout = position shares × current price − 2% fee.
+ * Initiate the sale of `qty` shares from a position at the current market
+ * price (partial or whole). Reserves those shares (pendingShares) so they
+ * can't be double-sold, and creates a durable pending-sell awaiting the clan
+ * owner's payment. Payout = qty × current price − 2% fee.
  */
-function createPendingSellForPosition(positionId, discordId) {
+function createPendingSellForPosition(positionId, discordId, qty) {
   const position = getPosition(positionId);
   if (!position || position.discordId !== discordId || !position.positionId) {
     return { success: false, reason: "not_found" };
-  }
-  if (position.status === "pending") {
-    return { success: false, reason: "already_pending" };
   }
 
   const cooldown = getPositionCooldownRemaining(position);
@@ -324,18 +366,25 @@ function createPendingSellForPosition(positionId, discordId) {
     return { success: false, reason: "cooldown", cooldownMs: cooldown };
   }
 
+  const totalShares = Number(position.shares) || 0;
+  const alreadyPending = Number(position.pendingShares) || 0;
+  const sellable = totalShares - alreadyPending;
+  const shares = Math.floor(Number(qty) || 0);
+  if (shares <= 0) return { success: false, reason: "bad_qty", sellable };
+  if (shares > sellable) return { success: false, reason: "too_many", sellable };
+
   const stock = getStockRecord(position.guildId);
   if (!stock) return { success: false, reason: "no_stock_record" };
   const pricePerShare = Number(stock.currentPrice) || 0;
-  const shares = Number(position.shares) || 0;
   const { base, tax, net } = computeSellPayout(shares, pricePerShare);
+  // Proportional cost basis of the shares being sold (for P&L display).
+  const soldBuyCost = totalShares > 0 ? Math.round((Number(position.buyCost) || 0) * shares / totalShares) : 0;
 
-  // Mark the position pending so it can't be double-sold.
+  // Reserve the shares on the position so they can't be double-sold.
   const holdings = stores.stock_holdings.readMap();
   const txId = genTxId();
   if (holdings[positionId]) {
-    holdings[positionId].status = "pending";
-    holdings[positionId].pendingTxId = txId;
+    holdings[positionId].pendingShares = alreadyPending + shares;
     stores.stock_holdings.writeMap(holdings);
   }
 
@@ -348,7 +397,7 @@ function createPendingSellForPosition(positionId, discordId) {
     ign: position.ign,
     shares,
     pricePerShare,
-    buyCost: Number(position.buyCost) || 0,
+    soldBuyCost,
     grossPayout: base,
     tax,
     payout: net,
@@ -356,8 +405,8 @@ function createPendingSellForPosition(positionId, discordId) {
     createdAt: new Date().toISOString(),
   };
   stores.stock_pending_sells.writeMap(all);
-  console.log(`[stocklogic] 📉 SELL pending: ${discordId} (${position.ign}) closing position ${positionId} — ${shares} share(s) of ${position.guildId}, net payout ${net} (gross ${base} − tax ${tax}) [tx ${txId}]`);
-  return { success: true, txId, shares, payout: net, grossPayout: base, tax, guildId: position.guildId, buyCost: Number(position.buyCost) || 0 };
+  console.log(`[stocklogic] 📉 SELL pending: ${discordId} (${position.ign}) selling ${shares}/${totalShares} share(s) of position ${positionId} (${position.guildId}), net payout ${net} (gross ${base} − tax ${tax}) [tx ${txId}]`);
+  return { success: true, txId, shares, payout: net, grossPayout: base, tax, guildId: position.guildId, soldBuyCost };
 }
 
 function getPendingSell(txId) {
@@ -365,7 +414,12 @@ function getPendingSell(txId) {
   return all[txId] || null;
 }
 
-/** Owner has paid the investor in-game — finalize the sell and close the position. */
+/**
+ * Clan owner has paid the investor in-game — finalize the sell: debit the
+ * sold shares from the position (closing it if it hits zero) and return them
+ * to the owner's holding (they can re-list). Reduces the position's cost basis
+ * proportionally so remaining shares keep the right average.
+ */
 function markSellPaid(txId) {
   const all = stores.stock_pending_sells.readMap();
   const pending = all[txId];
@@ -376,19 +430,30 @@ function markSellPaid(txId) {
 
   const holdings = stores.stock_holdings.readMap();
   const position = pending.positionId ? holdings[pending.positionId] : null;
-  const shares = position ? Number(position.shares) || 0 : Number(pending.shares) || 0;
+  const soldShares = Number(pending.shares) || 0;
 
-  // Close (remove) the position.
   if (position) {
-    delete holdings[pending.positionId];
+    const posShares = Number(position.shares) || 0;
+    const posCost = Number(position.buyCost) || 0;
+    const debited = Math.min(posShares, soldShares);
+    const remaining = posShares - debited;
+    if (remaining <= 0) {
+      delete holdings[pending.positionId];
+    } else {
+      position.shares = remaining;
+      position.buyCost = Math.round(posCost * remaining / posShares);
+      position.pendingShares = Math.max(0, (Number(position.pendingShares) || 0) - debited);
+    }
     stores.stock_holdings.writeMap(holdings);
   }
 
+  // Shares return to the clan owner's holding automatically (owner holding =
+  // outstanding − investor holdings, which just dropped). They are NOT
+  // auto-listed for sale — the owner re-lists if they want.
   const stock = getStockRecord(pending.guildId);
   if (stock) {
-    stock.treasuryShares = (Number(stock.treasuryShares) || 0) + shares;
     const before = stock.currentPrice;
-    const after = priceEngine.applyTradeImpact(stock, "sell", shares);
+    const after = priceEngine.applyTradeImpact(stock, "sell", soldShares);
     saveStockRecord(pending.guildId, stock);
     console.log(`[stocklogic] 💹 SELL impact: ${pending.guildId} price ${before} → ${after}`);
   }
@@ -402,15 +467,15 @@ function markSellPaid(txId) {
     ign: pending.ign,
     positionId: pending.positionId,
     type: "sell",
-    shares,
+    shares: soldShares,
     pricePerShare: pending.pricePerShare,
     total: pending.payout,
     status: "confirmed",
   });
 
   const remainingPositions = getOpenPositionCount(pending.guildId, pending.discordId);
-  console.log(`[stocklogic] ✅ SELL paid: ${pending.discordId} (${pending.ign}) closed position ${pending.positionId} — ${shares} share(s) of ${pending.guildId} for ${pending.payout} [tx ${txId}] — ${remainingPositions} position(s) left`);
-  return { success: true, remainingPositions, shares, payout: pending.payout, guildId: pending.guildId, discordId: pending.discordId };
+  console.log(`[stocklogic] ✅ SELL paid: ${pending.discordId} (${pending.ign}) sold ${soldShares} share(s) of ${pending.guildId} for ${pending.payout} [tx ${txId}] — ${remainingPositions} position(s) left`);
+  return { success: true, remainingPositions, shares: soldShares, payout: pending.payout, guildId: pending.guildId, discordId: pending.discordId };
 }
 
 /**
@@ -437,10 +502,10 @@ function migrateLegacyHoldings() {
       discordId: v.discordId,
       ign: v.ign || null,
       shares,
+      pendingShares: 0,
       buyPricePerShare,
       buyCost,
       openedAt: v.lastBuyAt || v.updatedAt || new Date().toISOString(),
-      status: "open",
     };
     delete all[key];
     migrated++;
@@ -448,6 +513,24 @@ function migrateLegacyHoldings() {
   if (migrated > 0) {
     stores.stock_holdings.writeMap(all);
     console.log(`[stocklogic] 🔀 Migrated ${migrated} legacy holding(s) into positions`);
+  }
+
+  // Move any stock records off the old `treasuryShares` field: the auto-filled
+  // treasury is gone — the clan owner now holds all unsold shares and lists
+  // what they choose, so start every clan's listed pool at 0.
+  const clanStocks = stores.clan_stocks.readMap();
+  let migratedStocks = 0;
+  for (const gid of Object.keys(clanStocks)) {
+    const s = clanStocks[gid];
+    if (s && typeof s.treasuryShares !== "undefined" && typeof s.sharesForSale === "undefined") {
+      s.sharesForSale = 0;
+      delete s.treasuryShares;
+      migratedStocks++;
+    }
+  }
+  if (migratedStocks > 0) {
+    stores.clan_stocks.writeMap(clanStocks);
+    console.log(`[stocklogic] 🔀 Reset ${migratedStocks} clan stock(s) to owner-listed sales (sharesForSale=0)`);
   }
 
   // Legacy pending sells (no positionId) can't map to a position — drop them
@@ -497,6 +580,10 @@ module.exports = {
   saveStockRecord,
   getOrCreateStockRecord,
   onResidentAdded,
+  getInvestorHeldTotal,
+  getOwnerHolding,
+  getOwnerUnlisted,
+  listShares,
   getPosition,
   getUserPositions,
   getUserPositionsInClan,
@@ -504,8 +591,8 @@ module.exports = {
   getPositionCooldownRemaining,
   createPosition,
   logTransaction,
-  reserveTreasuryShares,
-  refundTreasuryShares,
+  reserveSaleShares,
+  refundSaleShares,
   completeBuy,
   createPendingSellForPosition,
   getPendingSell,

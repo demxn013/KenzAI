@@ -269,10 +269,11 @@ module.exports = {
           return await cmd.modalHandler(interaction);
         }
 
-        // Stock market modals (buy/sell)
+        // Stock market modals (buy, list shares, sell quantity)
         if (
           interaction.customId.startsWith("stock_buy_modal_") ||
-          interaction.customId.startsWith("stock_sell_modal_")
+          interaction.customId.startsWith("stock_listqty_") ||
+          interaction.customId.startsWith("stock_sellqty_")
         ) {
           const cmd = client.commands.get("stock");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "stock");

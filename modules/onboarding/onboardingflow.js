@@ -37,6 +37,15 @@ const ORDER = ["intro", "commands", "clanTour", "joinYazanaki", "empireTour", "c
 const AUTO_CLOSE_DELAY_MS = 30 * 1000; // 30 seconds
 const AUTO_CLOSE_SECONDS = Math.round(AUTO_CLOSE_DELAY_MS / 1000);
 
+// If the applicant doesn't advance a step within this window, onboarding stops
+// and they are automatically rejected for inactivity.
+const STEP_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+const STEP_TIMEOUT_MINUTES = Math.round(STEP_TIMEOUT_MS / 60000);
+
+// In-memory per-ticket inactivity timers (ticketChannelId -> timeout handle).
+// Not persisted; a bot restart cancels pending timeouts (acceptable for 3 min).
+const stepTimers = new Map();
+
 // ============================================================
 // STATE HELPERS (persisted on the ticket's cache entry)
 // ============================================================
@@ -78,6 +87,96 @@ async function sendNextJump(interaction, client, loc) {
       .catch(() => {});
   } catch (_) {
     /* best-effort — the next step is already posted and pings them anyway */
+  }
+}
+
+// ============================================================
+// INACTIVITY TIMEOUT (auto-reject on no response)
+// ============================================================
+
+function clearStepTimeout(ticketChannelId) {
+  const handle = stepTimers.get(ticketChannelId);
+  if (handle) {
+    clearTimeout(handle);
+    stepTimers.delete(ticketChannelId);
+  }
+}
+
+/**
+ * (Re)arm the inactivity timer for the current step. Any previous timer for
+ * this ticket is cleared first. The armed step's message id is captured so a
+ * late-firing timer can tell whether the applicant already advanced.
+ */
+function armStepTimeout(client, ticketChannel, state, discordId) {
+  clearStepTimeout(ticketChannel.id);
+  const stepMessageId = state.activeMessage ? state.activeMessage.messageId : null;
+  state.stepDeadline = Date.now() + STEP_TIMEOUT_MS;
+  const handle = setTimeout(
+    () =>
+      handleStepTimeout(client, ticketChannel.id, discordId, stepMessageId).catch((err) =>
+        console.warn(`[onboarding] ⚠️ Inactivity timeout failed:`, err?.message)
+      ),
+    STEP_TIMEOUT_MS
+  );
+  stepTimers.set(ticketChannel.id, handle);
+}
+
+/**
+ * Fired when the applicant hasn't advanced within STEP_TIMEOUT_MS. Stops
+ * onboarding and auto-rejects the applicant for inactivity. Defensive: does
+ * nothing if onboarding already ended, the applicant advanced, or staff already
+ * processed the application.
+ */
+async function handleStepTimeout(client, ticketChannelId, discordId, stepMessageId) {
+  stepTimers.delete(ticketChannelId);
+
+  const state = readState(ticketChannelId);
+  if (!state || state.phase === "complete") return;
+
+  // Applicant advanced since this timer armed → the step changed, so ignore.
+  const currentMessageId = state.activeMessage ? state.activeMessage.messageId : null;
+  if (currentMessageId !== stepMessageId) return;
+
+  const applicant = getApplicant(discordId);
+  // Gone, or staff already accepted/rejected/closed (closedAt set) → ignore.
+  if (!applicant || applicant.closedAt) return;
+
+  const ticketChannel = await client.channels.fetch(ticketChannelId).catch(() => null);
+
+  // Remove the un-answered step message so its stale button disappears.
+  await deleteActiveMessage(client, state);
+
+  // Mark the applicant rejected due to inactivity (mirrors a staff reject:
+  // accepted=false, closedAt=now, with a close reason).
+  saveApplicant(
+    discordId,
+    applicant,
+    applicant.server ?? state.clanGuildId,
+    `Onboarding timed out — no response for ${STEP_TIMEOUT_MINUTES} minutes.`,
+    false,
+    new Date().toISOString()
+  );
+
+  // Terminate onboarding.
+  state.phase = "complete";
+  state.activeMessage = null;
+  state.stepDeadline = null;
+  state.timedOut = true;
+  writeState(ticketChannelId, state);
+
+  if (ticketChannel) {
+    // Disable the staff Accept/Reject controls (leaves Close available).
+    await disableControlRow(client, ticketChannel, state, discordId);
+
+    const embed = new EmbedBuilder()
+      .setTitle("⌛ Onboarding Timed Out")
+      .setColor(0xff0000)
+      .setDescription(
+        `<@${discordId}>, you didn't respond within ${STEP_TIMEOUT_MINUTES} minutes, so your ` +
+          "application has been **automatically rejected** for inactivity. You're welcome to apply again later."
+      )
+      .setTimestamp();
+    await ticketChannel.send({ content: `<@${discordId}>`, embeds: [embed] }).catch(() => {});
   }
 }
 
@@ -530,6 +629,15 @@ async function renderCurrent(client, ticketChannel, state, discordId) {
       loc = await renderComplete(client, ticketChannel, state, discordId);
       break;
   }
+
+  // Arm (or clear) the inactivity timeout for the newly-rendered step.
+  if (state.phase === "complete") {
+    clearStepTimeout(ticketChannel.id);
+    state.stepDeadline = null;
+  } else {
+    armStepTimeout(client, ticketChannel, state, discordId);
+  }
+
   return loc;
 }
 

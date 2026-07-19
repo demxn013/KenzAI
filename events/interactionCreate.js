@@ -180,6 +180,27 @@ module.exports = {
           return;
         }
 
+        // ── Discord module: giveaway entry / management buttons ──
+        if (interaction.customId.startsWith("dgw_")) {
+          const cmd = client.commands.get("giveaway");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "giveaway");
+          return await cmd.buttonHandler(interaction);
+        }
+
+        // ── Discord module: leveling leaderboard pagination ──
+        if (interaction.customId.startsWith("dlvl_")) {
+          const cmd = client.commands.get("leaderboard");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "leaderboard");
+          return await cmd.buttonHandler(interaction);
+        }
+
+        // ── Discord module: invite leaderboard pagination ──
+        if (interaction.customId.startsWith("dinv_")) {
+          const cmd = client.commands.get("invites");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "invites");
+          return await cmd.buttonHandler(interaction);
+        }
+
         console.warn(`[interactionCreate] ⚠️ Unhandled button ID: ${interaction.customId}`);
 
       } catch (err) {

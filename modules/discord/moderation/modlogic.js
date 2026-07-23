@@ -43,7 +43,7 @@ async function punish(interaction, opts) {
     throw err;
   }
 
-  await modlog.sendModLog(guild, modlog.caseEmbed(guild, record, targetUser.tag));
+  await modlog.sendModLog(guild, modlog.caseEmbed(guild, record, targetUser.tag), record.action);
   return record;
 }
 

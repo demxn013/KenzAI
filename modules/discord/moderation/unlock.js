@@ -1,6 +1,7 @@
 // modules/discord/moderation/unlock.js — /unlock
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 const { canManageChannels } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const { danger, success, makeEmbed } = require("../common/embeds");
 
 module.exports = {
@@ -14,8 +15,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!canManageChannels(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Manage Channels** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "unlock", canManageChannels))) return;
 
     const channel = interaction.options.getChannel("channel") || interaction.channel;
 

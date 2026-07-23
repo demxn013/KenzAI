@@ -1,6 +1,7 @@
 // modules/discord/moderation/kick.js — /kick
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canKick, canActOn } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const { punish, confirmEmbed } = require("./modlogic");
 const { danger } = require("../common/embeds");
 
@@ -14,8 +15,7 @@ module.exports = {
     .addStringOption((o) => o.setName("reason").setDescription("Reason for the kick")),
 
   async execute(interaction) {
-    if (!canKick(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Kick Members** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "kick", canKick))) return;
 
     const target = interaction.options.getUser("user");
     const member = interaction.options.getMember("user");

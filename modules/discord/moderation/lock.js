@@ -1,6 +1,7 @@
 // modules/discord/moderation/lock.js — /lock
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 const { canManageChannels } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const { danger, success } = require("../common/embeds");
 const { makeEmbed } = require("../common/embeds");
 
@@ -16,8 +17,7 @@ module.exports = {
     .addStringOption((o) => o.setName("reason").setDescription("Reason (announced in the channel)")),
 
   async execute(interaction) {
-    if (!canManageChannels(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Manage Channels** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "lock", canManageChannels))) return;
 
     const channel = interaction.options.getChannel("channel") || interaction.channel;
     const reason = interaction.options.getString("reason");

@@ -1,6 +1,7 @@
 // modules/discord/moderation/slowmode.js — /slowmode
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 const { canManageChannels } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const { danger, success } = require("../common/embeds");
 const { parseDuration, formatDuration } = require("../common/util");
 
@@ -18,8 +19,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!canManageChannels(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Manage Channels** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "slowmode", canManageChannels))) return;
 
     const raw = interaction.options.getString("duration").trim();
     const channel = interaction.options.getChannel("channel") || interaction.channel;

@@ -36,10 +36,15 @@ function caseEmbed(guild, record, targetTag) {
   });
 }
 
-/** Post an embed to the guild's configured mod-log channel (best effort). */
-async function sendModLog(guild, embed) {
+/**
+ * Post an embed to the guild's mod-log channel (best effort). When `action` is
+ * given and a per-action channel is configured (moderation.logs[action]), that
+ * channel is used; otherwise it falls back to moderation.modLogChannelId.
+ */
+async function sendModLog(guild, embed, action = null) {
   try {
-    const channelId = getGuildSettings(guild.id).moderation.modLogChannelId;
+    const mod = getGuildSettings(guild.id).moderation;
+    const channelId = (action && mod.logs && mod.logs[action]) || mod.modLogChannelId;
     if (!channelId) return false;
     const channel = guild.channels.cache.get(channelId) || (await guild.channels.fetch(channelId).catch(() => null));
     if (!channel || !channel.isTextBased()) return false;

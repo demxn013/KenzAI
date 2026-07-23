@@ -3,6 +3,7 @@
 // messages without a lasting ban entry.
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canBan, canActOn } = require("../../common/perms");
+const { authorize } = require("../../common/commandGuard");
 const { punish, confirmEmbed } = require("../modlogic");
 const { danger } = require("../../common/embeds");
 const { clamp } = require("../../common/util");
@@ -24,8 +25,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!canBan(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Ban Members** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "softban", canBan))) return;
 
     const target = interaction.options.getUser("user");
     const member = interaction.options.getMember("user");

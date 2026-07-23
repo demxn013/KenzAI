@@ -1,6 +1,7 @@
 // modules/discord/moderation/muting/mute.js — /mute (Discord timeout)
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canModerateMembers, canActOn } = require("../../common/perms");
+const { authorize } = require("../../common/commandGuard");
 const { punish, confirmEmbed } = require("../modlogic");
 const { danger } = require("../../common/embeds");
 const { parseDuration } = require("../../common/util");
@@ -18,8 +19,7 @@ module.exports = {
     .addStringOption((o) => o.setName("reason").setDescription("Reason for the mute")),
 
   async execute(interaction) {
-    if (!canModerateMembers(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Moderate Members** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "mute", canModerateMembers))) return;
 
     const target = interaction.options.getUser("user");
     const member = interaction.options.getMember("user");

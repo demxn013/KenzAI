@@ -6,6 +6,7 @@ const {
   ChannelType,
 } = require("discord.js");
 const { getAutomod, updateAutomod } = require("./automodStore");
+const { authorize } = require("../../common/commandGuard");
 const { makeEmbed, success, danger } = require("../../common/embeds");
 
 const ACTIONS = [
@@ -121,8 +122,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild))
-      return interaction.reply({ embeds: [danger("You need the **Manage Server** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "automod", (m) => m.permissions?.has(PermissionFlagsBits.ManageGuild)))) return;
 
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();

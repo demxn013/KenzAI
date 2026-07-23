@@ -26,13 +26,66 @@ const IDS = {
   moderation: "dmod_",
   leveling: "dlvl_",
   invites: "dinv_",
-  settings: "dset_",
+  settings: "dset_", // /setup dashboard components
+  boosters: "dbr_", // booster self-service role components
 };
 
 const DEFAULT_SETTINGS = {
   moderation: {
-    modLogChannelId: null,
+    modLogChannelId: null, // fallback log channel for any action without a specific one
     dmOnAction: true, // DM the target when they are warned/muted/kicked/banned
+    // Per-action log channels (fall back to modLogChannelId when null).
+    logs: {
+      ban: null,
+      softban: null,
+      unban: null,
+      kick: null,
+      mute: null,
+      unmute: null,
+      warn: null,
+      purge: null,
+    },
+  },
+  // Command-permission "moderation roles": role groups + which group may run
+  // each command. Members with Manage Server / Administrator always pass. If a
+  // command maps to a group that has NO roles configured, it falls back to the
+  // command's built-in Discord permission check.
+  permissions: {
+    groups: {
+      moderator: [], // [roleId]
+      admin: [],
+      giveawayHost: [],
+    },
+    commandGroup: {
+      warn: "moderator",
+      mute: "moderator",
+      unmute: "moderator",
+      kick: "moderator",
+      purge: "moderator",
+      slowmode: "moderator",
+      lock: "moderator",
+      unlock: "moderator",
+      infractions: "moderator",
+      ban: "admin",
+      softban: "admin",
+      unban: "admin",
+      automod: "admin",
+      giveaway: "giveawayHost",
+    },
+  },
+  // Clan / Alliance setup (channels + managing roles the existing /clan and
+  // /alliance systems can read; config-per-guild).
+  clan: { announceChannelId: null, logChannelId: null, managerRoleIds: [] },
+  alliance: { announceChannelId: null, logChannelId: null, managerRoleIds: [] },
+  // Booster self-service roles.
+  boosterRoles: {
+    enabled: false,
+    requireBoost: true, // only current boosters may create/keep a personal role
+    anchorRoleId: null, // new roles placed just below this role (else below bot top)
+    removeOnUnboost: true, // delete the role when the member stops boosting
+    allowGradient: true, // use a 2nd hex when the guild has ENHANCED_ROLE_COLORS
+    allowIcons: true, // set emoji/icon when the guild has ROLE_ICONS
+    logChannelId: null,
   },
   automod: {
     enabled: false,

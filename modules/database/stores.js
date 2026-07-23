@@ -517,6 +517,19 @@ const stores = {
       voice_seconds: int(v.voiceSeconds, 0),
     })
   ),
+
+  // Booster self-service roles — keyed by "<guildId>:<userId>".
+  discord_booster_roles: defineStore(
+    "discord_booster_roles",
+    "discord_booster_roles.json",
+    "discord_booster_roles",
+    "member_key",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      user_id: str(v.userId),
+      role_id: str(v.roleId),
+    })
+  ),
 };
 
 module.exports = { stores };

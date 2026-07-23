@@ -1,6 +1,7 @@
 // modules/discord/moderation/purge.js — /purge
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canManageMessages } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const { danger, success } = require("../common/embeds");
 
 module.exports = {
@@ -15,8 +16,7 @@ module.exports = {
     .addUserOption((o) => o.setName("user").setDescription("Only delete messages from this user")),
 
   async execute(interaction) {
-    if (!canManageMessages(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Manage Messages** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "purge", canManageMessages))) return;
 
     const amount = interaction.options.getInteger("amount");
     const user = interaction.options.getUser("user");

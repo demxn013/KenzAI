@@ -1,6 +1,7 @@
 // modules/discord/moderation/infractions.js — /infractions view|remove|clear
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canModerateMembers } = require("../common/perms");
+const { authorize } = require("../common/commandGuard");
 const infractions = require("./infractionsStore");
 const { makeEmbed, danger, success } = require("../common/embeds");
 const { formatDuration } = require("../common/util");
@@ -27,8 +28,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    if (!canModerateMembers(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Moderate Members** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "infractions", canModerateMembers))) return;
 
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId;

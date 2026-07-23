@@ -1,6 +1,7 @@
 // modules/discord/moderation/banning/unban.js — /unban
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { canBan } = require("../../common/perms");
+const { authorize } = require("../../common/commandGuard");
 const { infractions, modlog } = require("../modlogic");
 const { danger, success } = require("../../common/embeds");
 
@@ -14,8 +15,7 @@ module.exports = {
     .addStringOption((o) => o.setName("reason").setDescription("Reason for the unban")),
 
   async execute(interaction) {
-    if (!canBan(interaction.member))
-      return interaction.reply({ embeds: [danger("You need the **Ban Members** permission.")], ephemeral: true });
+    if (!(await authorize(interaction, "unban", canBan))) return;
 
     const userId = interaction.options.getString("user-id").trim();
     const reason = interaction.options.getString("reason") || "No reason provided";
@@ -36,7 +36,7 @@ module.exports = {
         action: "unban",
         reason,
       });
-      await modlog.sendModLog(interaction.guild, modlog.caseEmbed(interaction.guild, record, existing.user?.tag));
+      await modlog.sendModLog(interaction.guild, modlog.caseEmbed(interaction.guild, record, existing.user?.tag), "unban");
       return interaction.reply({ embeds: [success(`Unbanned <@${userId}> — Case #${record.caseNumber}.`)] });
     } catch (err) {
       return interaction.reply({ embeds: [danger(`Failed to unban: ${err.message}`)], ephemeral: true });

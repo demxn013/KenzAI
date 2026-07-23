@@ -23,14 +23,31 @@ async function tick(client) {
   if (running) return;
   running = true;
   try {
-    const due = store.dueGiveaways(Date.now());
-    if (!due.length) return;
-    console.log(`[discord/giveaways] 🎉 Ending ${due.length} due giveaway(s)`);
-    for (const record of due) {
-      try {
-        await logic.endGiveaway(client, record);
-      } catch (err) {
-        console.error(`[discord/giveaways] ❌ ending ${record.messageId}:`, err.message);
+    const now = Date.now();
+
+    // Activate scheduled giveaways whose start time has arrived.
+    const starting = store.dueToStart(now);
+    if (starting.length) {
+      console.log(`[discord/giveaways] ⏱️ Starting ${starting.length} scheduled giveaway(s)`);
+      for (const record of starting) {
+        try {
+          await logic.activateGiveaway(client, record);
+        } catch (err) {
+          console.error(`[discord/giveaways] ❌ starting ${record.messageId}:`, err.message);
+        }
+      }
+    }
+
+    // End active giveaways whose end time has passed.
+    const due = store.dueGiveaways(now);
+    if (due.length) {
+      console.log(`[discord/giveaways] 🎉 Ending ${due.length} due giveaway(s)`);
+      for (const record of due) {
+        try {
+          await logic.endGiveaway(client, record);
+        } catch (err) {
+          console.error(`[discord/giveaways] ❌ ending ${record.messageId}:`, err.message);
+        }
       }
     }
   } finally {

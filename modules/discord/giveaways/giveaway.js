@@ -8,14 +8,21 @@ const store = require("./giveawayStore");
 const logic = require("./giveawaylogic");
 const templates = require("./templates/templates");
 const { getGuildSettings } = require("../settings/settingsStore");
+const { canUse } = require("../common/commandGuard");
 const { makeEmbed, success, danger } = require("../common/embeds");
 const { parseDuration, formatDuration } = require("../common/util");
 
 const MAX_DURATION_MS = 60 * 86400 * 1000; // 60 days
+const MAX_START_DELAY_MS = 60 * 86400 * 1000; // schedule up to 60 days out
 
+// Who may run /giveaway: the "giveawayHost" permission group governs when
+// configured (via /setup), otherwise fall back to Manage Server OR a legacy
+// giveaways.hostRoleIds entry.
 function canHost(member, settings) {
-  if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true;
-  return (settings.giveaways.hostRoleIds || []).some((r) => member.roles.cache.has(r));
+  const builtin = (m) =>
+    m.permissions.has(PermissionFlagsBits.ManageGuild) ||
+    (settings.giveaways.hostRoleIds || []).some((r) => m.roles.cache.has(r));
+  return canUse(member, "giveaway", builtin, settings);
 }
 
 module.exports = {
@@ -25,12 +32,13 @@ module.exports = {
     .setDMPermission(false)
     .addSubcommand((s) =>
       s
-        .setName("start")
-        .setDescription("Start a giveaway")
+        .setName("create")
+        .setDescription("Create a giveaway (optionally scheduled to start later)")
         .addStringOption((o) => o.setName("prize").setDescription("What's being given away"))
-        .addStringOption((o) => o.setName("duration").setDescription("e.g. 1h, 2d, 30m"))
+        .addStringOption((o) => o.setName("duration").setDescription("How long it runs, e.g. 1h, 2d, 30m"))
         .addIntegerOption((o) => o.setName("winners").setDescription("Number of winners (default 1)").setMinValue(1).setMaxValue(50))
         .addChannelOption((o) => o.setName("channel").setDescription("Channel to post in (default: here)").addChannelTypes(ChannelType.GuildText))
+        .addStringOption((o) => o.setName("starts-in").setDescription("Delay before it begins, e.g. 2h, 1d (default: immediately)"))
         .addRoleOption((o) => o.setName("required-role").setDescription("Role required to enter"))
         .addIntegerOption((o) => o.setName("required-level").setDescription("Minimum level required to enter").setMinValue(1))
         .addStringOption((o) => o.setName("template").setDescription("Load a saved template as the base"))
@@ -103,8 +111,8 @@ module.exports = {
       }
     }
 
-    // ----- start -----
-    if (sub === "start") {
+    // ----- create -----
+    if (sub === "create") {
       let base = {};
       const tplName = interaction.options.getString("template");
       if (tplName) {
@@ -121,9 +129,17 @@ module.exports = {
       const requiredRoleId = interaction.options.getRole("required-role")?.id ?? base.requiredRoleId ?? null;
       const requiredLevel = interaction.options.getInteger("required-level") ?? base.requiredLevel ?? 0;
 
+      const startsInRaw = interaction.options.getString("starts-in");
+      const startDelayMs = startsInRaw ? parseDuration(startsInRaw) : 0;
+
       if (!prize) return interaction.reply({ embeds: [danger("A prize is required (provide `prize` or a template).")], ephemeral: true });
       if (!durationMs) return interaction.reply({ embeds: [danger("A valid duration is required (e.g. `1h`, `2d`).")], ephemeral: true });
       if (durationMs > MAX_DURATION_MS) return interaction.reply({ embeds: [danger("Giveaways can last at most **60 days**.")], ephemeral: true });
+      if (startsInRaw && startDelayMs === null) return interaction.reply({ embeds: [danger("Invalid `starts-in` (try `2h`, `1d`).")], ephemeral: true });
+      if (startDelayMs > MAX_START_DELAY_MS) return interaction.reply({ embeds: [danger("Giveaways can be scheduled at most **60 days** in advance.")], ephemeral: true });
+
+      const scheduled = startDelayMs > 0;
+      const startsAt = new Date(Date.now() + startDelayMs).toISOString();
 
       const record = {
         messageId: null,
@@ -132,8 +148,10 @@ module.exports = {
         prize,
         winnerCount,
         hostId: interaction.user.id,
-        endsAt: new Date(Date.now() + durationMs).toISOString(),
-        status: "active",
+        durationMs, // used to compute endsAt (now, or at activation for scheduled)
+        startsAt,
+        endsAt: scheduled ? null : new Date(Date.now() + durationMs).toISOString(),
+        status: scheduled ? "scheduled" : "active",
         entries: [],
         requiredRoleId,
         requiredLevel,
@@ -144,11 +162,15 @@ module.exports = {
       try {
         const msg = await channel.send({ embeds: [logic.buildEmbed(record)] });
         record.messageId = msg.id;
-        await msg.edit({ embeds: [logic.buildEmbed(record)], components: [logic.buildRow(msg.id)] });
+        // Entry button is disabled while scheduled; the scheduler enables it on start.
+        await msg.edit({ embeds: [logic.buildEmbed(record)], components: [logic.buildRow(msg.id, { disabled: scheduled })] });
         store.save(record);
-        return interaction.reply({ embeds: [success(`Giveaway for **${prize}** started in ${channel} — ends in ${formatDuration(durationMs)}.`)], ephemeral: true });
+        const when = scheduled
+          ? `starts <t:${Math.floor(Date.parse(startsAt) / 1000)}:R> and runs for ${formatDuration(durationMs)}`
+          : `ends in ${formatDuration(durationMs)}`;
+        return interaction.reply({ embeds: [success(`Giveaway for **${prize}** created in ${channel} — ${when}.`)], ephemeral: true });
       } catch (err) {
-        return interaction.reply({ embeds: [danger(`Couldn't start the giveaway: ${err.message}`)], ephemeral: true });
+        return interaction.reply({ embeds: [danger(`Couldn't create the giveaway: ${err.message}`)], ephemeral: true });
       }
     }
 

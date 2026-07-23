@@ -47,4 +47,11 @@ function dueGiveaways(now = Date.now()) {
   );
 }
 
-module.exports = { get, save, remove, forGuild, activeForGuild, dueGiveaways, all };
+/** All scheduled giveaways whose start time is at or before `now`. */
+function dueToStart(now = Date.now()) {
+  return Object.values(all()).filter(
+    (g) => g && g.status === "scheduled" && g.startsAt && new Date(g.startsAt).getTime() <= now
+  );
+}
+
+module.exports = { get, save, remove, forGuild, activeForGuild, dueGiveaways, dueToStart, all };

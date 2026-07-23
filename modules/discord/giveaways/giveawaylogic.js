@@ -16,30 +16,38 @@ function emoji(guildId) {
   return getGuildSettings(guildId).giveaways.emoji || "🎉";
 }
 
+const ts = (v) => Math.floor(new Date(v).getTime() / 1000);
+const { formatDuration } = require("../common/util");
+
 function buildEmbed(record) {
   const e = emoji(record.guildId);
-  const ended = record.status !== "active";
+  const status = record.status || "active";
   const reqs = [];
   if (record.requiredRoleId) reqs.push(`Role: <@&${record.requiredRoleId}>`);
   if (record.requiredLevel) reqs.push(`Level: **${record.requiredLevel}+**`);
 
+  const stampSource = record.endsAt || record.startsAt || Date.now();
   const embed = new EmbedBuilder()
-    .setColor(ended ? EMBED_COLORS.neutral : EMBED_COLORS.brand)
+    .setColor(status === "active" ? EMBED_COLORS.brand : EMBED_COLORS.neutral)
     .setTitle(`${e} ${record.prize} ${e}`)
     .setFooter({ text: `${record.winnerCount} winner${record.winnerCount > 1 ? "s" : ""} • ${record.entries.length} entries` })
-    .setTimestamp(new Date(record.endsAt));
+    .setTimestamp(new Date(stampSource));
 
   const lines = [];
-  if (!ended) {
+  if (status === "scheduled") {
+    lines.push(`⏳ This giveaway hasn't started yet.`);
+    if (record.startsAt) lines.push(`Starts: <t:${ts(record.startsAt)}:R>`);
+    if (record.durationMs) lines.push(`Will run for **${formatDuration(record.durationMs)}**`);
+  } else if (status === "active") {
     lines.push(`Click the button below to enter!`);
-    lines.push(`Ends: <t:${Math.floor(new Date(record.endsAt).getTime() / 1000)}:R>`);
+    lines.push(`Ends: <t:${ts(record.endsAt)}:R>`);
   } else {
     lines.push(
       record.winnerIds && record.winnerIds.length
         ? `Winner${record.winnerIds.length > 1 ? "s" : ""}: ${record.winnerIds.map((id) => `<@${id}>`).join(", ")}`
         : "Ended — no valid entries."
     );
-    lines.push(`Ended: <t:${Math.floor(new Date(record.endedAt || record.endsAt).getTime() / 1000)}:R>`);
+    lines.push(`Ended: <t:${ts(record.endedAt || record.endsAt || Date.now())}:R>`);
   }
   lines.push(`Hosted by: <@${record.hostId}>`);
   if (reqs.length) lines.push(`\n**Requirements**\n${reqs.join("\n")}`);
@@ -97,6 +105,26 @@ async function fetchMessage(client, record) {
   return { guild, channel, message };
 }
 
+/** Activate a scheduled giveaway: flip to active, set endsAt, enable entry. */
+async function activateGiveaway(client, record) {
+  const { guild, channel, message } = await fetchMessage(client, record);
+  if (!guild) {
+    store.remove(record.messageId);
+    return { ok: false };
+  }
+  record.status = "active";
+  record.endsAt = new Date(Date.now() + (record.durationMs || 0)).toISOString();
+  store.save(record);
+
+  if (message) {
+    await message.edit({ embeds: [buildEmbed(record)], components: [buildRow(record.messageId)] }).catch(() => {});
+  }
+  if (channel) {
+    await channel.send({ content: `${emoji(record.guildId)} The giveaway for **${record.prize}** has started — good luck!` }).catch(() => {});
+  }
+  return { ok: true };
+}
+
 /** End a giveaway: pick winners, update the message, announce. */
 async function endGiveaway(client, record) {
   const { guild, channel, message } = await fetchMessage(client, record);
@@ -146,6 +174,7 @@ module.exports = {
   buildRow,
   meetsRequirements,
   pickWinners,
+  activateGiveaway,
   endGiveaway,
   rerollGiveaway,
   emoji,

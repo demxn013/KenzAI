@@ -16,6 +16,7 @@ const statJoins = require("./statistics/joins/collector");
 const statLeaves = require("./statistics/leaves/collector");
 const statVoice = require("./statistics/voicecall/collector");
 const statsStore = require("./statistics/statsStore");
+const boostEvents = require("./boosters/boostEvents");
 
 function initDiscord(client) {
   // --- messages ---
@@ -43,6 +44,9 @@ function initDiscord(client) {
     inviteEvents.handleGuildMemberRemove(member);
     statLeaves.handleLeave(member);
   });
+
+  // --- boosters (custom-role lifecycle) ---
+  client.on("guildMemberUpdate", (oldM, newM) => boostEvents.handleGuildMemberUpdate(oldM, newM));
 
   // --- invites cache upkeep ---
   client.on("inviteCreate", (invite) => inviteEvents.handleInviteCreate(invite));

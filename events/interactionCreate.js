@@ -201,6 +201,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // ── Discord module: /setup dashboard buttons ──
+        if (interaction.customId.startsWith("dset_")) {
+          const cmd = client.commands.get("setup");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "setup");
+          return await cmd.buttonHandler(interaction);
+        }
+
         console.warn(`[interactionCreate] ⚠️ Unhandled button ID: ${interaction.customId}`);
 
       } catch (err) {
@@ -247,9 +254,52 @@ module.exports = {
           return await cmd.selectMenuHandler(interaction);
         }
 
+        // ── /setup dashboard string selects ──
+        if (interaction.customId.startsWith("dset_")) {
+          const cmd = client.commands.get("setup");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "setup");
+          return await cmd.selectMenuHandler(interaction);
+        }
+
         console.warn(`[interactionCreate] ⚠️ Unhandled select menu ID: ${interaction.customId}`);
       } catch (err) {
         console.error(`[interactionCreate] ❌ Select menu handler threw for "${interaction.customId}":`, err);
+        await safeErrorReply(interaction);
+      }
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // CHANNEL SELECT MENUS (native pickers — used by /setup)
+    // ----------------------------------------------------------
+    if (interaction.isChannelSelectMenu()) {
+      try {
+        if (interaction.customId.startsWith("dset_")) {
+          const cmd = client.commands.get("setup");
+          if (!cmd?.channelSelectHandler) return commandNotLoadedReply(interaction, "setup");
+          return await cmd.channelSelectHandler(interaction);
+        }
+        console.warn(`[interactionCreate] ⚠️ Unhandled channel select ID: ${interaction.customId}`);
+      } catch (err) {
+        console.error(`[interactionCreate] ❌ Channel select threw for "${interaction.customId}":`, err);
+        await safeErrorReply(interaction);
+      }
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // ROLE SELECT MENUS (native pickers — used by /setup)
+    // ----------------------------------------------------------
+    if (interaction.isRoleSelectMenu()) {
+      try {
+        if (interaction.customId.startsWith("dset_")) {
+          const cmd = client.commands.get("setup");
+          if (!cmd?.roleSelectHandler) return commandNotLoadedReply(interaction, "setup");
+          return await cmd.roleSelectHandler(interaction);
+        }
+        console.warn(`[interactionCreate] ⚠️ Unhandled role select ID: ${interaction.customId}`);
+      } catch (err) {
+        console.error(`[interactionCreate] ❌ Role select threw for "${interaction.customId}":`, err);
         await safeErrorReply(interaction);
       }
       return;
@@ -298,6 +348,13 @@ module.exports = {
         ) {
           const cmd = client.commands.get("stock");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "stock");
+          return await cmd.modalHandler(interaction);
+        }
+
+        // ── /setup dashboard modals ──
+        if (interaction.customId.startsWith("dset_")) {
+          const cmd = client.commands.get("setup");
+          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "setup");
           return await cmd.modalHandler(interaction);
         }
 

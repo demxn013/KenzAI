@@ -136,6 +136,7 @@ const DEFAULT_SETTINGS = {
   giveaways: {
     hostRoleIds: [], // may run /giveaway in addition to Manage Server perm
     emoji: "🎉",
+    bonusEntries: {}, // { "<roleId>": extraEntries }  server-wide bonus entries
   },
   invites: {
     enabled: false,

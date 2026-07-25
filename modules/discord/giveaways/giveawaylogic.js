@@ -51,6 +51,8 @@ function buildEmbed(record) {
   }
   lines.push(`Hosted by: <@${record.hostId}>`);
   if (reqs.length) lines.push(`\n**Requirements**\n${reqs.join("\n")}`);
+  const bonus = Object.entries(record.bonusEntries || {});
+  if (bonus.length) lines.push(`\n**Bonus entries**\n${bonus.map(([r, n]) => `<@&${r}>: +${n}`).join("\n")}`);
   embed.setDescription(lines.join("\n"));
   return embed;
 }
@@ -78,22 +80,47 @@ function meetsRequirements(member, record) {
   return { ok: true };
 }
 
-/** Pick up to `count` unique winners from current entries who are still valid. */
+/** Total entries a member has: 1 base + bonus entries for each qualifying role. */
+function entryWeight(member, bonusEntries) {
+  let weight = 1;
+  if (bonusEntries) {
+    for (const [roleId, extra] of Object.entries(bonusEntries)) {
+      if (member.roles.cache.has(roleId)) weight += Number(extra) || 0;
+    }
+  }
+  return Math.max(1, weight);
+}
+
+/**
+ * Pick up to `count` unique winners from valid entrants, weighted by bonus
+ * entries (members with configured roles get extra entries -> higher odds).
+ * Uses weighted sampling without replacement.
+ */
 async function pickWinners(guild, record, count, exclude = []) {
-  const pool = [];
+  const bonusEntries = record.bonusEntries || {};
+  const pool = []; // { id, w }
   for (const userId of record.entries) {
     if (exclude.includes(userId)) continue;
     const member = guild.members.cache.get(userId) || (await guild.members.fetch(userId).catch(() => null));
     if (!member) continue;
     if (!meetsRequirements(member, record).ok) continue;
-    pool.push(userId);
+    pool.push({ id: userId, w: entryWeight(member, bonusEntries) });
   }
-  // Fisher–Yates shuffle, then take `count`.
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+
+  const winners = [];
+  for (let n = 0; n < count && pool.length; n++) {
+    const total = pool.reduce((a, p) => a + p.w, 0);
+    let r = Math.random() * total;
+    let idx = 0;
+    for (; idx < pool.length; idx++) {
+      r -= pool[idx].w;
+      if (r <= 0) break;
+    }
+    if (idx >= pool.length) idx = pool.length - 1;
+    winners.push(pool[idx].id);
+    pool.splice(idx, 1);
   }
-  return pool.slice(0, count);
+  return winners;
 }
 
 async function fetchMessage(client, record) {
@@ -173,6 +200,7 @@ module.exports = {
   buildEmbed,
   buildRow,
   meetsRequirements,
+  entryWeight,
   pickWinners,
   activateGiveaway,
   endGiveaway,

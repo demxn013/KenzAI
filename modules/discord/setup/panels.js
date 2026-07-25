@@ -104,10 +104,15 @@ function render(guildId, category = "overview", ctx = {}) {
     embed = makeEmbed({
       title: "🎉 Giveaways",
       color: "brand",
-      description: "Configure who can host giveaways and the entry emoji. Templates are per-server — manage them with `/giveaway template`.",
+      description: "Configure who can host giveaways and the entry emoji. Templates (`/giveaway template`) and bonus-entry roles (`/giveaway bonus`) are per-server.",
       fields: [
         { name: "Host roles", value: roles(s.giveaways.hostRoleIds), inline: false },
         { name: "Emoji", value: s.giveaways.emoji || "🎉", inline: true },
+        {
+          name: "Bonus entries",
+          value: Object.entries(s.giveaways.bonusEntries || {}).map(([r, n]) => `<@&${r}>: +${n}`).join("\n") || "*none*",
+          inline: false,
+        },
       ],
     });
     components.push(roleRow("dset_gw_hostroles", "Select giveaway host roles…"));

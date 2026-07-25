@@ -5,6 +5,9 @@
 
 const store = require("../giveawayStore");
 const logic = require("../giveawaylogic");
+const scheduleStore = require("./scheduleStore");
+const templates = require("../templates/templates");
+const { getGuildSettings } = require("../../settings/settingsStore");
 
 const DEFAULT_TICK_SECONDS = 30;
 const INITIAL_DELAY_MS = 15 * 1000;
@@ -24,6 +27,42 @@ async function tick(client) {
   running = true;
   try {
     const now = Date.now();
+
+    // Launch recurring giveaways whose next run time has arrived.
+    const dueScheds = scheduleStore.dueSchedules(now);
+    for (const sched of dueScheds) {
+      try {
+        const tpl = templates.get(sched.guildId, sched.templateName);
+        if (!tpl) {
+          console.warn(`[discord/giveaways] ⚠️ Schedule ${sched.scheduleId}: template "${sched.templateName}" missing — disabling`);
+          sched.enabled = false;
+          scheduleStore.save(sched);
+          continue;
+        }
+        const bonusEntries = getGuildSettings(sched.guildId).giveaways.bonusEntries || {};
+        await logic.launchGiveaway(client, {
+          guildId: sched.guildId,
+          channelId: sched.channelId,
+          hostId: sched.hostId,
+          prize: tpl.prize,
+          winnerCount: tpl.winnerCount || 1,
+          durationMs: tpl.durationMs,
+          requiredRoleId: tpl.requiredRoleId || null,
+          requiredLevel: tpl.requiredLevel || 0,
+          bonusEntries,
+        });
+        // Advance next run, skipping any missed windows to avoid a backlog.
+        let next = new Date(sched.nextRunAt).getTime();
+        do {
+          next += sched.intervalMs;
+        } while (next <= now);
+        sched.nextRunAt = new Date(next).toISOString();
+        sched.lastRunAt = new Date(now).toISOString();
+        scheduleStore.save(sched);
+      } catch (err) {
+        console.error(`[discord/giveaways] ❌ recurring ${sched.scheduleId}:`, err.message);
+      }
+    }
 
     // Activate scheduled giveaways whose start time has arrived.
     const starting = store.dueToStart(now);

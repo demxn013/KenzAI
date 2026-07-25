@@ -132,6 +132,42 @@ async function fetchMessage(client, record) {
   return { guild, channel, message };
 }
 
+/**
+ * Post and save a brand-new active giveaway from a set of params (used by the
+ * recurring scheduler). Returns { ok, record }.
+ */
+async function launchGiveaway(client, opts) {
+  const guild = client.guilds.cache.get(opts.guildId);
+  if (!guild) return { ok: false, reason: "guild" };
+  const channel = guild.channels.cache.get(opts.channelId) || (await guild.channels.fetch(opts.channelId).catch(() => null));
+  if (!channel?.isTextBased()) return { ok: false, reason: "channel" };
+
+  const now = Date.now();
+  const record = {
+    messageId: null,
+    guildId: opts.guildId,
+    channelId: opts.channelId,
+    prize: opts.prize,
+    winnerCount: opts.winnerCount || 1,
+    hostId: opts.hostId,
+    durationMs: opts.durationMs,
+    startsAt: new Date(now).toISOString(),
+    endsAt: new Date(now + opts.durationMs).toISOString(),
+    status: "active",
+    entries: [],
+    requiredRoleId: opts.requiredRoleId || null,
+    requiredLevel: opts.requiredLevel || 0,
+    bonusEntries: opts.bonusEntries || {},
+    winnerIds: [],
+    createdAt: new Date(now).toISOString(),
+  };
+  const msg = await channel.send({ embeds: [buildEmbed(record)] });
+  record.messageId = msg.id;
+  await msg.edit({ embeds: [buildEmbed(record)], components: [buildRow(msg.id)] });
+  store.save(record);
+  return { ok: true, record };
+}
+
 /** Activate a scheduled giveaway: flip to active, set endsAt, enable entry. */
 async function activateGiveaway(client, record) {
   const { guild, channel, message } = await fetchMessage(client, record);
@@ -202,6 +238,7 @@ module.exports = {
   meetsRequirements,
   entryWeight,
   pickWinners,
+  launchGiveaway,
   activateGiveaway,
   endGiveaway,
   rerollGiveaway,

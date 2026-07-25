@@ -7,6 +7,7 @@ const {
 const store = require("./giveawayStore");
 const logic = require("./giveawaylogic");
 const templates = require("./templates/templates");
+const scheduleStore = require("./scheduling/scheduleStore");
 const { getGuildSettings, updateGuildSettings } = require("../settings/settingsStore");
 const { canUse } = require("../common/commandGuard");
 const { makeEmbed, success, danger } = require("../common/embeds");
@@ -14,6 +15,7 @@ const { parseDuration, formatDuration } = require("../common/util");
 
 const MAX_DURATION_MS = 60 * 86400 * 1000; // 60 days
 const MAX_START_DELAY_MS = 60 * 86400 * 1000; // schedule up to 60 days out
+const MIN_INTERVAL_MS = 30 * 60 * 1000; // recurring giveaways: min 30 minutes
 
 // Who may run /giveaway: the "giveawayHost" permission group governs when
 // configured (via /setup), otherwise fall back to Manage Server OR a legacy
@@ -74,6 +76,27 @@ module.exports = {
     )
     .addSubcommandGroup((g) =>
       g
+        .setName("schedule")
+        .setDescription("Recurring giveaways that auto-launch from a template")
+        .addSubcommand((s) =>
+          s
+            .setName("create")
+            .setDescription("Auto-launch a template's giveaway on a repeating interval")
+            .addStringOption((o) => o.setName("template").setDescription("Saved template to launch each time").setRequired(true))
+            .addStringOption((o) => o.setName("every").setDescription("Interval, e.g. 1d, 12h, 7d (min 30m)").setRequired(true))
+            .addChannelOption((o) => o.setName("channel").setDescription("Channel to post in").setRequired(true).addChannelTypes(ChannelType.GuildText))
+            .addBooleanOption((o) => o.setName("start-now").setDescription("Also launch one immediately (default: after the first interval)"))
+        )
+        .addSubcommand((s) => s.setName("list").setDescription("List recurring giveaway schedules"))
+        .addSubcommand((s) =>
+          s.setName("delete").setDescription("Delete a recurring schedule").addStringOption((o) => o.setName("id").setDescription("Schedule ID").setRequired(true))
+        )
+        .addSubcommand((s) =>
+          s.setName("toggle").setDescription("Pause/resume a recurring schedule").addStringOption((o) => o.setName("id").setDescription("Schedule ID").setRequired(true))
+        )
+    )
+    .addSubcommandGroup((g) =>
+      g
         .setName("template")
         .setDescription("Manage reusable giveaway templates")
         .addSubcommand((s) =>
@@ -118,6 +141,56 @@ module.exports = {
         const be = getGuildSettings(interaction.guildId).giveaways.bonusEntries || {};
         const lines = Object.entries(be).map(([r, n]) => `<@&${r}>: **+${n}**`);
         return interaction.reply({ embeds: [makeEmbed({ title: "🎟️ Bonus-entry roles", description: lines.join("\n") || "None set. Use `/giveaway bonus set`." })], ephemeral: true });
+      }
+    }
+
+    // ----- schedule group (recurring giveaways) -----
+    if (group === "schedule") {
+      if (sub === "create") {
+        const templateName = interaction.options.getString("template");
+        const tpl = templates.get(interaction.guildId, templateName);
+        if (!tpl) return interaction.reply({ embeds: [danger(`No template named **${templateName}**. Create one with \`/giveaway template save\`.`)], ephemeral: true });
+        const intervalMs = parseDuration(interaction.options.getString("every"));
+        if (!intervalMs) return interaction.reply({ embeds: [danger("Invalid interval (try `12h`, `1d`, `7d`).")], ephemeral: true });
+        if (intervalMs < MIN_INTERVAL_MS) return interaction.reply({ embeds: [danger("The interval must be at least **30 minutes**.")], ephemeral: true });
+        const channel = interaction.options.getChannel("channel");
+        const startNow = interaction.options.getBoolean("start-now") || false;
+        const nextRunAt = new Date(Date.now() + (startNow ? 0 : intervalMs)).toISOString();
+        const rec = scheduleStore.create({
+          guildId: interaction.guildId,
+          channelId: channel.id,
+          templateName,
+          intervalMs,
+          nextRunAt,
+          hostId: interaction.user.id,
+        });
+        return interaction.reply({
+          embeds: [success(`Recurring giveaway created (\`${rec.scheduleId}\`): **${tpl.prize}** in ${channel} every **${formatDuration(intervalMs)}**. Next: <t:${Math.floor(Date.parse(nextRunAt) / 1000)}:R>.`)],
+          ephemeral: true,
+        });
+      }
+      if (sub === "list") {
+        const list = scheduleStore.forGuild(interaction.guildId);
+        if (!list.length) return interaction.reply({ embeds: [makeEmbed({ description: "No recurring giveaways. Create one with `/giveaway schedule create`." })], ephemeral: true });
+        const lines = list.map(
+          (r) => `\`${r.scheduleId}\` ${r.enabled ? "▶️" : "⏸️"} **${r.templateName}** in <#${r.channelId}> every ${formatDuration(r.intervalMs)} — next <t:${Math.floor(Date.parse(r.nextRunAt) / 1000)}:R>`
+        );
+        return interaction.reply({ embeds: [makeEmbed({ title: "🔁 Recurring giveaways", description: lines.join("\n") })], ephemeral: true });
+      }
+      if (sub === "delete") {
+        const id = interaction.options.getString("id").trim();
+        const rec = scheduleStore.get(id);
+        if (!rec || rec.guildId !== interaction.guildId) return interaction.reply({ embeds: [danger("No schedule with that ID on this server.")], ephemeral: true });
+        scheduleStore.remove(id);
+        return interaction.reply({ embeds: [success(`Deleted recurring schedule \`${id}\`.`)], ephemeral: true });
+      }
+      if (sub === "toggle") {
+        const id = interaction.options.getString("id").trim();
+        const rec = scheduleStore.get(id);
+        if (!rec || rec.guildId !== interaction.guildId) return interaction.reply({ embeds: [danger("No schedule with that ID on this server.")], ephemeral: true });
+        rec.enabled = !rec.enabled;
+        scheduleStore.save(rec);
+        return interaction.reply({ embeds: [success(`Schedule \`${id}\` is now **${rec.enabled ? "active" : "paused"}**.`)], ephemeral: true });
       }
     }
 

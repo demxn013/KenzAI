@@ -530,6 +530,21 @@ const stores = {
       role_id: str(v.roleId),
     })
   ),
+
+  // Recurring giveaway schedules — keyed by generated schedule id.
+  discord_giveaway_schedules: defineStore(
+    "discord_giveaway_schedules",
+    "discord_giveaway_schedules.json",
+    "discord_giveaway_schedules",
+    "schedule_id",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      channel_id: str(v.channelId),
+      template_name: str(v.templateName),
+      enabled: bool(v.enabled !== false),
+      next_run_at: dt(v.nextRunAt),
+    })
+  ),
 };
 
 module.exports = { stores };

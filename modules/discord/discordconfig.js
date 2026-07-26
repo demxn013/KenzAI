@@ -72,10 +72,6 @@ const DEFAULT_SETTINGS = {
       giveaway: "giveawayHost",
     },
   },
-  // Clan / Alliance setup (channels + managing roles the existing /clan and
-  // /alliance systems can read; config-per-guild).
-  clan: { announceChannelId: null, logChannelId: null, managerRoleIds: [] },
-  alliance: { announceChannelId: null, logChannelId: null, managerRoleIds: [] },
   // Booster self-service roles.
   boosterRoles: {
     enabled: false,

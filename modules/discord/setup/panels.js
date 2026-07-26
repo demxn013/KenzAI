@@ -20,6 +20,7 @@ const {
 } = require("discord.js");
 const { getGuildSettings } = require("../settings/settingsStore");
 const { makeEmbed } = require("../common/embeds");
+const ca = require("./clanAlliance");
 
 const CATEGORIES = [
   { value: "overview", label: "Overview", emoji: "📋", description: "Everything at a glance" },
@@ -343,22 +344,43 @@ function renderGiveaways(s, components) {
   return embed;
 }
 
-function renderClanAlliance(s, components, category) {
-  const block = s[category];
-  const p = category === "clan" ? "dset_clan" : "dset_alli";
+function renderClanAlliance(components, category, guildId) {
+  if (category === "clan") {
+    const clan = ca.getClanForGuild(guildId);
+    if (!clan) {
+      return makeEmbed({ title: "⚔️ Clan", color: "neutral", description: "This server isn't a registered clan. Register it with `/clan add` (Royalty only)." });
+    }
+    const embed = makeEmbed({
+      title: `⚔️ ${clan.name} [${clan.abbr}]`,
+      color: "brand",
+      description: "Edit this clan — the same fields as `/clan edit`. (Flag and Yazanaki-side role stay in `/clan edit`.)",
+      fields: [
+        { name: "Name", value: clan.name, inline: true },
+        { name: "Abbreviation", value: clan.abbr, inline: true },
+        { name: "Application mode", value: clan.applicationMode || "manual", inline: true },
+        { name: "Clan role (this server)", value: clan.clanRoleId ? `<@&${clan.clanRoleId}>` : "*not set*", inline: true },
+        { name: "DonutSMP", value: clan.donutsmpTeamName ? `\`${clan.donutsmpTeamName}\`` : "*not linked*", inline: true },
+        { name: "Invite", value: clan.invite || "*none*", inline: false },
+      ],
+    });
+    components.push(new ActionRowBuilder().addComponents(actionBtn("dset_clan_edit", "Edit clan", "✏️")));
+    components.push(roleSelect("dset_clan_role", "Clan member role (this server)…", clan.clanRoleId ? [clan.clanRoleId] : [], { max: 1 }));
+    return embed;
+  }
+  const alli = ca.getAllianceForGuild(guildId);
+  if (!alli) {
+    return makeEmbed({ title: "🤝 Alliance", color: "neutral", description: "This server's clan isn't part of an alliance. Form one with `/alliance join` (Royalty only)." });
+  }
   const embed = makeEmbed({
-    title: category === "clan" ? "⚔️ Clan" : "🤝 Alliance",
+    title: `🤝 ${alli.name}`,
     color: "brand",
-    description: `Channels and managing roles for the ${category} system. Manage ${category}s themselves with \`/${category}\`.`,
+    description: "Edit this alliance's invite. (Name and flag stay in `/alliance join`.)",
     fields: [
-      { name: "Announce channel", value: chan(block.announceChannelId), inline: true },
-      { name: "Log channel", value: chan(block.logChannelId), inline: true },
-      { name: "Manager roles", value: roleList(block.managerRoleIds), inline: false },
+      { name: "Clan", value: `${alli.clanName} [${alli.clanAbbr}]`, inline: true },
+      { name: "Invite", value: alli.invite || "*none*", inline: false },
     ],
   });
-  components.push(channelSelect(`${p}_announce`, "Announcement channel…", block.announceChannelId));
-  components.push(channelSelect(`${p}_log`, "Log channel…", block.logChannelId));
-  components.push(roleSelect(`${p}_managers`, "Manager roles…", block.managerRoleIds));
+  components.push(new ActionRowBuilder().addComponents(actionBtn("dset_alli_edit", "Edit alliance", "✏️")));
   return embed;
 }
 
@@ -423,7 +445,7 @@ function render(guildId, category = "overview", ctx = {}) {
     case "statistics": embed = renderStatistics(s, components); break;
     case "giveaways": embed = renderGiveaways(s, components); break;
     case "clan":
-    case "alliance": embed = renderClanAlliance(s, components, category); break;
+    case "alliance": embed = renderClanAlliance(components, category, guildId); break;
     case "boosters": embed = renderBoosters(s, components); break;
     default: embed = renderOverview(s); break;
   }

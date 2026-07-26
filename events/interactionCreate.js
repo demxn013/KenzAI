@@ -261,6 +261,13 @@ module.exports = {
           return await cmd.selectMenuHandler(interaction);
         }
 
+        // ── /statistic viewer selects ──
+        if (interaction.customId.startsWith("dstat_")) {
+          const cmd = client.commands.get("statistic");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "statistic");
+          return await cmd.selectMenuHandler(interaction);
+        }
+
         console.warn(`[interactionCreate] ⚠️ Unhandled select menu ID: ${interaction.customId}`);
       } catch (err) {
         console.error(`[interactionCreate] ❌ Select menu handler threw for "${interaction.customId}":`, err);

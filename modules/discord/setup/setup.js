@@ -13,6 +13,13 @@ const {
 } = require("discord.js");
 const { getGuildSettings, updateGuildSettings } = require("../settings/settingsStore");
 const { render } = require("./panels");
+const ca = require("./clanAlliance");
+
+async function requireRoyalty(interaction) {
+  if (await ca.isRoyalty(interaction.client, interaction.user.id)) return true;
+  await interaction.reply({ content: "❌ You need the **Royalty** role in the Yazanaki Empire to edit clans/alliances.", ephemeral: true }).catch(() => {});
+  return false;
+}
 
 // Split "base|param" customIds.
 function parse(customId) {
@@ -163,10 +170,6 @@ module.exports = {
       dset_stat_joinleave: [(s) => (s.statistics.logs.joinLeaveChannelId = one), "statistics", {}],
       dset_stat_message: [(s) => (s.statistics.logs.messageChannelId = one), "statistics", {}],
       dset_stat_voice: [(s) => (s.statistics.logs.voiceChannelId = one), "statistics", {}],
-      dset_clan_announce: [(s) => (s.clan.announceChannelId = one), "clan", {}],
-      dset_clan_log: [(s) => (s.clan.logChannelId = one), "clan", {}],
-      dset_alli_announce: [(s) => (s.alliance.announceChannelId = one), "alliance", {}],
-      dset_alli_log: [(s) => (s.alliance.logChannelId = one), "alliance", {}],
       dset_boost_log: [(s) => (s.boosterRoles.logChannelId = one), "boosters", {}],
     };
 
@@ -216,8 +219,6 @@ module.exports = {
       dset_gw_hostroles: [(s) => (s.giveaways.hostRoleIds = many), "giveaways", {}],
       dset_am_exempt_roles: [(s) => (s.automod.exemptRoleIds = many), "automod", { sub: "exempt" }],
       dset_lvl_noxp_roles: [(s) => (s.leveling.noXpRoleIds = many), "leveling", {}],
-      dset_clan_managers: [(s) => (s.clan.managerRoleIds = many), "clan", {}],
-      dset_alli_managers: [(s) => (s.alliance.managerRoleIds = many), "alliance", {}],
     };
     const singleRole = {
       dset_boost_anchor: [(s) => (s.boosterRoles.anchorRoleId = one), "boosters", {}],
@@ -227,6 +228,11 @@ module.exports = {
     if (base === "dset_mr_setroles") {
       updateGuildSettings(g, (s) => ((s.permissions.groups[param] = many), s));
       return interaction.update(render(g, "modroles", { group: param }));
+    }
+    if (base === "dset_clan_role") {
+      if (!(await requireRoyalty(interaction))) return;
+      ca.setClanRole(g, one);
+      return interaction.update(render(g, "clan"));
     }
     if (multi[base]) {
       const [setter, cat, ctx] = multi[base];
@@ -318,6 +324,25 @@ module.exports = {
     if (id === "dset_boost_threshold") {
       return interaction.showModal(buildModal("dset_boost_threshold_modal", "Multi-booster threshold", [{ id: "threshold", label: "Boosts required for the role", value: getGuildSettings(g).boosterRoles.multiBoostThreshold, max: 3 }]));
     }
+    if (id === "dset_clan_edit") {
+      if (!(await requireRoyalty(interaction))) return;
+      const clan = ca.getClanForGuild(g);
+      if (!clan) return interaction.reply({ content: "This server isn't a registered clan.", ephemeral: true });
+      return interaction.showModal(
+        buildModal("dset_clan_edit_modal", "Edit clan", [
+          { id: "name", label: "Name", value: clan.name, required: false, max: 100 },
+          { id: "abbreviation", label: "Abbreviation", value: clan.abbr, required: false, max: 10 },
+          { id: "applicationMode", label: "Application mode (manual/automatic)", value: clan.applicationMode || "manual", required: false, max: 10 },
+          { id: "server", label: "Server (donutsmp / clear)", value: clan.donutsmpTeamName ? "donutsmp" : "", required: false, max: 20 },
+        ])
+      );
+    }
+    if (id === "dset_alli_edit") {
+      if (!(await requireRoyalty(interaction))) return;
+      const alli = ca.getAllianceForGuild(g);
+      if (!alli) return interaction.reply({ content: "This server's clan isn't part of an alliance.", ephemeral: true });
+      return interaction.showModal(buildModal("dset_alli_edit_modal", "Edit alliance", [{ id: "invite", label: "Discord invite link", value: alli.invite || "", required: false, max: 100 }]));
+    }
     return interaction.deferUpdate();
   },
 
@@ -386,6 +411,21 @@ module.exports = {
       const words = f.getTextInputValue("words").split(",").map((w) => w.trim().toLowerCase()).filter(Boolean);
       updateGuildSettings(g, (s) => ((s.automod.wordFilter.words = [...new Set(words)]), s));
       return interaction.update(render(g, "automod", { rule: "wordFilter" }));
+    }
+    if (interaction.customId === "dset_clan_edit_modal") {
+      if (!(await requireRoyalty(interaction))) return;
+      ca.applyClanEdit(g, {
+        name: f.getTextInputValue("name"),
+        abbreviation: f.getTextInputValue("abbreviation"),
+        applicationMode: f.getTextInputValue("applicationMode").trim().toLowerCase(),
+        server: f.getTextInputValue("server"),
+      });
+      return interaction.update(render(g, "clan"));
+    }
+    if (interaction.customId === "dset_alli_edit_modal") {
+      if (!(await requireRoyalty(interaction))) return;
+      ca.applyAllianceEdit(g, { invite: f.getTextInputValue("invite") });
+      return interaction.update(render(g, "alliance"));
     }
     return interaction.deferUpdate();
   },

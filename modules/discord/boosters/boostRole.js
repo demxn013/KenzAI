@@ -8,6 +8,8 @@ const {
 } = require("discord.js");
 const { getGuildSettings } = require("../settings/settingsStore");
 const boostStore = require("./boostRoleStore");
+const boostCounts = require("./boostCountStore");
+const { reconcileMultiBoost } = require("./boostEvents");
 const { applyRoleStyle } = require("./roleStyle");
 const { makeEmbed, success, danger, warn } = require("../common/embeds");
 
@@ -50,12 +52,30 @@ module.exports = {
         .addAttachmentOption((o) => o.setName("image").setDescription("Custom image icon"))
     )
     .addSubcommand((s) => s.setName("delete").setDescription("Delete your booster role"))
-    .addSubcommand((s) => s.setName("show").setDescription("Show your booster role")),
+    .addSubcommand((s) => s.setName("show").setDescription("Show your booster role"))
+    .addSubcommand((s) =>
+      s
+        .setName("setcount")
+        .setDescription("Staff: set a member's tracked boost count (for the multi-booster role)")
+        .addUserOption((o) => o.setName("user").setDescription("Member").setRequired(true))
+        .addIntegerOption((o) => o.setName("count").setDescription("Number of boosts").setRequired(true).setMinValue(0).setMaxValue(100))
+    ),
 
   async execute(interaction) {
     const guild = interaction.guild;
     const settings = getGuildSettings(guild.id).boosterRoles;
     const sub = interaction.options.getSubcommand();
+
+    // Staff-only: seed/override a member's boost count and reconcile the role.
+    if (sub === "setcount") {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild))
+        return interaction.reply({ embeds: [danger("You need the **Manage Server** permission.")], ephemeral: true });
+      const user = interaction.options.getUser("user");
+      const count = interaction.options.getInteger("count");
+      boostCounts.set(guild.id, user.id, count);
+      await reconcileMultiBoost(guild, user.id, settings);
+      return interaction.reply({ embeds: [success(`Set ${user}'s boost count to **${count}**${settings.multiBoostRoleId ? ` (multi-booster role reconciled)` : ""}.`)], ephemeral: true });
+    }
 
     if (!settings.enabled)
       return interaction.reply({ embeds: [danger("Booster roles aren't enabled on this server.")], ephemeral: true });

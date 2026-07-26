@@ -531,6 +531,19 @@ const stores = {
     })
   ),
 
+  // Per-member boost counts (for the multi-booster role).
+  discord_boost_counts: defineStore(
+    "discord_boost_counts",
+    "discord_boost_counts.json",
+    "discord_boost_counts",
+    "member_key",
+    (id, v) => ({
+      guild_id: str(v.guildId),
+      user_id: str(v.userId),
+      count: int(v.count, 0),
+    })
+  ),
+
   // Recurring giveaway schedules — keyed by generated schedule id.
   discord_giveaway_schedules: defineStore(
     "discord_giveaway_schedules",

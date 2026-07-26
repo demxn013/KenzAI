@@ -24,6 +24,7 @@ function initDiscord(client) {
     automod.handleMessage(message);
     levelXp.handleMessage(message);
     statMessages.handleMessage(message);
+    boostEvents.handleBoostMessage(message);
   });
   client.on("messageDelete", (message) => statMessages.handleDelete(message));
   client.on("messageUpdate", (oldMsg, newMsg) => statMessages.handleEdit(oldMsg, newMsg));

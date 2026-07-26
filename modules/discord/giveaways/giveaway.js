@@ -8,7 +8,7 @@ const store = require("./giveawayStore");
 const logic = require("./giveawaylogic");
 const templates = require("./templates/templates");
 const scheduleStore = require("./scheduling/scheduleStore");
-const { getGuildSettings, updateGuildSettings } = require("../settings/settingsStore");
+const { getGuildSettings } = require("../settings/settingsStore");
 const { canUse } = require("../common/commandGuard");
 const { makeEmbed, success, danger } = require("../common/embeds");
 const { parseDuration, formatDuration } = require("../common/util");
@@ -60,22 +60,6 @@ module.exports = {
     .addSubcommand((s) => s.setName("list").setDescription("List active giveaways"))
     .addSubcommandGroup((g) =>
       g
-        .setName("bonus")
-        .setDescription("Configure server-wide bonus entries by role")
-        .addSubcommand((s) =>
-          s
-            .setName("set")
-            .setDescription("Give a role bonus entries in every giveaway")
-            .addRoleOption((o) => o.setName("role").setDescription("Role").setRequired(true))
-            .addIntegerOption((o) => o.setName("entries").setDescription("Extra entries").setRequired(true).setMinValue(1).setMaxValue(100))
-        )
-        .addSubcommand((s) =>
-          s.setName("remove").setDescription("Remove a role's bonus entries").addRoleOption((o) => o.setName("role").setDescription("Role").setRequired(true))
-        )
-        .addSubcommand((s) => s.setName("list").setDescription("List the server's bonus-entry roles"))
-    )
-    .addSubcommandGroup((g) =>
-      g
         .setName("schedule")
         .setDescription("Recurring giveaways that auto-launch from a template")
         .addSubcommand((s) =>
@@ -114,6 +98,14 @@ module.exports = {
         .addSubcommand((s) =>
           s.setName("delete").setDescription("Delete a template").addStringOption((o) => o.setName("name").setDescription("Template name").setRequired(true))
         )
+        .addSubcommand((s) =>
+          s
+            .setName("bonus")
+            .setDescription("Add/remove a bonus-entry role on a template")
+            .addStringOption((o) => o.setName("name").setDescription("Template name").setRequired(true))
+            .addRoleOption((o) => o.setName("role").setDescription("Role to grant bonus entries").setRequired(true))
+            .addIntegerOption((o) => o.setName("entries").setDescription("Extra entries (0 removes)").setRequired(true).setMinValue(0).setMaxValue(100))
+        )
     ),
 
   async execute(interaction) {
@@ -123,26 +115,6 @@ module.exports = {
 
     if (!canHost(interaction.member, settings))
       return interaction.reply({ embeds: [danger("You need **Manage Server** or a configured giveaway-host role.")], ephemeral: true });
-
-    // ----- bonus group (server-wide bonus entries by role) -----
-    if (group === "bonus") {
-      if (sub === "set") {
-        const role = interaction.options.getRole("role");
-        const entries = interaction.options.getInteger("entries");
-        updateGuildSettings(interaction.guildId, (st) => ((st.giveaways.bonusEntries[role.id] = entries), st));
-        return interaction.reply({ embeds: [success(`${role} now grants **+${entries}** bonus entries in giveaways.`)], ephemeral: true });
-      }
-      if (sub === "remove") {
-        const role = interaction.options.getRole("role");
-        updateGuildSettings(interaction.guildId, (st) => (delete st.giveaways.bonusEntries[role.id], st));
-        return interaction.reply({ embeds: [success(`Removed bonus entries for ${role}.`)], ephemeral: true });
-      }
-      if (sub === "list") {
-        const be = getGuildSettings(interaction.guildId).giveaways.bonusEntries || {};
-        const lines = Object.entries(be).map(([r, n]) => `<@&${r}>: **+${n}**`);
-        return interaction.reply({ embeds: [makeEmbed({ title: "🎟️ Bonus-entry roles", description: lines.join("\n") || "None set. Use `/giveaway bonus set`." })], ephemeral: true });
-      }
-    }
 
     // ----- schedule group (recurring giveaways) -----
     if (group === "schedule") {
@@ -200,14 +172,36 @@ module.exports = {
         const name = interaction.options.getString("name");
         const durationMs = parseDuration(interaction.options.getString("duration"));
         if (!durationMs) return interaction.reply({ embeds: [danger("Invalid duration.")], ephemeral: true });
+        const existing = templates.get(interaction.guildId, name);
         templates.save(interaction.guildId, name, {
           prize: interaction.options.getString("prize"),
           winnerCount: interaction.options.getInteger("winners") || 1,
           durationMs,
           requiredRoleId: interaction.options.getRole("required-role")?.id || null,
           requiredLevel: interaction.options.getInteger("required-level") || 0,
+          bonusEntries: existing?.bonusEntries || {}, // preserve configured bonus roles
         });
         return interaction.reply({ embeds: [success(`Saved template **${name}**.`)], ephemeral: true });
+      }
+      if (sub === "bonus") {
+        const name = interaction.options.getString("name");
+        const tpl = templates.get(interaction.guildId, name);
+        if (!tpl) return interaction.reply({ embeds: [danger(`No template named **${name}**.`)], ephemeral: true });
+        const role = interaction.options.getRole("role");
+        const entries = interaction.options.getInteger("entries");
+        const bonusEntries = { ...(tpl.bonusEntries || {}) };
+        if (entries === 0) delete bonusEntries[role.id];
+        else bonusEntries[role.id] = entries;
+        templates.save(interaction.guildId, name, {
+          prize: tpl.prize,
+          winnerCount: tpl.winnerCount,
+          durationMs: tpl.durationMs,
+          requiredRoleId: tpl.requiredRoleId,
+          requiredLevel: tpl.requiredLevel,
+          bonusEntries,
+        });
+        const list = Object.entries(bonusEntries).map(([r, n]) => `<@&${r}>: +${n}`).join("\n") || "*none*";
+        return interaction.reply({ embeds: [success(`Bonus entries for **${name}**:\n${list}`)], ephemeral: true });
       }
       if (sub === "list") {
         const list = templates.list(interaction.guildId);
@@ -240,8 +234,8 @@ module.exports = {
       const requiredRoleId = interaction.options.getRole("required-role")?.id ?? base.requiredRoleId ?? null;
       const requiredLevel = interaction.options.getInteger("required-level") ?? base.requiredLevel ?? 0;
 
-      // Snapshot bonus entries: server-wide config + template + this command's option.
-      const bonusEntries = { ...(settings.giveaways.bonusEntries || {}), ...(base.bonusEntries || {}) };
+      // Snapshot bonus entries: from the template (if any) + this command's option.
+      const bonusEntries = { ...(base.bonusEntries || {}) };
       const bonusRole = interaction.options.getRole("bonus-role");
       if (bonusRole) bonusEntries[bonusRole.id] = interaction.options.getInteger("bonus-entries") || 1;
 

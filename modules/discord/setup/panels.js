@@ -104,15 +104,10 @@ function render(guildId, category = "overview", ctx = {}) {
     embed = makeEmbed({
       title: "🎉 Giveaways",
       color: "brand",
-      description: "Configure who can host giveaways and the entry emoji. Templates (`/giveaway template`) and bonus-entry roles (`/giveaway bonus`) are per-server.",
+      description: "Configure who can host giveaways and the entry emoji. Templates live in `/giveaway template`; bonus entries are set **per template** (`/giveaway template bonus`) or **per giveaway** (`/giveaway create bonus-role`).",
       fields: [
         { name: "Host roles", value: roles(s.giveaways.hostRoleIds), inline: false },
         { name: "Emoji", value: s.giveaways.emoji || "🎉", inline: true },
-        {
-          name: "Bonus entries",
-          value: Object.entries(s.giveaways.bonusEntries || {}).map(([r, n]) => `<@&${r}>: +${n}`).join("\n") || "*none*",
-          inline: false,
-        },
       ],
     });
     components.push(roleRow("dset_gw_hostroles", "Select giveaway host roles…"));
@@ -198,17 +193,21 @@ function render(guildId, category = "overview", ctx = {}) {
         { name: "Allow icons", value: onoff(b.allowIcons), inline: true },
         { name: "Anchor role", value: b.anchorRoleId ? `<@&${b.anchorRoleId}>` : "*below my top role*", inline: true },
         { name: "Log channel", value: chan(b.logChannelId), inline: true },
+        { name: "Multi-booster role", value: b.multiBoostRoleId ? `<@&${b.multiBoostRoleId}> at ${b.multiBoostThreshold}+ boosts` : "*not set*", inline: false },
       ],
+      footer: "Multi-boost counts are tracked from boost messages while the bot runs; seed history with /boostrole setcount",
     });
     components.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("dset_boost_toggle_enabled").setLabel("Enabled").setStyle(b.enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("dset_boost_toggle_removeOnUnboost").setLabel("Remove on unboost").setStyle(b.removeOnUnboost ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("dset_boost_toggle_allowGradient").setLabel("Gradient").setStyle(b.allowGradient ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("dset_boost_toggle_allowIcons").setLabel("Icons").setStyle(b.allowIcons ? ButtonStyle.Success : ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId("dset_boost_toggle_allowIcons").setLabel("Icons").setStyle(b.allowIcons ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("dset_boost_threshold").setLabel(`Threshold: ${b.multiBoostThreshold}`).setStyle(ButtonStyle.Primary)
       )
     );
     components.push(roleRow("dset_boost_anchor", "Anchor role (new roles placed just below)…", 1));
+    components.push(roleRow("dset_boost_multirole", "Multi-booster role (granted at threshold)…", 1));
     components.push(channelRow("dset_boost_log", "Booster-role log channel…"));
   } else {
     // overview

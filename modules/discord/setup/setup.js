@@ -11,7 +11,7 @@ const {
   TextInputStyle,
   ActionRowBuilder,
 } = require("discord.js");
-const { updateGuildSettings } = require("../settings/settingsStore");
+const { getGuildSettings, updateGuildSettings } = require("../settings/settingsStore");
 const { render } = require("./panels");
 
 // Split "base|param" customIds.
@@ -113,6 +113,10 @@ module.exports = {
       updateGuildSettings(guildId, (s) => ((s.boosterRoles.anchorRoleId = values[0] || null), s));
       return interaction.update(render(guildId, "boosters"));
     }
+    if (base === "dset_boost_multirole") {
+      updateGuildSettings(guildId, (s) => ((s.boosterRoles.multiBoostRoleId = values[0] || null), s));
+      return interaction.update(render(guildId, "boosters"));
+    }
     return interaction.deferUpdate();
   },
 
@@ -148,6 +152,16 @@ module.exports = {
       );
       return interaction.showModal(modal);
     }
+
+    if (id === "dset_boost_threshold") {
+      const current = getGuildSettings(guildId).boosterRoles.multiBoostThreshold;
+      const modal = new ModalBuilder().setCustomId("dset_boost_threshold_modal").setTitle("Multi-booster threshold").addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("threshold").setLabel("Boosts required for the multi-booster role").setStyle(TextInputStyle.Short).setRequired(true).setValue(String(current)).setMaxLength(3)
+        )
+      );
+      return interaction.showModal(modal);
+    }
     return interaction.deferUpdate();
   },
 
@@ -158,6 +172,13 @@ module.exports = {
       const emoji = interaction.fields.getTextInputValue("emoji").trim();
       updateGuildSettings(interaction.guildId, (s) => ((s.giveaways.emoji = emoji || "🎉"), s));
       return interaction.update(render(interaction.guildId, "giveaways"));
+    }
+    if (interaction.customId === "dset_boost_threshold_modal") {
+      const n = parseInt(interaction.fields.getTextInputValue("threshold").trim(), 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 100) {
+        updateGuildSettings(interaction.guildId, (s) => ((s.boosterRoles.multiBoostThreshold = n), s));
+      }
+      return interaction.update(render(interaction.guildId, "boosters"));
     }
     return interaction.deferUpdate();
   },

@@ -86,6 +86,12 @@ const DEFAULT_SETTINGS = {
     allowGradient: true, // use a 2nd hex when the guild has ENHANCED_ROLE_COLORS
     allowIcons: true, // set emoji/icon when the guild has ROLE_ICONS
     logChannelId: null,
+    // Multi-booster role: granted to members who have boosted this server
+    // >= multiBoostThreshold times. Discord exposes no per-member boost count,
+    // so counts are tracked from GuildBoost system messages seen while the bot
+    // is running (admins can seed with /boostrole setcount). Per-server role.
+    multiBoostRoleId: null,
+    multiBoostThreshold: 2,
   },
   automod: {
     enabled: false,
@@ -136,7 +142,8 @@ const DEFAULT_SETTINGS = {
   giveaways: {
     hostRoleIds: [], // may run /giveaway in addition to Manage Server perm
     emoji: "🎉",
-    bonusEntries: {}, // { "<roleId>": extraEntries }  server-wide bonus entries
+    // Bonus entries are configured per-giveaway (/giveaway create bonus-role)
+    // and per-template (/giveaway template bonus), not server-wide.
   },
   invites: {
     enabled: false,

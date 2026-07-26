@@ -7,7 +7,6 @@ const store = require("../giveawayStore");
 const logic = require("../giveawaylogic");
 const scheduleStore = require("./scheduleStore");
 const templates = require("../templates/templates");
-const { getGuildSettings } = require("../../settings/settingsStore");
 
 const DEFAULT_TICK_SECONDS = 30;
 const INITIAL_DELAY_MS = 15 * 1000;
@@ -39,7 +38,6 @@ async function tick(client) {
           scheduleStore.save(sched);
           continue;
         }
-        const bonusEntries = getGuildSettings(sched.guildId).giveaways.bonusEntries || {};
         await logic.launchGiveaway(client, {
           guildId: sched.guildId,
           channelId: sched.channelId,
@@ -49,7 +47,7 @@ async function tick(client) {
           durationMs: tpl.durationMs,
           requiredRoleId: tpl.requiredRoleId || null,
           requiredLevel: tpl.requiredLevel || 0,
-          bonusEntries,
+          bonusEntries: tpl.bonusEntries || {},
         });
         // Advance next run, skipping any missed windows to avoid a backlog.
         let next = new Date(sched.nextRunAt).getTime();

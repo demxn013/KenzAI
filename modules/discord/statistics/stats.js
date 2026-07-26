@@ -24,7 +24,7 @@ module.exports = {
 
   async execute(interaction) {
     if (!getGuildSettings(interaction.guildId).statistics.enabled)
-      return interaction.reply({ content: "Statistics are disabled. An admin can enable them with `/discord-config logging enabled:true`.", ephemeral: true });
+      return interaction.reply({ content: "Statistics are disabled. An admin can enable them in `/setup` → Statistics.", ephemeral: true });
 
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId;

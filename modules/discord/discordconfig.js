@@ -69,7 +69,6 @@ const DEFAULT_SETTINGS = {
       ban: "admin",
       softban: "admin",
       unban: "admin",
-      automod: "admin",
       giveaway: "giveawayHost",
     },
   },

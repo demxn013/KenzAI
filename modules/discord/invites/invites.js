@@ -54,7 +54,7 @@ module.exports = {
 
   async execute(interaction) {
     if (!getGuildSettings(interaction.guildId).invites.enabled)
-      return interaction.reply({ content: "Invite tracking is disabled. An admin can enable it with `/invite-config enabled:true`.", ephemeral: true });
+      return interaction.reply({ content: "Invite tracking is disabled. An admin can enable it in `/setup` → Invite tracking.", ephemeral: true });
 
     const sub = interaction.options.getSubcommand();
 

@@ -14,7 +14,7 @@ module.exports = {
 
   async execute(interaction) {
     if (!getGuildSettings(interaction.guildId).leveling.enabled)
-      return interaction.reply({ content: "Leveling is disabled on this server. An admin can enable it with `/level-config enabled:true`.", ephemeral: true });
+      return interaction.reply({ content: "Leveling is disabled on this server. An admin can enable it in `/setup` → Leveling.", ephemeral: true });
 
     const user = interaction.options.getUser("user") || interaction.user;
     if (user.bot) return interaction.reply({ content: "Bots don't earn XP.", ephemeral: true });

@@ -21,11 +21,9 @@ async function handleJoin(member) {
         embeds: [
           makeEmbed({
             color: "success",
-            description: `📥 **${member.user.tag}** joined.`,
-            fields: [
-              { name: "Account created", value: `<t:${created}:R>`, inline: true },
-              { name: "Member #", value: String(member.guild.memberCount), inline: true },
-            ],
+            description: `📥 <@${member.id}> (${member.user.tag}) joined.`,
+            thumbnail: member.user.displayAvatarURL(),
+            fields: [{ name: "Account created", value: `<t:${created}:R>`, inline: true }],
             footer: `ID: ${member.id}`,
             timestamp: true,
           }),

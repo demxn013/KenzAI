@@ -23,11 +23,9 @@ async function handleLeave(member) {
         embeds: [
           makeEmbed({
             color: "danger",
-            description: `📤 **${member.user.tag}** left.`,
-            fields: [
-              { name: "Member #", value: String(member.guild.memberCount), inline: true },
-              ...(roles ? [{ name: "Roles", value: roles, inline: false }] : []),
-            ],
+            description: `📤 <@${member.id}> (${member.user.tag}) left.`,
+            thumbnail: member.user.displayAvatarURL(),
+            fields: roles ? [{ name: "Roles", value: roles, inline: false }] : [],
             footer: `ID: ${member.id}`,
             timestamp: true,
           }),

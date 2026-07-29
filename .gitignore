@@ -1,27 +1,17 @@
-/modules.zip
 /.env
+/modules.zip
 /modules/modules.zip
-/modules/judiciary/data/archived_cases.json
-/modules/judiciary/data/audit_log.json
-/modules/judiciary/data/cases.json
-/modules/images/
-/modules/data/
-!/modules/data/*.js
-/modules/images/clanflags/YAZANAKI.png
-/modules/images/clanemblems/YZNK.png
-/modules/images/clanflags/SNU.png
-/modules/images/clanflags/ONF.png
-/modules/images/clanflags/KSI.png
-/modules/images/clanemblems/ANO.png
-/modules/images/clanemblems/ONF.png
-/modules/images/clanemblems/KASAII.png
-/modules/images/clanemblems/SNU.png
-/modules/images/clanemblems/YZNK.png
-/modules/images/clanemblems/ONA.png
-/modules/images/serverlogos/DONUTSMP.png
 node_modules
 
-# Runtime judiciary case data (current repo structure; not version-controlled)
-modules/judiciary/data/
+# Runtime data written by the bot — kept out of git for privacy.
+# Ignore the dir's CONTENTS (not the dir itself) so the .js helpers
+# (cache.js, channels.js) can be re-included; a trailing-slash ignore
+# on the directory would make re-inclusion impossible.
+/modules/data/*
+!/modules/data/*.js
 
-modules.zip
+# Runtime judiciary case data
+/modules/judiciary/data/
+
+# Uploaded / generated images (clan flags, emblems, server logos)
+/modules/images/

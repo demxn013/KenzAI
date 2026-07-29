@@ -6,6 +6,7 @@
 /modules/judiciary/data/cases.json
 /modules/images/
 /modules/data/
+!/modules/data/*.js
 /modules/images/clanflags/YAZANAKI.png
 /modules/images/clanemblems/YZNK.png
 /modules/images/clanflags/SNU.png

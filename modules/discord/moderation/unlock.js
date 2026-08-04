@@ -11,7 +11,7 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
     .setDMPermission(false)
     .addChannelOption((o) =>
-      o.setName("channel").setDescription("Channel to unlock (defaults to current)").addChannelTypes(ChannelType.GuildText)
+      o.setName("channel").setDescription("Channel to unlock (defaults to current)").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
     ),
 
   async execute(interaction) {

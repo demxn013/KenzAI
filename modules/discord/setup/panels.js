@@ -56,7 +56,7 @@ function backRow(category, label = "◀ Back") {
 }
 function channelSelect(customId, placeholder, currentIds, { max = 1 } = {}) {
   const ids = [].concat(currentIds || []).filter(Boolean);
-  const menu = new ChannelSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addChannelTypes(ChannelType.GuildText).setMinValues(0).setMaxValues(max);
+  const menu = new ChannelSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice).setMinValues(0).setMaxValues(max);
   if (ids.length) menu.setDefaultChannels(...ids.slice(0, max));
   return new ActionRowBuilder().addComponents(menu);
 }

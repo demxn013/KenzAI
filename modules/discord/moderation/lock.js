@@ -12,7 +12,7 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
     .setDMPermission(false)
     .addChannelOption((o) =>
-      o.setName("channel").setDescription("Channel to lock (defaults to current)").addChannelTypes(ChannelType.GuildText)
+      o.setName("channel").setDescription("Channel to lock (defaults to current)").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
     )
     .addStringOption((o) => o.setName("reason").setDescription("Reason (announced in the channel)")),
 

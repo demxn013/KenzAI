@@ -15,7 +15,7 @@ module.exports = {
       o.setName("duration").setDescription("e.g. 5s, 30s, 2m — use 0 to disable (max 6h)").setRequired(true)
     )
     .addChannelOption((o) =>
-      o.setName("channel").setDescription("Channel (defaults to current)").addChannelTypes(ChannelType.GuildText)
+      o.setName("channel").setDescription("Channel (defaults to current)").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
     ),
 
   async execute(interaction) {

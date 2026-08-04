@@ -80,6 +80,25 @@ function meetsRequirements(member, record) {
   return { ok: true };
 }
 
+/**
+ * Parse a "bonus roles" string into a { roleId: extraEntries } map. Accepts
+ * role mentions each followed by a number, e.g. "<@&123> 2 <@&456> 3"
+ * (what Discord sends when you type "@VIP 2 @Booster 3"). A mention with no
+ * number defaults to 1 extra entry; amounts are clamped to 1..100.
+ */
+function parseBonusRoles(input) {
+  const out = {};
+  if (!input) return out;
+  const re = /<@&(\d+)>\s*(\d+)?/g;
+  let m;
+  while ((m = re.exec(input)) !== null) {
+    const roleId = m[1];
+    const n = m[2] ? parseInt(m[2], 10) : 1;
+    if (n > 0) out[roleId] = Math.min(100, n);
+  }
+  return out;
+}
+
 /** Total entries a member has: 1 base + bonus entries for each qualifying role. */
 function entryWeight(member, bonusEntries) {
   let weight = 1;
@@ -237,6 +256,7 @@ module.exports = {
   buildRow,
   meetsRequirements,
   entryWeight,
+  parseBonusRoles,
   pickWinners,
   launchGiveaway,
   activateGiveaway,

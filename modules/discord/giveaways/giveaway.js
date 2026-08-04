@@ -43,8 +43,7 @@ module.exports = {
         .addStringOption((o) => o.setName("starts-in").setDescription("Delay before it begins, e.g. 2h, 1d (default: immediately)"))
         .addRoleOption((o) => o.setName("required-role").setDescription("Role required to enter"))
         .addIntegerOption((o) => o.setName("required-level").setDescription("Minimum level required to enter").setMinValue(1))
-        .addRoleOption((o) => o.setName("bonus-role").setDescription("Give this role bonus entries (on top of server bonus roles)"))
-        .addIntegerOption((o) => o.setName("bonus-entries").setDescription("Extra entries for the bonus-role (default 1)").setMinValue(1).setMaxValue(100))
+        .addStringOption((o) => o.setName("bonus-roles").setDescription("Bonus entries per role: @role amount @role amount — e.g. @VIP 2 @Booster 3"))
         .addStringOption((o) => o.setName("template").setDescription("Load a saved template as the base"))
     )
     .addSubcommand((s) =>
@@ -235,9 +234,8 @@ module.exports = {
       const requiredLevel = interaction.options.getInteger("required-level") ?? base.requiredLevel ?? 0;
 
       // Snapshot bonus entries: from the template (if any) + this command's option.
-      const bonusEntries = { ...(base.bonusEntries || {}) };
-      const bonusRole = interaction.options.getRole("bonus-role");
-      if (bonusRole) bonusEntries[bonusRole.id] = interaction.options.getInteger("bonus-entries") || 1;
+      // Bonus entries: from the template (if any) + this command's "@role n @role n" field.
+      const bonusEntries = { ...(base.bonusEntries || {}), ...logic.parseBonusRoles(interaction.options.getString("bonus-roles")) };
 
       const startsInRaw = interaction.options.getString("starts-in");
       const startDelayMs = startsInRaw ? parseDuration(startsInRaw) : 0;

@@ -120,6 +120,13 @@ module.exports = {
           return await cmd.buttonHandler(interaction);
         }
 
+        // Onboarding flow buttons (next / joined)
+        if (interaction.customId.startsWith("onb|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.buttonHandler) return commandNotLoadedReply(interaction, "onboarding");
+          return await cmd.buttonHandler(interaction);
+        }
+
         // ── /shop category buttons (badges / capes / pets) ───
         if (
           interaction.customId === "shop_badge" ||
@@ -188,6 +195,13 @@ module.exports = {
     // ----------------------------------------------------------
     if (interaction.isStringSelectMenu()) {
       try {
+        // Stock market — sell-a-position select menu
+        if (interaction.customId === "stock_sellpos") {
+          const cmd = client.commands.get("stock");
+          if (!cmd?.selectMenuHandler) return commandNotLoadedReply(interaction, "stock");
+          return await cmd.selectMenuHandler(interaction);
+        }
+
         // /shop buy select
         if (interaction.customId === "shop_buy_select") {
           const cmd = client.commands.get("shop");
@@ -248,10 +262,18 @@ module.exports = {
           return await cmd.modalHandler(interaction);
         }
 
-        // Stock market modals (buy/sell)
+        // Onboarding config modals (add-channel title + info)
+        if (interaction.customId.startsWith("onbcfg|")) {
+          const cmd = client.commands.get("onboarding");
+          if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "onboarding");
+          return await cmd.modalHandler(interaction);
+        }
+
+        // Stock market modals (buy, list shares, sell quantity)
         if (
           interaction.customId.startsWith("stock_buy_modal_") ||
-          interaction.customId.startsWith("stock_sell_modal_")
+          interaction.customId.startsWith("stock_listqty_") ||
+          interaction.customId.startsWith("stock_sellqty_")
         ) {
           const cmd = client.commands.get("stock");
           if (!cmd?.modalHandler) return commandNotLoadedReply(interaction, "stock");
